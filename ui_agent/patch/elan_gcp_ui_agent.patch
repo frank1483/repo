@@ -1,0 +1,143 @@
+diff -ruN a/GCP/CMakeLists.txt b/GCP/CMakeLists.txt
+--- a/GCP/CMakeLists.txt	2026-10-27 13:21:48.959085590 +0000
++++ b/GCP/CMakeLists.txt	2026-10-27 13:21:48.990362312 +0000
+@@ -38,6 +38,7 @@
+ set_source_files_properties(GcpRuntimeServices.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+ set_source_files_properties(GcpDefaults.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+ set_source_files_properties(GcpZh.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
++set_source_files_properties(Agent/GcpAgentState.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+ 
+ # 字型檔放在專案共用的 resources/gcp/fonts/（跟 resources/gcp/icons/ 同一層，
+ # 不屬於 GCP/ 模組目錄），這裡明確指定 QT_RESOURCE_ALIAS，把它們打包成
+@@ -81,6 +82,10 @@
+     RESOURCE_PREFIX /qml
+     QML_FILES
+         GcpApplication.qml
++        Agent/GcpAgentCore.js
++        Agent/GcpAgentState.qml
++        Agent/GcpAgentModule.qml
++        Agent/GcpAgentOverlay.qml
+         GcpMainShell.qml
+         GcpMissionMapCanvas.qml
+         GcpPayloadQuickRail.qml
+diff -ruN a/GCP/Flight/GcpLiveFlightScreen.qml b/GCP/Flight/GcpLiveFlightScreen.qml
+--- a/GCP/Flight/GcpLiveFlightScreen.qml	2026-10-27 13:21:48.961819732 +0000
++++ b/GCP/Flight/GcpLiveFlightScreen.qml	2026-10-27 13:21:48.996045467 +0000
+@@ -346,6 +346,7 @@
+             }
+ 
+             GcpFlightPayloadQuickRail {
++                id: payloadRail
+                 anchors.right: parent.right
+                 anchors.verticalCenter: parent.verticalCenter
+                 anchors.rightMargin: GcpTheme.layout.flightSideMargin
+@@ -395,6 +396,7 @@
+             }
+ 
+             GcpFlightAttitudeIndicator {
++                id: attitudeIndicator
+                 anchors.centerIn: parent
+                 anchors.verticalCenterOffset: GcpTheme.layout.flightHudCenterShift
+                 visible: root.hudVisible && !root.mapIsMain && root._vehicleConnected
+@@ -416,6 +418,7 @@
+ 
+             // 地速 GS（中心左側，右緣對齊）／高度 ALT（中心右側，左緣對齊）；Figma HUD 大字讀數
+             GcpFlightReadout {
++                id: speedReadout
+                 readonly property bool _compact: flightArea.width < GcpTheme.layout.flightCompactWidth
+                 anchors.right: parent.horizontalCenter
+                 anchors.rightMargin: _compact && missionProgress.visible ? 80
+@@ -431,6 +434,7 @@
+             }
+ 
+             GcpFlightReadout {
++                id: altReadout
+                 readonly property bool _compact: flightArea.width < GcpTheme.layout.flightCompactWidth
+                 anchors.left: parent.horizontalCenter
+                 anchors.leftMargin: _compact && missionProgress.visible ? 80
+@@ -474,6 +478,7 @@
+             }
+ 
+             GcpFlightSemiCompass {
++                id: semiCompass
+                 anchors.horizontalCenter: parent.horizontalCenter
+                 anchors.bottom: parent.bottom
+                 anchors.bottomMargin: flightArea.width < GcpTheme.layout.flightCompactWidth ? 270 : 150
+@@ -499,6 +504,7 @@
+             // 半圓羅盤左側的返航距離（Figma 底部中央「返航距離 1,240 m」；稿中左右各一份，這裡只放一份）
+             // v1.4：返航距離／飛行時間移到右上（匯出稿 InfoCluster，x1320 y300、字級 30／42）
+             Row {
++                id: homeInfoRow
+                 readonly property var _vd: root._activeVehicle ? root._activeVehicle.vehicle : null
+                 anchors.right: parent.right
+                 anchors.rightMargin: GcpTheme.layout.flightSideMargin
+@@ -690,6 +696,20 @@
+                 }
+             }
+ 
++            // UI agent 可調整的模組（id 對照 Agent/GcpAgentCore.js 的 MODULES）
++            GcpAgentModule { moduleId: "missionProgress"; target: missionProgress; container: flightArea }
++            GcpAgentModule { moduleId: "payloadRail"; target: payloadRail; container: flightArea }
++            GcpAgentModule { moduleId: "attitude"; target: attitudeIndicator; container: flightArea }
++            GcpAgentModule { moduleId: "headingTape"; target: headingTape; container: flightArea }
++            GcpAgentModule { moduleId: "speedReadout"; target: speedReadout; container: flightArea }
++            GcpAgentModule { moduleId: "altReadout"; target: altReadout; container: flightArea }
++            GcpAgentModule { moduleId: "compass"; target: semiCompass; container: flightArea }
++            GcpAgentModule { moduleId: "windGauge"; target: windGauge; container: flightArea }
++            GcpAgentModule { moduleId: "homeInfo"; target: homeInfoRow; container: flightArea }
++            GcpAgentModule { moduleId: "miniView"; target: miniView; container: flightArea }
++            GcpAgentModule { moduleId: "actionDock"; target: actionDock; container: flightArea }
++            GcpAgentModule { moduleId: "telemetryBar"; target: telemetryBar; container: flightArea }
++
+             GcpFlightPreflightChecklist {
+                 id: preflightChecklist
+                 anchors.fill: parent
+diff -ruN a/GCP/GcpMainShell.qml b/GCP/GcpMainShell.qml
+--- a/GCP/GcpMainShell.qml	2026-10-27 13:21:48.959023737 +0000
++++ b/GCP/GcpMainShell.qml	2026-10-27 13:21:48.991482789 +0000
+@@ -239,6 +239,30 @@
+         return true
+     }
+ 
++    // UI agent：目前畫面與子頁（子頁 = 各頁 selectedSection；飛行日誌為 currentView；沒有子頁為 -1）
++    function agentLocation() {
++        const item = root.currentPage === 1 ? null : pageLoader.item
++        let section = -1
++        if (item && root.currentPage === 6 && item.currentView !== undefined) section = item.currentView
++        else if (item && item.selectedSection !== undefined) section = item.selectedSection
++        return { page: root.currentPage, section: section }
++    }
++
++    // UI agent 換頁：沿用 navigateToPage 的權限檢查；系統設定受限子頁同樣不開放
++    function agentGoTo(page, section) {
++        if (page !== root.currentPage && !root.navigateToPage(page)) return false
++        if (section === undefined || section < 0) return true
++        const item = pageLoader.item
++        if (!item) return true
++        if (item._restrictedSectionIndices && item._restrictedSectionIndices.indexOf(section) >= 0) {
++            accessToast.showError(qsTr("目前帳號角色沒有此設定分頁的權限。"))
++            return false
++        }
++        if (page === 6 && item.currentView !== undefined) item.currentView = section
++        else if (item.selectedSection !== undefined) item.selectedSection = section
++        return true
++    }
++
+     // 告警詳情的返航／降落：切到 Live Flight 並以其 GuidedActionsController 顯示滑動確認列
+     function requestLiveFlightCommand(action, vehicleId) {
+         if (!AuthService.hasPermission("controlVehicle")) {
+@@ -633,4 +657,14 @@
+             }
+         }
+     }
++
++    // UI agent：每個畫面都能叫出（右側 AI 按鈕）；只換頁與調整版面，所有變更可復原
++    GcpAgentOverlay {
++        anchors.fill: parent
++        z: 95
++        visible: AuthService.state === AuthService.Authenticated || root._devPreview
++        shell: root
++        envValue: function (name, fallback) { return GcpEnv.value(name, fallback) }
++        Component.onCompleted: GcpAgentState.shell = root
++    }
+ }
