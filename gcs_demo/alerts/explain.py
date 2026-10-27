@@ -14,7 +14,7 @@ from gcs_demo import llm
 
 SYSTEM_ZH = (
     "你是無人機地面站的告警助理。只能使用使用者提供的事實與數字，不可自行計算或編造數字。"
-    "建議只能從 candidates 中選一個 id，且只能選 feasible=true 的；都不可行時選 end_pct 最高者。"
+    "建議只能從 candidates 中選一個 id，且只能選 feasible=true 的，優先選 missed_required（漏掉的必要目標數）為 0 的；都不可行時選 end_pct 最高者。"
     "回覆只輸出 JSON：{\"decision\":\"SELECT\",\"choice_id\":\"C?\",\"reason_zh\":\"一句話理由\","
     "\"evidence_ids\":[\"E?\"],\"summary_zh\":\"給操作員的兩句白話說明\"}。"
 )
@@ -49,7 +49,7 @@ def explain(ev: dict, backend=None, timeout_s=60) -> dict:
     facts = {
         "alert": {"title": ev["title"], "value": ev["value"], "lead_s": ev.get("lead_s")},
         "evidence": ev.get("evidence", []),
-        "candidates": [{k: c.get(k) for k in ("id", "label", "end_pct", "completion_pct", "feasible") if k in c}
+        "candidates": [{k: c.get(k) for k in ("id", "label", "end_pct", "completion_pct", "missed_required", "feasible") if k in c}
                        for c in ev.get("candidates", [])],
     }
     user = json.dumps(facts, ensure_ascii=False)

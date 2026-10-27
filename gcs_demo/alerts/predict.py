@@ -82,9 +82,12 @@ class Finding:
 
 
 class PredictiveAlertEngine:
-    def __init__(self, route, home, vehicle: Vehicle, config: Config | None = None):
+    def __init__(self, route, home, vehicle: Vehicle, config: Config | None = None, priorities=None):
+        """priorities：每個航點的優先級（1 必要、2 選配），None 表示全部一樣重要。"""
         self.route = [tuple(p) for p in route]
+        self.route_idx = list(range(len(self.route)))   # 目前航線每點對應原航線的索引
         self.total_wps = len(self.route)       # 完成度一律對原始航線算
+        self.prio = list(priorities) if priorities else None
         self.home = tuple(home)
         self.v = vehicle
         self.cfg = config or Config()
@@ -99,9 +102,21 @@ class PredictiveAlertEngine:
         self._wind_trend = (0.0, 0.0)            # (每秒變化, R²)
         self.last_state: dict = {}
 
-    def set_route(self, route):
-        """操作員改了航線（例如採用「飛完 WPn 後返航」）。航點索引沿用原航線。"""
+    def set_route(self, route, indices=None):
+        """操作員改了航線。indices＝新航線每點在原航線的索引（省略則視為原航線前段）。
+        之後 Telemetry.next_wp 指的是新航線的位置。"""
         self.route = [tuple(p) for p in route]
+        self.route_idx = list(indices) if indices is not None else list(range(len(self.route)))
+
+    def _orig(self, pos_in_route: int) -> int:
+        """目前航線第 pos 點 → 原航線索引（給畫面顯示 WP 編號）。"""
+        return self.route_idx[min(max(pos_in_route, 0), len(self.route_idx) - 1)]
+
+    def _required_left(self, from_pos: int) -> int:
+        """目前航線從 from_pos 起還沒飛的必要目標數。"""
+        if not self.prio:
+            return 0
+        return sum(1 for k in self.route_idx[from_pos:] if self.prio[k] == 1)
 
     # ---------- 線上校正 ----------
     def _update_calib(self, tm: Telemetry):
@@ -215,7 +230,7 @@ class PredictiveAlertEngine:
                 f2.value = "現在返航才能保住保留電量"
                 f2.lead_s = 0.0
             else:
-                wp_idx = tm.next_wp + pnr[0] - 1
+                wp_idx = self._orig(tm.next_wp + pnr[0] - 1)
                 eta = pnr[2]
                 self.last_state.update({"pnr_wp": wp_idx, "pnr_eta_s": eta})
                 if eta <= self.cfg.horizon_s:
@@ -278,22 +293,38 @@ class PredictiveAlertEngine:
         if best and len(path) > 2 and best[0] < veh.cruise_mps - 0.4 and pct(best[1]) > pct(end_e) + 1.0:
             cands.append({"id": "C2", "action": "A_REDUCE_SPEED", "label": f"降速到 {best[0]:.1f} m/s 飛完",
                           "end_pct": round(pct(best[1]), 1), "completion_pct": 100.0, "param": best[0]})
+        done_orig = self._orig(done) if done < len(self.route) else total
         # 飛到最晚返航點後返航
         if pnr is not None and 0 < pnr[0] < len(path) - 1:
-            wp_idx = done + pnr[0] - 1
+            pos = done + pnr[0] - 1
+            wp_idx = self._orig(pos)
+            miss = self._required_left(pos + 1)
             comp = (wp_idx + 1) / total * 100.0
-            cands.append({"id": "C3", "action": "A_RTL_AFTER_WP", "label": f"飛完 WP{wp_idx + 1} 後返航",
+            label = f"飛完 WP{wp_idx + 1} 後返航" + (f"（漏掉必要目標 {miss} 個）" if miss else "")
+            cands.append({"id": "C3", "action": "A_RTL_AFTER_WP", "label": label,
                           "end_pct": round(pct(pnr[1] + pnr[3]), 1), "completion_pct": round(comp, 0),
-                          "param": wp_idx})
+                          "param": wp_idx, "param_pos": pos, "missed_required": miss})
+        # 跳過選配目標，只飛必要的
+        if self.prio:
+            keep = [k for k in range(done, len(self.route)) if self.prio[self.route_idx[k]] == 1]
+            if len(keep) < len(self.route) - done:
+                sub = [tuple(tm.pos)] + [self.route[k] for k in keep]
+                w = self._walk(sub, veh, wind)
+                skipped = len(self.route) - done - len(keep)
+                cands.append({"id": "C6", "action": "A_SKIP_OPTIONAL", "label": f"跳過 {skipped} 個選配目標，只飛必要的",
+                              "end_pct": round(pct(w[-1][1] + w[-1][3]), 1),
+                              "completion_pct": round((total - skipped) / total * 100.0, 0),
+                              "param": [self.route_idx[k] for k in keep], "missed_required": 0})
+        miss_now = self._required_left(done)
         # 立即返航
         cands.append({"id": "C4", "action": "A_RTL_NOW", "label": "立即返航",
                       "end_pct": round(pct(walk[0][3]), 1),
-                      "completion_pct": round(done / total * 100.0, 0)})
+                      "completion_pct": round(done_orig / total * 100.0, 0), "missed_required": miss_now})
         # 就地降落（回不了家時）
         land = leg_energy(veh, tm.pos, (tm.pos[0], tm.pos[1], self.home[2]), wind)["energy_wh"]
         cands.append({"id": "C5", "action": "A_LAND_NOW", "label": "就地降落",
                       "end_pct": round(pct(land), 1),
-                      "completion_pct": round(done / total * 100.0, 0)})
+                      "completion_pct": round(done_orig / total * 100.0, 0), "missed_required": miss_now})
         # 告警持續中要多 2% 才算可行，跟告警解除的遲滯一致，避免建議來回跳
         need = self.cfg.reserve_pct + (2.0 if "battery_route" in self._active else 0.0)
         for c in cands:
@@ -302,11 +333,12 @@ class PredictiveAlertEngine:
 
     @staticmethod
     def _rule_pick(cands):
-        """規則：可行選項（不含就地降落）裡完成度最高者，同分取電量多者；
+        """規則：可行選項（不含就地降落）裡漏掉必要目標最少、完成度最高者，同分取電量多者；
         都不可行時，返航落地還有 10% 以上就返航，否則才就地降落。"""
         ok = [c for c in cands if c["feasible"] and c["action"] != "A_LAND_NOW"]
-        if ok:
-            return max(ok, key=lambda c: (c.get("completion_pct", 0), c["end_pct"]))["id"]
+        if ok:   # 先保住必要目標，再看完成度、剩餘電量
+            return max(ok, key=lambda c: (-c.get("missed_required", 0), c.get("completion_pct", 0),
+                                          c["end_pct"]))["id"]
         rtl = next((c for c in cands if c["action"] == "A_RTL_NOW"), None)
         if rtl and rtl["end_pct"] >= 10.0:
             return rtl["id"]
@@ -333,7 +365,7 @@ class PredictiveAlertEngine:
             d = math.hypot(path[i][0] - self.home[0], path[i][1] - self.home[1])
             q = a + b * d
             if q < self.cfg.link_min_pct:
-                wp = tm.next_wp + i - 1
+                wp = self._orig(tm.next_wp + i - 1)
                 f.active = True
                 f.severity = SEV_WARNING if t_cum < 120 else SEV_NOTICE
                 f.title = "航線前方可能斷訊"
