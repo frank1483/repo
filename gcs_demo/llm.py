@@ -16,6 +16,14 @@ import urllib.error
 import urllib.request
 
 
+def default_timeout() -> float:
+    """GCS_LLM_TIMEOUT（秒），CPU 推論較慢時可調大；預設 60。"""
+    try:
+        return float(os.environ.get("GCS_LLM_TIMEOUT", "60"))
+    except ValueError:
+        return 60.0
+
+
 def _result(ok, data=None, raw="", latency=0.0, error=None, backend="none", model=""):
     return {"ok": ok, "data": data, "raw": raw, "latency_s": round(latency, 3),
             "error": error, "backend": backend, "model": model}
@@ -57,7 +65,7 @@ class LLMBackend:
     def available(self) -> bool:
         return False
 
-    def complete_json(self, system: str, user: str, schema: dict, timeout_s: float = 60) -> dict:
+    def complete_json(self, system: str, user: str, schema: dict, timeout_s: float = None) -> dict:
         return _result(False, error="backend none", backend=self.name)
 
     def _post(self, path: str, body: dict, timeout_s: float):
@@ -86,7 +94,8 @@ class OpenAICompatBackend(LLMBackend):
     def available(self) -> bool:
         return bool(self.url and self.model)
 
-    def complete_json(self, system, user, schema, timeout_s=60):
+    def complete_json(self, system, user, schema, timeout_s=None):
+        timeout_s = timeout_s or default_timeout()
         t0 = time.time()
         body = {"model": self.model, "temperature": 0, "max_tokens": 512,
                 "messages": [{"role": "system", "content": system},
@@ -106,7 +115,8 @@ class OllamaBackend(LLMBackend):
     def available(self) -> bool:
         return bool(self.url and self.model)
 
-    def complete_json(self, system, user, schema, timeout_s=60):
+    def complete_json(self, system, user, schema, timeout_s=None):
+        timeout_s = timeout_s or default_timeout()
         t0 = time.time()
         body = {"model": self.model, "stream": False, "format": "json",
                 "options": {"temperature": 0, "seed": 17, "num_predict": 512},
@@ -143,7 +153,7 @@ DECISION_SCHEMA = {"required": {"decision": "str", "choice_id": "str", "reason_z
 
 
 def pick_candidate(backend: LLMBackend, task_zh: str, candidates: list, evidence: list,
-                   rule_choice: str, timeout_s: float = 60) -> dict:
+                   rule_choice: str, timeout_s: float = None) -> dict:
     """H-a：演算法產生候選並先算出規則選擇，模型在候選內挑一個或 HOLD。
 
     回傳 {"choice_id", "source": "llm"|"rule", "reason_zh", "evidence_ids", "llm": 呼叫紀錄}
