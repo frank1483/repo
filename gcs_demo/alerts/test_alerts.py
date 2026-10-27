@@ -71,6 +71,31 @@ class ExplainTests(unittest.TestCase):
         self.assertIn("飛完 WP13 後返航", r["text"]["summary_zh"])
 
 
+class PriorityTests(unittest.TestCase):
+    def test_rule_keeps_required_targets(self):
+        from .predict import PredictiveAlertEngine
+        cands = [
+            {"id": "C1", "action": "A_CONTINUE", "end_pct": 15, "completion_pct": 100, "feasible": False},
+            {"id": "C3", "action": "A_RTL_AFTER_WP", "end_pct": 25, "completion_pct": 80, "missed_required": 1, "feasible": True},
+            {"id": "C6", "action": "A_SKIP_OPTIONAL", "end_pct": 23, "completion_pct": 60, "missed_required": 0, "feasible": True},
+            {"id": "C4", "action": "A_RTL_NOW", "end_pct": 40, "completion_pct": 20, "missed_required": 2, "feasible": True},
+        ]
+        self.assertEqual(PredictiveAlertEngine._rule_pick(cands), "C6")
+
+    def test_skip_optional_candidate(self):
+        from .predict import PredictiveAlertEngine, Telemetry
+        route = [(0, 0, 60), (1500, 0, 60), (3000, 0, 60), (3000, 1500, 60)]
+        eng = PredictiveAlertEngine(route, (0, 0, 0), default_vehicle(), priorities=[1, 2, 1, 2])
+        tm = Telemetry(t=0, pos=(100, 0, 60), vel=(12, 0, 0), soc_pct=30, voltage=22.0, current_a=40,
+                       used_wh=340, cell_count=6, next_wp=1, link_pct=90, wind=Wind(5, 90))
+        eng.update(tm)
+        cands = eng._candidates(tm, eng._remaining(tm), eng._walk(eng._remaining(tm), eng._vehicle(), tm.wind),
+                                146.0, 97.6, None, tm.wind)
+        c6 = next(c for c in cands if c["action"] == "A_SKIP_OPTIONAL")
+        self.assertEqual(c6["param"], [2])
+        self.assertEqual(next(c for c in cands if c["id"] == "C4")["missed_required"], 1)
+
+
 class ScenarioTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -19,12 +19,12 @@
 | P4 | 航線前方可能斷訊 | 學「鏈路品質 vs 離家距離」，套到剩餘航點，找第一個低於門檻的點與到達時間 |
 | P5 | 風速將超過抗風上限 | 近 3 分鐘風速線性外推 |
 
-電量類告警的建議選項：照原航線繼續、降速到最省電速度、飛完最晚返航點後返航、立即返航、就地降落（最後手段），每個都附預估落地電量與任務完成度。告警有遲滯（連續 3 次成立才發、10 次不成立才解除），持續中只有升級或建議改變才重新說明。
+電量類告警的建議選項：照原航線繼續、降速到最省電速度、飛完最晚返航點後返航、跳過選配目標只飛必要的（有給 priority 時）、立即返航、就地降落（最後手段），每個都附預估落地電量、任務完成度與會漏掉的必要目標數；規則先保住必要目標。告警有遲滯（連續 3 次成立才發、10 次不成立才解除），持續中只有升級或建議改變才重新說明。
 
 ## 執行
 
 ```bash
-python3 -m unittest gcs_demo.alerts.test_alerts           # 10 項測試
+python3 -m unittest gcs_demo.alerts.test_alerts           # 12 項測試
 GCS_LLM_BACKEND=none python3 -m gcs_demo.alerts.run_demo out/
 # 真實模型（任一 OpenAI 相容服務或 Ollama）
 GCS_LLM_BACKEND=ollama GCS_LLM_URL=http://127.0.0.1:11434 GCS_LLM_MODEL=gemma4:e2b \
@@ -49,11 +49,12 @@ GCS_LLM_BACKEND=ollama GCS_LLM_URL=http://127.0.0.1:11434 GCS_LLM_MODEL=gemma4:e
 from gcs_demo.alerts.predict import PredictiveAlertEngine, Telemetry, Config
 from gcs_demo.alerts.explain import explain
 
-eng = PredictiveAlertEngine(route_enu, home_enu, vehicle, Config())
+eng = PredictiveAlertEngine(route_enu, home_enu, vehicle, Config(),
+                            priorities=[1, 2, 1, ...])   # 可省略；1 必要、2 選配
 for ev in eng.update(Telemetry(...)):      # 每秒一次；回傳 raise / update / resolve 事件
     if ev["type"] != "resolve":
         ev["explain"] = explain(ev)          # 模型說明＋選擇（失敗自動退回規則）
-eng.set_route(new_route)                    # 操作員改航線後通知引擎
+eng.set_route(new_route, indices)           # 操作員改航線後通知引擎（indices＝新航線各點在原航線的索引）
 ```
 
 ## 接進正式 UI（Genio 520 APK）

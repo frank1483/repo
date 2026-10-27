@@ -21,16 +21,18 @@ def main(out_dir="out"):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     backend = explain.get_backend()
+    timeout_s = float(os.environ.get("GCS_LLM_TIMEOUT", "180"))   # CPU 推論一次可能要 30–80 秒
     runs = {}
     for policy in ("ignore", "follow"):
         t0 = time.time()
-        r = sim.run(scenario="gusty", policy=policy, explain_fn=lambda ev: explain.explain(ev, backend))
+        r = sim.run(scenario="gusty", policy=policy,
+                    explain_fn=lambda ev: explain.explain(ev, backend, timeout_s=timeout_s))
         r["wall_s"] = round(time.time() - t0, 1)
         runs[policy] = r
         n_llm = sum(1 for e in r["events"] if e.get("explain", {}).get("source") == "llm")
         print(f"{policy}: {len(r['events'])} 事件（模型說明 {n_llm}）落地 {r['summary']['landed_true_pct_of_nominal']}%")
     meta = {"backend": getattr(backend, "name", "?"), "model": getattr(backend, "model", None),
-            "energy_source": ENERGY_SOURCE, "generated": time.strftime("%Y-%m-%d %H:%M", time.localtime())}
+            "energy_source": ENERGY_SOURCE, "timeout_s": timeout_s, "generated": time.strftime("%Y-%m-%d %H:%M", time.localtime())}
     data = {"meta": meta, "runs": runs}
     (out / "alerts_demo.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     html = (Path(__file__).with_name("demo_template.html")).read_text(encoding="utf-8")
