@@ -65,6 +65,13 @@ class ExplainTests(unittest.TestCase):
         d = {"decision": "SELECT", "choice_id": "C3", "reason_zh": "x", "evidence_ids": ["E1"], "summary_zh": "剩 63%"}
         self.assertIn("63", explain.explain(EV, FakeBackend(d))["fallback_reason"])
 
+    def test_simplified_or_field_names_fall_back(self):
+        d = {"decision": "SELECT", "choice_id": "C3", "reason_zh": "x", "evidence_ids": ["E1"],
+             "summary_zh": "电量不足以完成原航线，建议返航。"}
+        self.assertEqual(explain.explain(EV, FakeBackend(d))["fallback_reason"], "說明用了簡體字")
+        d["summary_zh"], d["reason_zh"] = "建議返航。", "missed_required 為 0"
+        self.assertEqual(explain.explain(EV, FakeBackend(d))["fallback_reason"], "說明寫出內部欄位名稱")
+
     def test_backend_down_still_alerts(self):
         r = explain.explain(EV, FakeBackend(None, ok=False))
         self.assertEqual(r["source"], "rule")

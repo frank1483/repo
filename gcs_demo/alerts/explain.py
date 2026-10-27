@@ -17,6 +17,7 @@ SYSTEM_ZH = (
     "建議只能從 candidates 中選一個 id，且只能選 feasible=true 的，優先選 missed_required（漏掉的必要目標數）為 0 的；都不可行時選 end_pct 最高者。"
     "回覆只輸出 JSON：{\"decision\":\"SELECT\",\"choice_id\":\"C?\",\"reason_zh\":\"一句話理由\","
     "\"evidence_ids\":[\"E?\"],\"summary_zh\":\"給操作員的兩句白話說明\"}。"
+    "一律使用台灣繁體中文，不要寫出欄位名稱（例如 end_pct、missed_required、feasible）。"
 )
 
 # gcs_demo.llm 的極簡 schema 格式（只檢查必要欄位與型別）
@@ -71,6 +72,11 @@ def explain(ev: dict, backend=None, timeout_s=60) -> dict:
     return {"text": d, "source": "llm", "fallback_reason": None, "llm": log}
 
 
+_FIELD_NAMES = ("end_pct", "missed_required", "feasible", "completion_pct", "choice_id", "evidence_ids")
+# 常見的簡體專用字（繁體不會出現），出現兩個以上視為簡體輸出
+_SIMPLIFIED = set("电线这为时还应发达变项预备点务议机险问题实际们没过")
+
+
 def validate(d: dict, ev: dict) -> str | None:
     """模型輸出不合規就回傳原因（退回規則），合規回 None。"""
     for k in ("choice_id", "summary_zh"):
@@ -86,6 +92,11 @@ def validate(d: dict, ev: dict) -> str | None:
     ev_ids = {e["id"] for e in ev.get("evidence", [])}
     if d.get("evidence_ids") and not set(d["evidence_ids"]) & ev_ids:
         return "引用的 evidence 全部不存在"
+    text = d["summary_zh"] + d.get("reason_zh", "")
+    if any(f in text for f in _FIELD_NAMES):
+        return "說明寫出內部欄位名稱"
+    if sum(ch in _SIMPLIFIED for ch in text) >= 2:
+        return "說明用了簡體字"
     # 模型句子裡不准出現事實裡沒有的百分比數字
     allowed = json.dumps(ev, ensure_ascii=False)
     import re
