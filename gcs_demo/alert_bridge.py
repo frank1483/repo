@@ -22,7 +22,8 @@ class AlertFeed:
         self.vehicle = vehicle
         prio = [p.get("priority", 1) for p in path[1:-1]]     # 繞行點視同必經
         self.engine = PredictiveAlertEngine(self._route(path), (0.0, 0.0, 0.0), vehicle,
-                                            Config(reserve_pct=vehicle.reserve_pct), priorities=prio)
+                                            Config(reserve_pct=vehicle.reserve_pct, cell_empty_v=3.5),
+                                            priorities=prio)
         self.explain_fn = explain_fn
         self.events = []
 
@@ -45,7 +46,8 @@ class AlertFeed:
                        soc_pct=rec["battery_pct"], voltage=volt - current * 0.004 * CELLS,
                        current_a=current, used_wh=rec.get("used_wh", 0.0), cell_count=CELLS,
                        next_wp=next_idx, link_pct=95.0, wind=Wind(rec["wind_mps"], rec["wind_from"]))
-        new = self.engine.update(tm)
+        # 模擬電壓只是 soc 的線性函數、沒有老化資訊，容量告警在此情境不可信，略過
+        new = [e for e in self.engine.update(tm) if e["key"] != "battery_capacity"]
         for ev in new:
             if ev["type"] != "resolve" and self.explain_fn:
                 ev["explain"] = self.explain_fn(ev)
