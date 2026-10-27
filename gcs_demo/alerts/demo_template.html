@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>預測型智慧告警</title>
+<style>
+:root{
+  --bg:#0a0f12; --panel:#11181d; --card:#162027; --line:#24323b; --text:#e8eef2; --t2:#a7b4bd; --t3:#6f7f8a;
+  --primary:#00b8db; --ok:#22c55e; --warn:#f5a524; --crit:#ef4444; --notice:#38bdf8; --route:#5b6b76; --track:#00b8db;
+}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
+  --bg:#f4f6f8; --panel:#ffffff; --card:#f0f3f5; --line:#d6dde2; --text:#0f1a20; --t2:#4a5a64; --t3:#7b8a94;
+  --primary:#0089a7; --route:#9aa8b1; --track:#0089a7;}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Noto Sans TC","Inter",system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+h1{font-size:18px;margin:0 12px 0 0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.seg button{background:none;border:0;color:var(--t2);padding:6px 14px;cursor:pointer;font:inherit}
+.seg button.on{background:var(--primary);color:#001318;font-weight:600}
+button.btn{background:var(--card);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit}
+input[type=range]{flex:1;min-width:160px;accent-color:var(--primary)}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+main{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:12px;padding:12px 16px}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;min-width:0}
+.panel h2{font-size:13px;color:var(--t2);font-weight:600;margin:0 0 8px;letter-spacing:.02em}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
+@media (max-width:600px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpi{background:var(--card);border-radius:8px;padding:8px 10px}
+.kpi .l{font-size:12px;color:var(--t3)} .kpi .v{font-size:20px;font-weight:600}
+svg{width:100%;height:auto;display:block}
+.alerts{display:flex;flex-direction:column;gap:6px;max-height:420px;overflow:auto}
+.row{display:grid;grid-template-columns:52px 68px 1fr;gap:8px;align-items:start;background:var(--card);border-radius:8px;padding:8px;cursor:pointer;border:1px solid transparent}
+.row.sel{border-color:var(--primary)} .row.old{opacity:.55}
+.badge{font-size:12px;border-radius:999px;padding:1px 8px;text-align:center;font-weight:600;color:#000}
+.s2{background:var(--crit);color:#fff}.s4{background:var(--warn)}.s5{background:var(--notice)}
+.tag{font-size:11px;color:var(--t3)}
+.detail{margin-top:12px}
+.detail .sum{background:var(--card);border-left:3px solid var(--primary);padding:8px 10px;border-radius:6px;margin:6px 0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--t3);font-weight:500}
+tr.pick td{background:color-mix(in srgb,var(--primary) 18%,transparent)}
+tr.nofeas td{color:var(--t3)}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--t2);margin-top:4px}
+.legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:4px}
+.note{font-size:12px;color:var(--t3);margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>預測型智慧告警 demo</h1>
+  <div class="seg" id="policy">
+    <button data-p="ignore" class="on">不理會告警，照原航線飛</button>
+    <button data-p="follow">操作員採用建議</button>
+  </div>
+  <button class="btn" id="play">▶ 播放</button>
+  <div class="seg" id="speed"><button data-s="10">10×</button><button data-s="30" class="on">30×</button><button data-s="90">90×</button></div>
+  <input type="range" id="slider" min="0" max="100" value="0">
+  <span class="mono" id="clock">00:00</span>
+</header>
+<main>
+  <section>
+    <div class="kpis">
+      <div class="kpi"><div class="l">飛控電量</div><div class="v mono" id="k_soc">--</div></div>
+      <div class="kpi"><div class="l">預估落地電量</div><div class="v mono" id="k_pred">--</div></div>
+      <div class="kpi"><div class="l">最晚返航點</div><div class="v mono" id="k_pnr">--</div></div>
+      <div class="kpi"><div class="l">風速／鏈路</div><div class="v mono" id="k_env">--</div></div>
+    </div>
+    <div class="panel"><h2>航線（俯視，家在左下）</h2><svg id="map" viewBox="0 0 640 400"></svg>
+      <div class="legend"><span><i style="background:var(--route)"></i>原航線</span><span><i style="background:var(--track)"></i>已飛</span><span><i style="background:var(--warn)"></i>最晚返航點</span></div>
+    </div>
+    <div class="panel" style="margin-top:12px"><h2>電量：實際 vs 預測</h2><svg id="chart" viewBox="0 0 640 220"></svg>
+      <div class="legend"><span><i style="background:var(--t2)"></i>飛控電量%</span><span><i style="background:var(--ok)"></i>模擬真實剩餘</span><span><i style="background:var(--primary)"></i>預估落地電量</span><span><i style="background:var(--crit)"></i>保留 20%</span></div>
+    </div>
+  </section>
+  <section>
+    <div class="panel"><h2>告警（依時間）</h2><div class="alerts" id="alerts"></div></div>
+    <div class="panel detail" id="detail"><h2>告警詳情</h2><div class="tag">點選左側告警查看說明、依據與建議。</div></div>
+    <div class="panel" style="margin-top:12px" id="outcome"></div>
+  </section>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const KEYNAME = {battery_route:"航線電量", rtl_point:"最晚返航點", battery_capacity:"電池容量", link_route:"鏈路預測", wind_trend:"風速趨勢"};
+const SEVNAME = {2:"緊急", 4:"警告", 5:"預告"};
+let policy = "ignore", idx = 0, playing = false, speed = 30, selected = null, timer = null;
+const $ = s => document.querySelector(s);
+const fmt = s => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+const run = () => DATA.runs[policy];
+
+function bounds(r){
+  const xs = r.route.map(p=>p[0]).concat([0]), ys = r.route.map(p=>p[1]).concat([0]);
+  return {x0:Math.min(...xs)-150, x1:Math.max(...xs)+150, y0:Math.min(...ys)-150, y1:Math.max(...ys)+150};
+}
+function proj(b, x, y){
+  const s = Math.min(640/(b.x1-b.x0), 400/(b.y1-b.y0));
+  return [(x-b.x0)*s, 400-(y-b.y0)*s];
+}
+function drawMap(){
+  const r = run(), b = bounds(r), f = r.frames, cur = f[idx];
+  let h = "";
+  h += `<polyline fill="none" stroke="var(--route)" stroke-width="1.5" stroke-dasharray="4 4" points="${r.route.map(p=>proj(b,p[0],p[1]).join(",")).join(" ")}"/>`;
+  r.route.forEach((p,i)=>{ if(i===0) return; const [x,y]=proj(b,p[0],p[1]);
+    h += `<circle cx="${x}" cy="${y}" r="3" fill="var(--route)"/><text x="${x+5}" y="${y-5}" font-size="10" fill="var(--t3)">${i+1}</text>`; });
+  const tr = f.slice(0, idx+1).filter((_,i)=>i%3===0).map(q=>proj(b,q.x,q.y).join(",")).join(" ");
+  h += `<polyline fill="none" stroke="var(--track)" stroke-width="2.5" points="${tr}"/>`;
+  if (cur.pnr_wp != null){ const p = r.route[cur.pnr_wp]; if (p){ const [x,y]=proj(b,p[0],p[1]);
+    h += `<circle cx="${x}" cy="${y}" r="10" fill="none" stroke="var(--warn)" stroke-width="2.5"/>`; } }
+  const [hx,hy] = proj(b,0,0);
+  h += `<rect x="${hx-7}" y="${hy-7}" width="14" height="14" rx="3" fill="var(--ok)"/><text x="${hx+10}" y="${hy+4}" font-size="11" fill="var(--t2)">家</text>`;
+  const [vx,vy] = proj(b,cur.x,cur.y);
+  h += `<circle cx="${vx}" cy="${vy}" r="7" fill="var(--primary)" stroke="#fff" stroke-width="2"/>`;
+  $("#map").innerHTML = h;
+}
+function drawChart(){
+  const r = run(), f = r.frames, T = Math.max(DATA.runs.ignore.frames.at(-1).t, DATA.runs.follow.frames.at(-1).t);
+  const X = t => 36 + t/T*590, Y = v => 200 - Math.max(-5, Math.min(100, v))/105*185;
+  const line = (key, upto) => f.slice(0, upto+1).filter(q=>q[key]!=null).filter((_,i)=>i%2===0).map(q=>`${X(q.t)},${Y(q[key])}`).join(" ");
+  let h = "";
+  [0,20,40,60,80,100].forEach(v=>{ h += `<line x1="36" x2="626" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="4" y="${Y(v)+4}" font-size="10" fill="var(--t3)">${v}%</text>`; });
+  for (let m=0; m*60<=T; m+=5) h += `<text x="${X(m*60)-8}" y="216" font-size="10" fill="var(--t3)">${m}分</text>`;
+  h += `<line x1="36" x2="626" y1="${Y(20)}" y2="${Y(20)}" stroke="var(--crit)" stroke-dasharray="5 4"/>`;
+  h += `<polyline fill="none" stroke="var(--t2)" stroke-width="1.5" points="${line("soc_fc", idx)}"/>`;
+  h += `<polyline fill="none" stroke="var(--ok)" stroke-width="1.5" stroke-dasharray="3 3" points="${line("soc_true_nom", idx)}"/>`;
+  h += `<polyline fill="none" stroke="var(--primary)" stroke-width="2.5" points="${line("pred_end", idx)}"/>`;
+  r.events.filter(e=>e.type==="raise" && e.t<=f[idx].t).forEach(e=>{
+    h += `<line x1="${X(e.t)}" x2="${X(e.t)}" y1="12" y2="200" stroke="${e.severity<=2?"var(--crit)":e.severity<=4?"var(--warn)":"var(--notice)"}" stroke-width="1" opacity=".6"/>`; });
+  h += `<line x1="${X(f[idx].t)}" x2="${X(f[idx].t)}" y1="8" y2="200" stroke="var(--text)" stroke-width="1"/>`;
+  $("#chart").innerHTML = h;
+}
+function eventsSoFar(){ const t = run().frames[idx].t; return run().events.filter(e=>e.t<=t); }
+function drawAlerts(){
+  const evs = eventsSoFar(), active = new Set(run().frames[idx].active);
+  const latest = {};
+  evs.forEach((e,i)=>{ latest[e.key] = i; });
+  const html = evs.map((e,i)=>{ const live = e.type!=="resolve" && active.has(e.key) && latest[e.key]===i;
+    const txt = e.type==="resolve" ? "已解除" : (e.type==="update" ? "更新" : "新告警");
+    return `<div class="row ${selected===i?"sel":""} ${live?"":"old"}" data-i="${i}">
+      <span class="badge s${e.severity}">${SEVNAME[e.severity]||e.severity}</span>
+      <span class="mono tag">${fmt(e.t)}<br>${txt}</span>
+      <div><b>${e.title}</b><div class="tag">${KEYNAME[e.key]||e.key}｜${e.value}</div></div></div>`; }).reverse().join("");
+  $("#alerts").innerHTML = html || `<div class="tag">目前沒有告警。</div>`;
+  document.querySelectorAll(".row").forEach(el=>el.onclick=()=>{ selected=+el.dataset.i; drawAlerts(); drawDetail(); });
+}
+function drawDetail(){
+  const e = eventsSoFar()[selected];
+  if (!e){ $("#detail").innerHTML = `<h2>告警詳情</h2><div class="tag">點選左側告警查看說明、依據與建議。</div>`; return; }
+  const ex = e.explain || {}, tx = ex.text || {}, llm = ex.llm || {};
+  const src = ex.source==="llm" ? `模型說明（${llm.backend}${llm.model?" / "+llm.model:""}，${llm.latency_s}s）${tx.rule_agrees===false?"｜與規則選擇不同":""}`
+            : `規則說明${ex.fallback_reason?`（模型未採用：${ex.fallback_reason}）`:""}`;
+  const pick = tx.choice_id || e.rule_choice;
+  const ev = (e.evidence||[]).map(x=>`<tr><td class="mono">${x.id}</td><td>${x.text}</td><td class="mono">${x.value}</td></tr>`).join("");
+  const cd = (e.candidates||[]).map(c=>`<tr class="${c.id===pick?"pick":""} ${c.feasible===false?"nofeas":""}"><td class="mono">${c.id}</td><td>${c.label}</td>
+     <td class="mono">${c.end_pct!=null?c.end_pct.toFixed(1)+"%":"—"}</td><td class="mono">${c.completion_pct!=null?c.completion_pct+"%":"—"}</td><td>${c.feasible===false?"否":"是"}</td></tr>`).join("");
+  $("#detail").innerHTML = `<h2>告警詳情｜${fmt(e.t)}｜${KEYNAME[e.key]||e.key}</h2>
+    <div><span class="badge s${e.severity}">${SEVNAME[e.severity]}</span> <b>${e.title}</b>：${e.value}</div>
+    ${e.type!=="resolve"?`<div class="sum">${tx.summary_zh||""}${tx.reason_zh?`<div class="tag">理由：${tx.reason_zh}</div>`:""}</div><div class="tag">${src}</div>`:""}
+    <h2 style="margin-top:10px">演算法算出的依據</h2><table>${ev}</table>
+    ${cd?`<h2 style="margin-top:10px">建議選項（數字由演算法算，模型只能從可行的裡面挑）</h2>
+    <table><tr><th></th><th>動作</th><th>預估落地</th><th>任務完成</th><th>可行</th></tr>${cd}</table>`:""}`;
+}
+function drawOutcome(){
+  const r = run(), s = r.summary, done = idx >= r.frames.length-1;
+  const first = r.events.find(e=>e.key==="battery_route" && e.type==="raise");
+  const ap = (r.applied||[]).map(a=>`${fmt(a.t)} 採用「${a.label}」`).join("；");
+  $("#outcome").innerHTML = `<h2>這一趟的結果${done?"":"（播放完才算數）"}</h2>
+   <table>
+    <tr><td>首次預測電量不足</td><td class="mono">${first?fmt(first.t)+`，比落地早 ${Math.round((s.flight_s-first.t)/60)} 分鐘`:"—"}</td></tr>
+    <tr><td>操作員動作</td><td>${ap||"無（照原航線）"}</td></tr>
+    <tr><td>實際落地剩餘（占標稱）</td><td class="mono" style="color:${s.landed_true_pct_of_nominal<s.reserve_pct?"var(--crit)":"var(--ok)"}">${done?s.landed_true_pct_of_nominal+"%":"…"}（保留 ${s.reserve_pct}%）</td></tr>
+   </table>
+   <div class="note">模擬設定：電池實際容量只有標稱 ${Math.round(s.cap_true_ratio*100)}%（飛控不知道），實際耗電比模型多 ${Math.round((s.power_true-1)*100)}%，第 4–10 分鐘風速 3→11 m/s（只有「風大」那一趟）。
+   說明來源：${DATA.meta.backend}${DATA.meta.model?" / "+DATA.meta.model:""}；能耗模型：${DATA.meta.energy_source}；產生於 ${DATA.meta.generated}（台灣時間）。</div>`;
+}
+function render(){
+  const f = run().frames; idx = Math.min(idx, f.length-1);
+  const c = f[idx];
+  $("#slider").max = f.length-1; $("#slider").value = idx; $("#clock").textContent = fmt(c.t);
+  $("#k_soc").textContent = c.soc_fc!=null ? c.soc_fc.toFixed(0)+"%" : "--";
+  const pe = $("#k_pred"); pe.textContent = c.pred_end!=null ? c.pred_end.toFixed(0)+"%" : "--";
+  pe.style.color = c.pred_end==null ? "" : c.pred_end < 20 ? "var(--crit)" : "var(--ok)";
+  $("#k_pnr").textContent = c.pnr_wp!=null ? `WP${c.pnr_wp+1}・${fmt(c.pnr_eta)}` : "--";
+  $("#k_env").textContent = `${c.wind}m/s・${c.link??"--"}%`;
+  drawMap(); drawChart(); drawAlerts(); drawDetail(); drawOutcome();
+}
+function tick(){ const f = run().frames; idx = Math.min(f.length-1, idx + Math.max(1, Math.round(speed/10)));
+  render(); if (idx >= f.length-1) stop(); }
+function start(){ playing = true; $("#play").textContent = "❚❚ 暫停"; timer = setInterval(tick, 100); }
+function stop(){ playing = false; $("#play").textContent = "▶ 播放"; clearInterval(timer); }
+$("#play").onclick = ()=> playing ? stop() : (idx >= run().frames.length-1 && (idx=0), start());
+$("#slider").oninput = e=>{ idx = +e.target.value; render(); };
+document.querySelectorAll("#policy button").forEach(b=>b.onclick=()=>{ document.querySelectorAll("#policy button").forEach(x=>x.classList.toggle("on", x===b)); policy=b.dataset.p; selected=null; render(); });
+document.querySelectorAll("#speed button").forEach(b=>b.onclick=()=>{ document.querySelectorAll("#speed button").forEach(x=>x.classList.toggle("on", x===b)); speed=+b.dataset.s; });
+render();
+</script>
+</body>
+</html>
