@@ -30,6 +30,12 @@ fi
 [ -n "$QT_PREFIX" ] || { echo "找不到 Qt 路徑，請設定 QT_PREFIX=<Qt 6.8.3 gcc_64 路徑> 再執行"; exit 1; }
 echo "Qt：$QT_PREFIX"
 
+# 專案需要 CMake ≥ 3.25；系統版太舊時改用已知位置的新版（例如 ~/qgc-aqt-env/bin）
+for d in "$HOME/qgc-aqt-env/bin" "$HOME/.local/bin" /opt/cmake/bin; do
+    [ -x "$d/cmake" ] && "$d/cmake" --version | head -1 | grep -qE ' 3\.(2[5-9]|[3-9][0-9])|  ?[4-9]\.' && { export PATH="$d:$PATH"; break; }
+done
+echo "CMake：$(cmake --version | head -1)"
+
 cd "$DST"
 [ -f build/CMakeCache.txt ] || cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$QT_PREFIX"
 cmake --build build --parallel 4 2>&1 | tee build_agent.log | tail -5
