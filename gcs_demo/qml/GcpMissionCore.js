@@ -34,7 +34,10 @@ function vehicle(over) {
     return v
 }
 
-function wind(speed, fromDeg) { return { speed_mps: speed || 0, from_deg: fromDeg || 0 } }
+// NaN 不能用 || 0 靜默變成無風；僅缺省值使用 0。
+function wind(speed, fromDeg) {
+    return { speed_mps: speed === undefined ? 0 : speed, from_deg: fromDeg === undefined ? 0 : fromDeg }
+}
 
 function windVector(w) {
     var to = rad(w.from_deg + 180.0)
@@ -89,6 +92,7 @@ function bestSpeed(v, w, headingDeg) {
         var perKm = e.energy_wh / Math.max(e.dist_m, 1) * 1000
         if (best === null || perKm < best[1]) best = [rnd(s, 1), perKm]
     }
+    if (best === null) return { speed_mps: null, wh_per_km: null, error: "沒有可搜尋的速度" }
     return { speed_mps: best[0], wh_per_km: rnd(best[1], 2) }
 }
 
@@ -110,6 +114,7 @@ function segCircleHit(a, b, c, r) {
 }
 
 function insertDetours(points, zones, origin) {
+    if (!points.length) return []
     var out = [points[0]], n = 0
     for (var i = 1; i < points.length; i++) {
         var b = points[i], a = out[out.length - 1]
@@ -249,7 +254,60 @@ function rulePick(rc, text) {
               : { choice_id: "", source: "rule", decision: "HOLD", reason_zh: "所有候選都不可行（電量或限制不符），建議換電池、分兩趟或減少目標。", evidence_ids: [] }
 }
 
+// ---------------- 入口邊界（不改有效輸入的排序、能耗公式或候選 ID） ----------------
+function finiteNumber(x) { return typeof x === "number" && isFinite(x) }
+function coordinate(p) {
+    return p && finiteNumber(p.lat) && finiteNumber(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180
+}
+function inputError(m, v, w, allowEmpty) {
+    if (!m || !coordinate(m.home) || !Array.isArray(m.targets)) return "home 或航點格式無效"
+    if (!allowEmpty && !m.targets.length) return "沒有任務航點，請先加入目標"
+    if (!v || !w || !finiteNumber(w.speed_mps) || w.speed_mps < 0 || !finiteNumber(w.from_deg)) return "風速或風向無效"
+    var positive = ["mass_kg", "battery_wh", "usable_frac", "p_hover_w", "eta", "cruise_mps", "max_mps", "calib"]
+    for (var i = 0; i < positive.length; ++i)
+        if (!finiteNumber(v[positive[i]]) || v[positive[i]] <= 0) return "載具數值無效：" + positive[i]
+    if (v.max_mps < 4 || v.usable_frac > 1 || v.eta > 1 || !finiteNumber(v.cda_m2) || v.cda_m2 < 0 ||
+        !finiteNumber(v.reserve_pct) || v.reserve_pct < 0 || v.reserve_pct > 100) return "載具限制無效"
+    if (m.speed_mps !== undefined && (!finiteNumber(m.speed_mps) || m.speed_mps <= 0)) return "任務速度無效"
+    if (m.cruise_alt_m !== undefined && (!finiteNumber(m.cruise_alt_m) || m.cruise_alt_m < 0)) return "巡航高度無效"
+    var seenIds = [String(m.home.id || "H")], positions = []
+    for (i = 0; i < m.targets.length; ++i) {
+        var t = m.targets[i]
+        if (!coordinate(t) || typeof t.id !== "string" || !t.id ||
+            (t.alt !== undefined && (!finiteNumber(t.alt) || t.alt < 0))) return "航點欄位無效"
+        var xyz = [t.lat, t.lon, t.alt === undefined ? (m.cruise_alt_m || 50) : t.alt].join(",")
+        if (seenIds.indexOf(t.id) >= 0 || positions.indexOf(xyz) >= 0) return "重複航點 ID 或位置，請先釐清目標"
+        seenIds.push(t.id); positions.push(xyz)
+    }
+    if (m.no_fly !== undefined && !Array.isArray(m.no_fly)) return "禁航區格式無效"
+    for (i = 0; i < (m.no_fly || []).length; ++i) {
+        var z = m.no_fly[i]
+        if (!coordinate(z) || !finiteNumber(z.radius_m) || z.radius_m <= 0) return "禁航區數值無效"
+    }
+    return ""
+}
+function boundaryHold(kind, why) {
+    return { kind: kind, candidates: [], rule_choice: "", pick: {
+        decision: "HOLD", choice_id: "", source: "rule", reason_zh: why, evidence_ids: ["E1"]
+    }, evidence: [{ id: "E1", text: why }], task_zh: "輸入待釐清，未產生可執行建議" }
+}
+function stateError(m, s) {
+    if (!s || !coordinate(s) || !finiteNumber(s.battery_pct) || s.battery_pct < 0 || s.battery_pct > 100 ||
+        (s.alt !== undefined && (!finiteNumber(s.alt) || s.alt < 0)) ||
+        (s.observed_ratio !== undefined && (!finiteNumber(s.observed_ratio) || s.observed_ratio <= 0)) ||
+        !Array.isArray(s.remaining) || !Array.isArray(s.completed)) return "重規劃遙測或目標清單無效"
+    var ids = m.targets.map(function (t) { return t.id }), seen = []
+    var all = s.remaining.concat(s.completed)
+    for (var i = 0; i < all.length; ++i) {
+        if (ids.indexOf(all[i]) < 0 || seen.indexOf(all[i]) >= 0) return "剩餘／已完成航點重複或不存在"
+        seen.push(all[i])
+    }
+    return ""
+}
+
 function planMission(mission, v, w) {
+    var invalid = inputError(mission, v, w, false)
+    if (invalid) return boundaryHold("plan", invalid)
     var alt = mission.cruise_alt_m || 50, h = home(mission), tg = targets(mission)
     tg.forEach(function (t) { if (t.alt === undefined) t.alt = alt })
     var v0 = mission.speed_mps || v.cruise_mps, end = home(mission), c = []
@@ -273,6 +331,11 @@ function planMission(mission, v, w) {
 }
 
 function replan(mission, v0in, w, state, event) {
+    var invalid = inputError(mission, v0in, w, true)
+    if (invalid) return boundaryHold("replan", invalid)
+    invalid = stateError(mission, state)
+    if (invalid || !event || typeof event !== "object") return boundaryHold("replan", invalid || "事件格式無效")
+    if (event.type === "add_target" && !event.target) return boundaryHold("replan", "新增目標格式無效")
     var m = clone(mission), note = event.text_zh || ""
     var v = clone(v0in)
     var ratio = state.observed_ratio !== undefined ? state.observed_ratio : v.calib
@@ -281,6 +344,8 @@ function replan(mission, v0in, w, state, event) {
     else if (event.type === "no_fly") { m.no_fly = (m.no_fly || []).concat([event.zone]) }
     else if (event.type === "add_target") { m.targets.push(event.target); state = clone(state); state.remaining.push(event.target.id) }
     else if (event.type === "battery") { state = clone(state); state.battery_pct = event.battery_pct }
+    invalid = inputError(m, v, w, true) || stateError(m, state)
+    if (invalid) return boundaryHold("replan", invalid)
     m.completed = state.completed
     var cur = { id: "現在位置", lat: state.lat, lon: state.lon, alt: state.alt !== undefined ? state.alt : (m.cruise_alt_m || 50), kind: "current" }
     var end = home(m)
@@ -328,10 +393,10 @@ function replan(mission, v0in, w, state, event) {
     var rtl = evaluate("R1", "立即返航", "放棄剩餘目標直接回家", m, v, w, [cur, end], s0, pct)
     rtl.feasible = rtl.end_pct >= v.reserve_pct && rtl.violations.length === 0
     c.push(rtl)
-    var rc = ruleChoice(c.filter(function (x) { return x.id !== "R1" })) || (rtl.end_pct > 0 ? "R1" : "")
+    var rc = ruleChoice(c.filter(function (x) { return x.id !== "R1" })) || (rtl.feasible ? "R1" : "")
     var ev = evidenceFor(c, v, w, ["觸發事件：" + note, "目前電量 " + pct + "%", "起飛後實際耗電是預估的 " + Math.round(ratio * 100) + "%，剩餘航線已用此比例修正"])
     return { kind: "replan", event: event, state: state, candidates: c, rule_choice: rc, pick: rulePick(rc), evidence: ev,
-             task_zh: "飛行中重規劃：事件發生後選一條剩餘航線。必要目標盡量完成，但落地電量必須高於保留值；都不行就選立即返航。",
+             task_zh: "飛行中重規劃：事件發生後選一條剩餘航線。必要目標盡量完成，但落地電量必須高於保留值；返航也必須可行，全部不可行則 HOLD。",
              vehicle: v, wind: w }
 }
 
@@ -355,13 +420,15 @@ function extractJson(text) {
 // 模型回覆 → pick；不合法就退回規則選擇（附原因）
 function validatePick(result, text) {
     var rc = result.rule_choice, d = extractJson(text)
-    var fb = rulePick(rc)
+    var fb = result.pick && result.pick.decision === "HOLD" ? clone(result.pick) : rulePick(rc)
     if (!d) { fb.reason_zh += "（模型回覆不是 JSON，已退回規則）"; return fb }
     var ids = result.candidates.map(function (c) { return c.id }), ev = result.evidence.map(function (e) { return e.id })
-    var cited = (d.evidence_ids || []).filter(function (x) { return ev.indexOf(x) >= 0 })
+    var cited = (Array.isArray(d.evidence_ids) ? d.evidence_ids : []).filter(function (x) { return ev.indexOf(x) >= 0 })
     var dec = String(d.decision || "").toUpperCase()
     if (dec === "HOLD") return { choice_id: "", source: "llm", decision: "HOLD", reason_zh: String(d.reason_zh || ""), evidence_ids: cited }
     if (dec !== "SELECT" || ids.indexOf(d.choice_id) < 0) { fb.reason_zh += "（模型選了不存在的候選，已退回規則）"; return fb }
+    var selected = result.candidates.filter(function (c) { return c.id === d.choice_id })[0]
+    if (!selected.feasible) { fb.reason_zh += "（模型選了不可行候選，已退回規則）"; return fb }
     return { choice_id: d.choice_id, source: "llm", decision: "SELECT", reason_zh: String(d.reason_zh || ""), evidence_ids: cited }
 }
 

@@ -96,7 +96,9 @@ Item {
     }
 
     function currentWind() {
-        return Core.wind(parseFloat(windSpeed.text) || 0, parseFloat(windFrom.text) || 0)
+        // 空白當 0；打錯字保留 NaN，讓核心回 HOLD 並說明，而不是默默當成無風
+        function num(t) { return t.trim() === "" ? 0 : Number(t) }
+        return Core.wind(num(windSpeed.text), num(windFrom.text))
     }
 
     // ------------------------------------------------------------ 規劃
@@ -106,7 +108,7 @@ Item {
         stage = "plan"; report = null; alertInfo = null; run = null
         result = Core.planMission(mission, vehicleParams(), currentWind())
         selected = result.pick.choice_id || result.rule_choice
-        status = ""
+        status = result.candidates.length ? "" : result.pick.reason_zh
         drawPreview()
         askModel(result)
     }

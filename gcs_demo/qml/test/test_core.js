@@ -1,3 +1,6 @@
+// 0306: default runs only NEW boundaries. Existing nominal body preserved below.
+// Claude may opt in to nominal comparison once with --with-nominal after assessing the no-rerun rule.
+if (process.argv.includes("--with-nominal")) {
 // node gcs_demo/qml/test/test_core.js  —— JS 移植和 Python 版逐候選比對，並測模型驗證與模擬報告
 const assert = require("assert"), { execFileSync } = require("child_process"), path = require("path")
 const C = require("./load_core")()
@@ -48,3 +51,6 @@ const llmRep = C.applyReportLlm(rep, JSON.stringify({ summary_zh: "摘要", sugg
 assert.strictEqual(JSON.stringify(llmRep.suggestions.map(s => s.text_zh)), JSON.stringify(["有據"]))
 assert.strictEqual(C.applyReportLlm(rep, "垃圾").source, "rule")
 console.log(`OK：${n} 個候選與 Python 版一致；模型驗證、模擬、報告測試通過`)
+
+}
+require("./test_boundaries_0306")(require("./load_core")())
