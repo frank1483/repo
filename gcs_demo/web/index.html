@@ -146,7 +146,7 @@ function pickCard(p, ev) {
 
 async function doPlan() {
   const wind = {speed_mps: +$("#ws").value, from_deg: +$("#wd").value};
-  PLAN = await api("/api/plan", {wind});
+  PLAN = await api("api/plan", {wind});
   SEL = PLAN.pick.choice_id || PLAN.rule_choice;
   drawBase(); renderPlan();
   $("#s2").classList.add("hide"); $("#s3").classList.add("hide");
@@ -180,7 +180,7 @@ function animate(log, done) {
 async function startFly() {
   $("#bStart").disabled = true; trail = [];
   $("#s2").classList.remove("hide"); $("#flyOut").innerHTML = "飛行中…";
-  const r = await api("/api/start", {choice_id: SEL}); window.LOG0 = r.telemetry;
+  const r = await api("api/start", {choice_id: SEL}); window.LOG0 = r.telemetry;
   animate(r.telemetry, () => {
     if (!r.replan) { window.LOG0 = []; $("#flyOut").innerHTML = alertsHtml(r.alerts) + "<div class='muted'>全程未觸發電量預測告警</div>"; renderReport(r); return; }
     REPLAN = r.replan; RSEL = REPLAN.pick.choice_id || REPLAN.rule_choice; renderReplan(r);
@@ -206,7 +206,7 @@ function renderReplan(r) {
 
 async function cont() {
   $("#bCont").disabled = true;
-  const r = await api("/api/continue", {choice_id: RSEL});
+  const r = await api("api/continue", {choice_id: RSEL});
   animate(r.telemetry, () => renderReport(r));
 }
 
@@ -236,13 +236,13 @@ function renderReport(r) {
     <div class="row" style="margin-top:10px"><button id="bCal">套用修正係數 ${rep.next_calib.toFixed(2)} 並重新規劃</button>
     <button class="ghost" id="bJson">下載報告 JSON</button></div>`;
   document.querySelectorAll(".ev").forEach(e => { const f = () => document.getElementById("f_" + e.dataset.f)?.classList.toggle("hl"); e.onmouseenter = f; e.onmouseleave = f; });
-  $("#bCal").onclick = async () => { await api("/api/apply_calib", {calib: rep.next_calib}); $("#calibChip").textContent = `耗電修正係數 ${rep.next_calib.toFixed(2)}`; $("#calibChip").classList.add("on"); trail = []; doPlan(); window.scrollTo(0, 0); };
+  $("#bCal").onclick = async () => { await api("api/apply_calib", {calib: rep.next_calib}); $("#calibChip").textContent = `耗電修正係數 ${rep.next_calib.toFixed(2)}`; $("#calibChip").classList.add("on"); trail = []; doPlan(); window.scrollTo(0, 0); };
   $("#bJson").onclick = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(rep, null, 2)], {type: "application/json"})); a.download = "mission_report.json"; a.click(); };
   s3.scrollIntoView({behavior: "smooth"});
 }
 
 (async () => {
-  SC = await api("/api/scenario");
+  SC = await api("api/scenario");
   setupProj(SC.mission); drawBase();
   $("#mName").textContent = SC.mission.name;
   $("#ws").value = SC.wind.speed_mps; $("#wd").value = SC.wind.from_deg;
