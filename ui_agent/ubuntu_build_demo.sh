@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 # 在 Ubuntu（已裝 Qt 6.8.3 的那台）一次做完：開 UI 副本（git worktree）→ 裝 agent → 編 Linux 桌面版。
-# 用法：./ubuntu_build_demo.sh <原 ELAN_GCP_ui repo 路徑> [副本路徑]
-# 原 repo 不會被修改；副本在新分支 ui-agent-demo。
+# 用法：./ubuntu_build_demo.sh <原 ELAN_GCP_ui 路徑> [副本路徑]
+# 原目錄不會被修改：是 git repo 就用 worktree（分支 ui-agent-demo），不是就整份複製到副本再 git init 做基準。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$(cd "${1:?請給原 ELAN_GCP_ui repo 路徑}" && pwd)"
 DST="${2:-$SRC/../ELAN_GCP_ui_agent}"
 
 if [ ! -d "$DST" ]; then
-    git -C "$SRC" worktree add "$DST" -b ui-agent-demo
+    if git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1; then
+        git -C "$SRC" worktree add "$DST" -b ui-agent-demo
+    else
+        mkdir -p "$DST"
+        rsync -a --exclude 'build*/' --exclude '.git/' "$SRC"/ "$DST"/
+        git -C "$DST" init -q
+        git -C "$DST" add -A
+        git -C "$DST" -c user.name=ui-agent -c user.email=ui-agent@local commit -qm "原始 UI 副本（裝 agent 前）"
+    fi
 fi
 DST="$(cd "$DST" && pwd)"
 [ -d "$DST/GCP/Agent" ] || "$HERE/install_into_ui.sh" "$DST"
@@ -18,6 +26,7 @@ QT_PREFIX="${QT_PREFIX:-}"
 if [ -z "$QT_PREFIX" ] && [ -f "$SRC/build/CMakeCache.txt" ]; then
     QT_PREFIX="$(sed -n 's/^Qt6_DIR:[A-Z]*=\(.*\)\/lib\/cmake\/Qt6$/\1/p' "$SRC/build/CMakeCache.txt" | head -1)"
 fi
+[ -n "$QT_PREFIX" ] || { [ -d "$HOME/Qt/6.8.3/gcc_64" ] && QT_PREFIX="$HOME/Qt/6.8.3/gcc_64"; }
 [ -n "$QT_PREFIX" ] || { echo "找不到 Qt 路徑，請設定 QT_PREFIX=<Qt 6.8.3 gcc_64 路徑> 再執行"; exit 1; }
 echo "Qt：$QT_PREFIX"
 
