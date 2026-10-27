@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任務規劃與智慧報告</title>
+<style>
+:root{--bg:#0f1419;--panel:#171d24;--line:#2a333d;--fg:#e6edf3;--mut:#8b98a5;--acc:#3fa7ff;--ok:#3ecf8e;--warn:#f5a524;--crit:#ff5c5c;--opt:#b388ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif}
+header{display:flex;gap:16px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:17px;margin:0;font-weight:600}
+.chip{padding:2px 8px;border-radius:10px;border:1px solid var(--line);color:var(--mut);font-size:12px}
+.chip.on{color:var(--ok);border-color:var(--ok)}
+main{display:grid;grid-template-columns:1fr 480px;height:calc(100vh - 49px)}
+#mapwrap{position:relative;border-right:1px solid var(--line)}
+svg#map{width:100%;height:100%;display:block}
+#side{overflow:auto;padding:12px 14px}
+section{border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:12px;padding:10px 12px}
+section h2{font-size:15px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:center}
+.muted{color:var(--mut);font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{padding:4px 5px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--mut);font-weight:500}
+tr.cand{cursor:pointer}
+tr.cand:hover{background:#1e2731}
+tr.sel{background:#1b3247}
+tr.bad td{color:var(--mut)}
+.tag{display:inline-block;padding:0 6px;border-radius:4px;font-size:11.5px;margin-left:4px}
+.t-ok{background:#183d2e;color:var(--ok)}.t-bad{background:#3d1c1c;color:var(--crit)}
+.t-rule{background:#243447;color:var(--acc)}.t-llm{background:#2e2447;color:var(--opt)}
+button{background:var(--acc);color:#04121f;border:0;border-radius:6px;padding:7px 14px;font-weight:600;cursor:pointer;font-family:inherit}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button:disabled{opacity:.4;cursor:default}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+input[type=number]{width:64px;background:#0f1419;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 5px}
+.pick{border-left:3px solid var(--acc);padding:6px 10px;background:#13202c;margin:8px 0;border-radius:4px}
+.alert{border-left:4px solid var(--warn);background:#2b2412;padding:8px 10px;border-radius:4px;margin-bottom:8px}
+.alert.crit{border-color:var(--crit);background:#2b1515}
+.sug{padding:6px 8px;border-radius:4px;margin:4px 0;background:#13202c;border-left:3px solid var(--acc)}
+.sug.warn{border-color:var(--warn)}.sug.crit{border-color:var(--crit)}
+.ev{font-size:11px;color:var(--acc);cursor:help;margin-left:4px}
+.fact{font-size:12.5px;padding:2px 0}
+.fact.hl{background:#2b3a1d}
+#hud{position:absolute;left:12px;top:12px;background:rgba(15,20,25,.85);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:12.5px;min-width:180px}
+#legend{position:absolute;left:12px;bottom:12px;background:rgba(15,20,25,.85);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:12px}
+.hide{display:none}
+@media (max-width:900px){main{grid-template-columns:1fr;height:auto}#mapwrap{height:60vh}}
+</style>
+</head>
+<body>
+<header>
+  <h1>任務規劃與智慧任務報告</h1>
+  <span id="llm" class="chip">LLM：—</span>
+  <span id="calibChip" class="chip">耗電修正係數 1.00</span>
+  <span class="muted" style="margin-left:auto">演算法產生候選與數字，模型只在候選中選擇；沒有模型時以規則運作</span>
+</header>
+<main>
+  <div id="mapwrap">
+    <svg id="map" viewBox="0 0 1000 800" preserveAspectRatio="xMidYMid meet"></svg>
+    <div id="hud">
+      <div>時間 <b id="hT">0:00</b></div>
+      <div>電量 <b id="hB">100%</b></div>
+      <div>風 <b id="hW">—</b></div>
+      <div>航段 <b id="hL">—</b></div>
+    </div>
+    <div id="legend">
+      <span style="color:var(--acc)">●</span> 必要目標　<span style="color:var(--opt)">●</span> 選配目標
+      <span style="color:var(--crit)">◯</span> 禁航區　<span style="color:var(--warn)">— —</span> 重規劃後
+    </div>
+  </div>
+  <div id="side">
+    <section id="s1">
+      <h2>① 出發前規劃 <span class="muted" id="mName"></span></h2>
+      <div class="row">
+        風速 <input id="ws" type="number" step="0.5"> m/s　風從 <input id="wd" type="number" step="10"> °
+        <button id="bPlan">產生候選航線</button>
+      </div>
+      <div id="planOut"></div>
+    </section>
+    <section id="s2" class="hide">
+      <h2>② 飛行中：預測告警與重規劃</h2>
+      <div id="flyOut" class="muted">按「開始飛行」後模擬飛行；第 5 分鐘風速增強。</div>
+    </section>
+    <section id="s3" class="hide">
+      <h2>③ 智慧任務報告</h2>
+      <div id="repOut"></div>
+    </section>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const api = (p, b) => fetch(p, {method: b ? "POST" : "GET", headers: {"Content-Type": "application/json"},
+  body: b ? JSON.stringify(b) : undefined}).then(r => r.json());
+let SC, PLAN, SEL, REPLAN, RSEL, proj, trail = [];
+const svg = $("#map"), NS = "http://www.w3.org/2000/svg";
+const el = (t, a, p = svg) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); p.appendChild(e); return e; };
+const fmtT = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+
+function setupProj(m) {
+  const pts = [m.home, ...m.targets, ...m.no_fly];
+  const lats = pts.map(p => p.lat), lons = pts.map(p => p.lon);
+  const pad = 0.0015, la0 = Math.min(...lats) - pad, la1 = Math.max(...lats) + pad,
+    lo0 = Math.min(...lons) - pad, lo1 = Math.max(...lons) + pad;
+  const k = Math.cos(m.home.lat * Math.PI / 180);
+  const w = (lo1 - lo0) * k, h = la1 - la0, s = Math.min(1000 / w, 800 / h);
+  const ox = (1000 - w * s) / 2, oy = (800 - h * s) / 2;
+  proj = p => [ox + (p.lon - lo0) * k * s, oy + (la1 - p.lat) * s];
+  proj.m = s / 111320;  // 每公尺幾個單位
+}
+
+function drawBase() {
+  svg.innerHTML = "";
+  const m = SC.mission;
+  for (let i = 0; i <= 10; i++) { el("line", {x1: i * 100, y1: 0, x2: i * 100, y2: 800, stroke: "#1a2129"}); el("line", {x1: 0, y1: i * 80, x2: 1000, y2: i * 80, stroke: "#1a2129"}); }
+  for (const z of m.no_fly) { const [x, y] = proj(z); el("circle", {cx: x, cy: y, r: z.radius_m * proj.m, fill: "rgba(255,92,92,.12)", stroke: "#ff5c5c", "stroke-dasharray": "6 4"}); el("text", {x, y: y + 4, fill: "#ff8a8a", "font-size": 13, "text-anchor": "middle"}).textContent = z.id; }
+  svg.routes = el("g", {}); svg.trail = el("polyline", {fill: "none", stroke: "#3ecf8e", "stroke-width": 2.5, points: ""});
+  for (const t of m.targets) { const [x, y] = proj(t); el("circle", {cx: x, cy: y, r: 11, fill: t.priority == 1 ? "#3fa7ff" : "#b388ff", stroke: "#0f1419", "stroke-width": 2, id: "t_" + t.id}); el("text", {x, y: y + 4.5, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: "#04121f"}).textContent = t.id; }
+  const [hx, hy] = proj(m.home); el("rect", {x: hx - 10, y: hy - 10, width: 20, height: 20, fill: "#f5a524", rx: 3}); el("text", {x: hx, y: hy + 4.5, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: "#04121f"}).textContent = "H";
+  svg.drone = el("g", {class: "hide"}); el("circle", {r: 8, fill: "#fff", stroke: "#3ecf8e", "stroke-width": 3}, svg.drone);
+}
+
+function drawRoute(c, style) {
+  const pts = c.path.map(p => proj(p).join(",")).join(" ");
+  el("polyline", Object.assign({points: pts, fill: "none"}, style), svg.routes);
+  c.path.forEach(p => { if (p.kind === "detour") { const [x, y] = proj(p); el("circle", {cx: x, cy: y, r: 4, fill: "#ff8a8a"}, svg.routes); } });
+}
+
+function candTable(cands, pick, onSel, sel) {
+  const rows = cands.map(c => `<tr class="cand ${c.id === sel ? "sel" : ""} ${c.feasible ? "" : "bad"}" data-id="${c.id}">
+    <td><b>${c.id}</b></td><td>${c.label}${c.id === pick.choice_id ? `<span class="tag ${pick.source === "llm" ? "t-llm" : "t-rule"}">${pick.source === "llm" ? "模型建議" : "規則建議"}</span>` : ""}
+    <div class="muted">${c.order.join("→") || "（直接返航）"}</div></td>
+    <td>${c.dist_km} km<br>${c.time_min} 分</td><td>${c.energy_wh} Wh</td>
+    <td>${c.end_pct}%<span class="tag ${c.feasible ? "t-ok" : "t-bad"}">${c.feasible ? "可行" : "不可行"}</span>
+    ${c.violations.length || c.missing_must.length ? `<div class="muted">${[...c.violations, ...c.missing_must.map(x => "缺必要目標 " + x)].join("；")}</div>` : ""}</td></tr>`).join("");
+  const h = `<table><tr><th></th><th>候選</th><th>距離／時間</th><th>能耗</th><th>落地電量</th></tr>${rows}</table>`;
+  setTimeout(() => document.querySelectorAll("tr.cand").forEach(tr => tr.onclick = () => onSel(tr.dataset.id)));
+  return h;
+}
+
+function pickCard(p, ev) {
+  const evs = (p.evidence_ids || []).map(id => { const e = ev.find(x => x.id === id); return e ? `<div class="muted">${id}：${e.text}</div>` : ""; }).join("");
+  const d = p.decision === "HOLD" ? "<b style='color:var(--warn)'>暫緩（HOLD）</b>，請人工判斷" : `建議 <b>${p.choice_id}</b>`;
+  return `<div class="pick">${d}　<span class="tag ${p.source === "llm" ? "t-llm" : "t-rule"}">${p.source === "llm" ? "模型 " + (p.llm?.model || "") : "規則"}</span><div>${p.reason_zh}</div>${evs}</div>`;
+}
+
+async function doPlan() {
+  const wind = {speed_mps: +$("#ws").value, from_deg: +$("#wd").value};
+  PLAN = await api("/api/plan", {wind});
+  SEL = PLAN.pick.choice_id || PLAN.rule_choice;
+  drawBase(); renderPlan();
+  $("#s2").classList.add("hide"); $("#s3").classList.add("hide");
+}
+
+function renderPlan() {
+  svg.routes.innerHTML = "";
+  for (const c of PLAN.candidates) if (c.id !== SEL) drawRoute(c, {stroke: "#3a4652", "stroke-width": 1.5});
+  const c = PLAN.candidates.find(x => x.id === SEL); if (c) drawRoute(c, {stroke: "#3fa7ff", "stroke-width": 3});
+  $("#planOut").innerHTML = pickCard(PLAN.pick, PLAN.evidence) + candTable(PLAN.candidates, PLAN.pick, id => { SEL = id; renderPlan(); }, SEL) +
+    `<div class="row" style="margin-top:8px"><button id="bStart" ${c && c.feasible ? "" : "disabled"}>確認 ${SEL} 並開始飛行</button><span class="muted">點表格可改選；最終由操作員確認</span></div>`;
+  $("#bStart").onclick = startFly;
+}
+
+function animate(log, done) {
+  svg.drone.classList.remove("hide");
+  let i = 0;
+  const step = () => {
+    for (let k = 0; k < 3 && i < log.length; k++, i++) {
+      const r = log[i]; const [x, y] = proj(r); trail.push(`${x},${y}`);
+      svg.drone.setAttribute("transform", `translate(${x},${y})`);
+      $("#hT").textContent = fmtT(r.t_s); $("#hB").textContent = r.battery_pct.toFixed(1) + "%";
+      $("#hW").textContent = `${r.wind_mps} m/s 從 ${r.wind_from}°`; $("#hL").textContent = r.leg;
+    }
+    svg.trail.setAttribute("points", trail.join(" "));
+    if (i < log.length) requestAnimationFrame(step); else done && done();
+  };
+  step();
+}
+
+async function startFly() {
+  $("#bStart").disabled = true; trail = [];
+  $("#s2").classList.remove("hide"); $("#flyOut").innerHTML = "飛行中…";
+  const r = await api("/api/start", {choice_id: SEL}); window.LOG0 = r.telemetry;
+  animate(r.telemetry, () => {
+    if (!r.replan) { $("#flyOut").textContent = "任務完成"; return; }
+    REPLAN = r.replan; RSEL = REPLAN.pick.choice_id || REPLAN.rule_choice; renderReplan(r);
+  });
+}
+
+function renderReplan(r) {
+  svg.routes.querySelectorAll(".rp").forEach(e => e.remove());
+  const c = REPLAN.candidates.find(x => x.id === RSEL);
+  if (c) { const before = svg.routes.childElementCount; drawRoute(c, {stroke: "#f5a524", "stroke-width": 3, "stroke-dasharray": "8 5"}); [...svg.routes.children].slice(before).forEach(e => e.classList.add("rp")); }
+  const a = r.alert;
+  $("#flyOut").innerHTML = (a ? `<div class="alert ${a.level}"><b>⚠ 預測告警（${fmtT(a.t_s)}）</b><br>${a.text_zh}</div>` : "") +
+    `<div class="muted">目前電量 ${r.state.battery_pct}%，已完成 ${r.state.completed.join("、") || "無"}；剩餘 ${r.state.remaining.join("、")}。
+     以下候選已用「實際/預估耗電比 ${(r.state.observed_ratio * 100).toFixed(0)}%」與新風況重算。LOCAL＝保留原順序局部修補，FULL＝剩餘目標整個重排。</div>` +
+    pickCard(REPLAN.pick, REPLAN.evidence) + candTable(REPLAN.candidates, REPLAN.pick, id => { RSEL = id; renderReplan(r); }, RSEL) +
+    `<div class="row" style="margin-top:8px"><button id="bCont" ${c && c.feasible ? "" : "disabled"}>確認 ${RSEL} 並繼續</button></div>`;
+  $("#bCont").onclick = cont;
+}
+
+async function cont() {
+  $("#bCont").disabled = true;
+  const r = await api("/api/continue", {choice_id: RSEL});
+  animate(r.telemetry, () => renderReport(r));
+}
+
+function chart(planned, log) {
+  const W = 440, H = 150, tmax = Math.max(planned.at(-1).t_s, log.at(-1).t_s);
+  const X = t => 30 + t / tmax * (W - 40), Y = p => 10 + (100 - p) / 100 * (H - 30);
+  const pl = planned.map(p => `${X(p.t_s)},${Y(p.pct)}`).join(" ");
+  const ac = log.filter((_, i) => i % 3 === 0).map(p => `${X(p.t_s)},${Y(p.battery_pct)}`).join(" ");
+  const res = SC.vehicle.reserve_pct;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%">
+    ${[0, 25, 50, 75, 100].map(p => `<line x1="30" x2="${W - 10}" y1="${Y(p)}" y2="${Y(p)}" stroke="#222b35"/><text x="2" y="${Y(p) + 4}" fill="#8b98a5" font-size="10">${p}%</text>`).join("")}
+    <line x1="30" x2="${W - 10}" y1="${Y(res)}" y2="${Y(res)}" stroke="#ff5c5c" stroke-dasharray="4 3"/><text x="${W - 12}" y="${Y(res) - 3}" fill="#ff8a8a" font-size="10" text-anchor="end">保留 ${res}%</text>
+    <polyline points="${pl}" fill="none" stroke="#3fa7ff" stroke-dasharray="5 4" stroke-width="2"/>
+    <polyline points="${ac}" fill="none" stroke="#3ecf8e" stroke-width="2"/>
+    <text x="34" y="${H - 4}" fill="#8b98a5" font-size="10">藍虛線＝起飛前預估　綠線＝實際（${fmtT(tmax)}）</text></svg>`;
+}
+
+function renderReport(r) {
+  $("#flyOut").insertAdjacentHTML("beforeend", `<div class="muted" style="margin-top:6px">✓ 已落地，電量 ${r.state.battery_pct}%</div>`);
+  const rep = r.report, s3 = $("#s3"); s3.classList.remove("hide");
+  const facts = rep.facts.map(f => `<div class="fact" id="f_${f.id}"><span class="muted">${f.id}</span> ${f.text}</div>`).join("");
+  const sugs = rep.suggestions.map(s => `<div class="sug ${s.level || ""}">${s.text_zh}${s.evidence_ids.map(e => `<span class="ev" data-f="${e}">[${e}]</span>`).join("")}</div>`).join("");
+  $("#repOut").innerHTML = `<div class="row"><span class="tag ${rep.source === "llm" ? "t-llm" : "t-rule"}">${rep.source === "llm" ? "模型撰寫（已核對證據）" : "規則撰寫"}</span></div>
+    <p>${rep.summary_zh}</p>${chart(r.planned_curve, [...(window.LOG0 || []), ...r.telemetry])}
+    <h2 style="font-size:14px;margin:10px 0 4px">建議</h2>${sugs}
+    <h2 style="font-size:14px;margin:10px 0 4px">演算法算出的事實</h2>${facts}
+    <div class="row" style="margin-top:10px"><button id="bCal">套用修正係數 ${rep.next_calib.toFixed(2)} 並重新規劃</button>
+    <button class="ghost" id="bJson">下載報告 JSON</button></div>`;
+  document.querySelectorAll(".ev").forEach(e => { const f = () => document.getElementById("f_" + e.dataset.f)?.classList.toggle("hl"); e.onmouseenter = f; e.onmouseleave = f; });
+  $("#bCal").onclick = async () => { await api("/api/apply_calib", {calib: rep.next_calib}); $("#calibChip").textContent = `耗電修正係數 ${rep.next_calib.toFixed(2)}`; $("#calibChip").classList.add("on"); trail = []; doPlan(); window.scrollTo(0, 0); };
+  $("#bJson").onclick = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(rep, null, 2)], {type: "application/json"})); a.download = "mission_report.json"; a.click(); };
+  s3.scrollIntoView({behavior: "smooth"});
+}
+
+(async () => {
+  SC = await api("/api/scenario");
+  setupProj(SC.mission); drawBase();
+  $("#mName").textContent = SC.mission.name;
+  $("#ws").value = SC.wind.speed_mps; $("#wd").value = SC.wind.from_deg;
+  $("#llm").textContent = SC.llm.available ? `LLM：${SC.llm.backend} ${SC.llm.model}` : "LLM：未接（規則模式）";
+  if (SC.llm.available) $("#llm").classList.add("on");
+  $("#bPlan").onclick = doPlan;
+  doPlan();
+})();
+</script>
+</body>
+</html>
