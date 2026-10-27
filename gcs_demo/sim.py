@@ -27,6 +27,7 @@ class MissionRun:
         self.events = []       # 事件／重規劃／告警
         self.completed = []
         self.pos = None
+        self.used_wh = 0.0
 
     def _wind_now(self):
         w = self.wind
@@ -35,8 +36,10 @@ class MissionRun:
                 w = Wind(e["speed_mps"], e["from_deg"])
         return w
 
-    def fly(self, plan: dict, stop_at_s: float = None) -> dict:
-        """依候選 plan（含 path、legs、speed_mps）飛，到 stop_at_s 或飛完為止。"""
+    def fly(self, plan: dict, stop_at_s: float = None, on_tick=None) -> dict:
+        """依候選 plan（含 path、legs、speed_mps）飛，到 stop_at_s 或飛完為止。
+        on_tick(rec, next_idx)：每筆遙測呼叫一次（next_idx＝目前飛往 path[1:-1] 的第幾點）；
+        回傳 True 就在這裡停下（例如告警引擎發出預測告警）。"""
         cap = self.v.battery_wh * self.v.usable_frac
         path = plan["path"]
         speed = plan["speed_mps"]
@@ -83,7 +86,15 @@ class MissionRun:
                                  "alt": round(alt, 1), "battery_pct": round(self.pct, 2),
                                  "power_w": round(p, 1), "wind_mps": w.speed_mps,
                                  "wind_from": w.from_deg, "leg": f"{a['id']}→{b['id']}"})
-                if stop_at_s is not None and self.t >= stop_at_s and k < n:
+                self.used_wh += wh
+                rec = self.log[-1]
+                if hover and k * self.dt > t_leg - hover:
+                    rec["vel_e"] = rec["vel_n"] = 0.0
+                else:
+                    rec["vel_e"], rec["vel_n"] = speed * math.sin(brg), speed * math.cos(brg)
+                rec["used_wh"] = round(self.used_wh, 3)
+                stop = bool(on_tick and on_tick(rec, i))
+                if (stop or (stop_at_s is not None and self.t >= stop_at_s)) and k < n:
                     self.legs.append(self._leg_rec(a, b, pred_legs, used, heads, plan.get("calib", 1.0),
                                                    partial=frac))
                     return self.state(plan, i, partial=True)

@@ -80,7 +80,7 @@ input[type=number]{width:64px;background:#0f1419;color:var(--fg);border:1px soli
     </section>
     <section id="s2" class="hide">
       <h2>② 飛行中：預測告警與重規劃</h2>
-      <div id="flyOut" class="muted">按「開始飛行」後模擬飛行；第 5 分鐘風速增強。</div>
+      <div id="flyOut" class="muted">按「開始飛行」後模擬飛行（第 5 分鐘風速增強）；告警引擎每筆遙測預測一次，發出電量預測告警時暫停並重規劃。</div>
     </section>
     <section id="s3" class="hide">
       <h2>③ 智慧任務報告</h2>
@@ -182,17 +182,21 @@ async function startFly() {
   $("#s2").classList.remove("hide"); $("#flyOut").innerHTML = "飛行中…";
   const r = await api("/api/start", {choice_id: SEL}); window.LOG0 = r.telemetry;
   animate(r.telemetry, () => {
-    if (!r.replan) { $("#flyOut").textContent = "任務完成"; return; }
+    if (!r.replan) { window.LOG0 = []; $("#flyOut").innerHTML = alertsHtml(r.alerts) + "<div class='muted'>全程未觸發電量預測告警</div>"; renderReport(r); return; }
     REPLAN = r.replan; RSEL = REPLAN.pick.choice_id || REPLAN.rule_choice; renderReplan(r);
   });
+}
+
+function alertsHtml(list) {
+  return (list || []).map(a => `<div class="alert ${a.level}"><b>⚠ ${a.title}（${fmtT(a.t_s)}${a.lead_s ? `，約提前 ${Math.round(a.lead_s / 60)} 分鐘` : ""}）</b>
+    <span class="tag ${a.source === "llm" ? "t-llm" : "t-rule"}">${a.source === "llm" ? "模型說明" : "規則說明"}</span><br>${a.text_zh}</div>`).join("");
 }
 
 function renderReplan(r) {
   svg.routes.querySelectorAll(".rp").forEach(e => e.remove());
   const c = REPLAN.candidates.find(x => x.id === RSEL);
   if (c) { const before = svg.routes.childElementCount; drawRoute(c, {stroke: "#f5a524", "stroke-width": 3, "stroke-dasharray": "8 5"}); [...svg.routes.children].slice(before).forEach(e => e.classList.add("rp")); }
-  const a = r.alert;
-  $("#flyOut").innerHTML = (a ? `<div class="alert ${a.level}"><b>⚠ 預測告警（${fmtT(a.t_s)}）</b><br>${a.text_zh}</div>` : "") +
+  $("#flyOut").innerHTML = alertsHtml(r.alerts) +
     `<div class="muted">目前電量 ${r.state.battery_pct}%，已完成 ${r.state.completed.join("、") || "無"}；剩餘 ${r.state.remaining.join("、")}。
      以下候選已用「實際/預估耗電比 ${(r.state.observed_ratio * 100).toFixed(0)}%」與新風況重算。LOCAL＝保留原順序局部修補，FULL＝剩餘目標整個重排。</div>` +
     pickCard(REPLAN.pick, REPLAN.evidence) + candTable(REPLAN.candidates, REPLAN.pick, id => { RSEL = id; renderReplan(r); }, RSEL) +

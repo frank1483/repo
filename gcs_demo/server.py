@@ -16,6 +16,7 @@ from .llm import get_backend
 from .planner import plan_mission, replan
 from .report import make_report
 from .sim import MissionRun
+from .alert_bridge import AlertFeed, battery_raise
 
 WEB = os.path.join(os.path.dirname(__file__), "web")
 
@@ -51,17 +52,16 @@ def _find(cands, cid):
     raise KeyError(cid)
 
 
-def predictive_alert(vehicle, state, replan_result):
-    """預測型告警：用「目前為止實際/預估耗電比」與最新風況，推估照原順序飛完的落地電量。
-    數字直接取重規劃的 L1（LOCAL 保留原順序）候選，和規劃用同一套能耗模型。"""
-    keep = _find(replan_result["candidates"], "L1")
-    proj = keep["end_pct"]
-    if proj >= vehicle.reserve_pct:
-        return None
-    ratio = state.get("observed_ratio", 1.0)
-    return {"t_s": state["t_s"], "level": "warn" if proj > 0 else "crit", "projected_end_pct": proj,
-            "text_zh": f"照原計畫飛完，預估落地電量只剩 {proj:.1f}%（門檻 {vehicle.reserve_pct}%）；"
-                       f"起飛後實際耗電是預估的 {ratio*100:.0f}%，且{replan_result['event']['text_zh']}"}
+def _alert_view(ev, cand):
+    """告警引擎事件 → 畫面與報告用的精簡格式；航點編號換成目標名稱。"""
+    names = [p["id"] for p in cand["path"][1:-1]]
+    ex = ev.get("explain") or {}
+    text = (ex.get("text") or {}).get("summary_zh") or f"{ev['title']}：{ev['value']}"
+    for i in range(len(names), 0, -1):
+        text = text.replace(f"WP{i}", f"WP{i}（{names[i-1]}）")
+    return {"t_s": ev["t"], "key": ev["key"], "severity": ev["severity"], "title": ev["title"],
+            "value": ev["value"], "lead_s": ev.get("lead_s"), "text_zh": text,
+            "source": (ex.get("source") or "rule"), "level": "crit" if ev["severity"] <= 2 else "warn"}
 
 
 def handle(path, body):
@@ -86,19 +86,22 @@ def handle(path, body):
         if path == "/api/start":
             s.chosen = _find(s.plan["candidates"], body["choice_id"])
             s.run = MissionRun(s.vehicle(), s.wind, S.TRUE_CALIB, S.WIND_EVENTS)
-            state = s.run.fly(s.chosen, stop_at_s=S.EVENT_AT_S)
-            out = {"state": state, "telemetry": s.run.log}
+            feed = AlertFeed(s.mission["home"], s.chosen["path"], s.vehicle())
+            # 飛到告警引擎發出「電量不足以飛完／即將到最晚返航點」的預測告警為止
+            state = s.run.fly(s.chosen, on_tick=lambda rec, i: battery_raise(feed.tick(rec, i)) is not None)
+            s.alerts = [_alert_view(e, s.chosen) for e in feed.events if e["type"] != "resolve"]
+            out = {"state": state, "telemetry": s.run.log, "alerts": s.alerts}
             if state["done"]:
+                out.update({"report": make_report(s.run, s.mission, s.chosen, [], s.alerts),
+                            "planned_curve": _curve(s.chosen)})
                 return out
-            ev = S.WIND_EVENTS[0]
-            event = {"type": "wind", "speed_mps": ev["speed_mps"], "from_deg": ev["from_deg"],
-                     "text_zh": f"風速增強到 {ev['speed_mps']} m/s（從 {ev['from_deg']:.0f}°）"}
+            trig = battery_raise(feed.events) or {}
+            w = s.run._wind_now()
+            event = {"type": "wind", "speed_mps": w.speed_mps, "from_deg": w.from_deg,
+                     "text_zh": f"預測告警「{trig.get('title', '電量')}：{trig.get('value', '')}」"}
             r = replan(s.mission, s.vehicle(), s.wind, state, event)
             s.replans.append(r)
-            alert = predictive_alert(s.vehicle(), state, r)
-            if alert:
-                s.alerts.append(alert)
-            out.update({"alert": alert, "replan": r})
+            out.update({"alert": _alert_view(trig, s.chosen) if trig else None, "replan": r})
             return out
         if path == "/api/continue":
             r = s.replans[-1]
