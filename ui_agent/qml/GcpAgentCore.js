@@ -12,11 +12,11 @@ var PAGES = [
     { page: 3,  name: "安全設定", aliases: ["安全", "失效保護", "failsafe"] },
     { page: 4,  name: "告警中心", aliases: ["告警", "警報", "警告", "alert", "alarm"] },
     { page: 5,  name: "設備管理", aliases: ["設備", "載具設定", "機體設定", "vehicle setup"] },
-    { page: 6,  name: "飛行日誌", aliases: ["日誌", "飛行紀錄", "飛航數據", "log", "遙測紀錄"] },
+    { page: 6,  name: "飛行日誌", aliases: ["日誌", "飛行紀錄", "飛航數據", "log", "遙測紀錄", "遙測資料", "飛航紀錄"] },
     { page: 7,  name: "影像設置", aliases: ["相機", "影像", "攝影機", "camera"] },
     { page: 8,  name: "系統設定", aliases: ["系統", "應用程式設定", "settings"] },
     { page: 9,  name: "航線庫",   aliases: ["航線", "任務庫", "路線庫", "mission library"] },
-    { page: 10, name: "用戶管理", aliases: ["用戶", "使用者", "帳號", "權限管理", "user"] },
+    { page: 10, name: "用戶管理", aliases: ["用戶", "使用者", "使用者管理", "帳號", "權限管理", "user"] },
     { page: 11, name: "天氣資訊", aliases: ["天氣", "氣象", "weather"] },
     { page: 12, name: "媒體庫",   aliases: ["媒體", "照片", "相簿", "影片庫", "media"] },
     { page: 13, name: "3D 視圖",  aliases: ["3d", "三維", "立體地圖"] }
@@ -67,7 +67,7 @@ var SECTIONS = [
     { page: 7, section: 6, name: "設備資訊", aliases: ["相機資訊"] },
     // 系統設定
     { page: 8, section: 0, name: "一般", aliases: ["語言", "單位", "外觀", "主題"] },
-    { page: 8, section: 1, name: "地圖", aliases: ["地圖來源", "離線地圖", "圖資"] },
+    { page: 8, section: 1, name: "地圖", aliases: ["地圖來源", "離線地圖", "離線地圖下載", "圖資"] },
     { page: 8, section: 2, name: "通訊", aliases: ["連線設定", "自動連線", "通訊連結"] },
     { page: 8, section: 3, name: "MAVLink", aliases: ["mavlink", "系統id", "簽章"] },
     { page: 8, section: 4, name: "定位", aliases: ["rtk", "nmea"] },
