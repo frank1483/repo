@@ -41,7 +41,9 @@ git clone -b claude/project-thread-8cd61o https://github.com/frank1483/repo.git 
 ~/gcs_ui_agent/ui_agent/install_into_ui.sh ~/ELAN_GCP_ui_agent
 ```
 
-Linux 桌面版（沿用原本建置方式；第一次要 configure）：
+一鍵版：`~/gcs_ui_agent/ui_agent/ubuntu_build_demo.sh ~/ELAN_GCP_ui`（自動開副本、安裝、沿用原 build 的 Qt 路徑編譯）。
+
+Linux 桌面版手動步驟（第一次要 configure）：
 
 ```bash
 cd ~/ELAN_GCP_ui_agent
