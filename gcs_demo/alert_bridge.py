@@ -20,8 +20,9 @@ class AlertFeed:
         self.home = (home["lat"], home["lon"])
         energy_api.REF_LAT, energy_api.REF_LON = self.home      # 讓引擎的經緯度換算以 home 為原點
         self.vehicle = vehicle
+        prio = [p.get("priority", 1) for p in path[1:-1]]     # 繞行點視同必經
         self.engine = PredictiveAlertEngine(self._route(path), (0.0, 0.0, 0.0), vehicle,
-                                            Config(reserve_pct=vehicle.reserve_pct))
+                                            Config(reserve_pct=vehicle.reserve_pct), priorities=prio)
         self.explain_fn = explain_fn
         self.events = []
 

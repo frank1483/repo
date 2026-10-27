@@ -144,7 +144,7 @@ def _evaluate(cid, label, how, mission, vehicle, wind, path, speed, start_pct, n
         "energy_wh": round(est["energy_wh"], 1), "end_pct": round(est["end_pct"], 1),
         "margin_pct": round(est["margin_pct"], 1), "feasible": feasible,
         "violations": viol, "missing_must": missing_must, "must_rank": must_rank,
-        "path": [{k: p[k] for k in ("id", "lat", "lon", "alt", "kind") if k in p} for p in path],
+        "path": [{k: p[k] for k in ("id", "lat", "lon", "alt", "kind", "priority") if k in p} for p in path],
         "legs": [{k: (round(v, 2) if isinstance(v, float) else v) for k, v in leg.items()}
                  for leg in est["legs"]],
     }
