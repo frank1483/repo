@@ -90,8 +90,27 @@ input[type=number]{width:64px;background:#0f1419;color:var(--fg);border:1px soli
 </main>
 <script>
 const $ = s => document.querySelector(s);
-const api = (p, b) => fetch(p, {method: b ? "POST" : "GET", headers: {"Content-Type": "application/json"},
+const live = (p, b) => fetch(p, {method: b ? "POST" : "GET", headers: {"Content-Type": "application/json"},
   body: b ? JSON.stringify(b) : undefined}).then(r => r.json());
+// 單檔版（gcs_demo.export）：從預算結果取資料，不需伺服器
+const ST = {cal: 1, pk: "", sk: ""};
+const r3 = x => Math.round(x * 1000) / 1000;
+function staticApi(p, b) {
+  const D = window.STATIC_DATA, get = k => { if (!(k in D)) { alert("單檔版沒有預算這個組合（例如改了風速），請用伺服器版。"); throw k; } return D[k]; };
+  if (p === "api/scenario") return get("scenario");
+  if (p === "api/plan") {
+    const w = D.scenario.wind;
+    if (b.wind && (b.wind.speed_mps !== w.speed_mps || b.wind.from_deg !== w.from_deg)) { alert("單檔版只能用預設風況。"); $("#ws").value = w.speed_mps; $("#wd").value = w.from_deg; }
+    ST.pk = `plan|${r3(ST.cal)}`; return get(ST.pk);
+  }
+  if (p === "api/start") { ST.sk = `start|${ST.pk}|${b.choice_id}`; return get(ST.sk); }
+  if (p === "api/continue") return get(`cont|${ST.sk}|${b.choice_id}`);
+  if (p === "api/apply_calib") {  // 取最接近的預算係數
+    const cs = Object.keys(D).filter(k => k.startsWith("plan|")).map(k => +k.slice(5));
+    ST.cal = cs.reduce((a, c) => Math.abs(c - b.calib) < Math.abs(a - b.calib) ? c : a, cs[0]); return {calib: ST.cal};
+  }
+}
+const api = (p, b) => window.STATIC_DATA ? Promise.resolve(staticApi(p, b)) : live(p, b);
 let SC, PLAN, SEL, REPLAN, RSEL, proj, trail = [];
 const svg = $("#map"), NS = "http://www.w3.org/2000/svg";
 const el = (t, a, p = svg) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); p.appendChild(e); return e; };

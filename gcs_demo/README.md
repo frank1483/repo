@@ -37,3 +37,11 @@ GCS_LLM_BACKEND=ollama GCS_LLM_URL=http://127.0.0.1:11434 GCS_LLM_MODEL=gemma3:1
 | `sim.py` | 飛行模擬（真實耗電比預估多 15%、中途風變大） |
 | `report.py` | 智慧任務報告與建議 |
 | `server.py`、`web/index.html` | JSON API 與示範畫面；QGC/QML 之後可直接呼叫同一組 API |
+
+## 沒有 jupyter-server-proxy 時：單檔版
+
+```bash
+python3 -m gcs_demo.export gcs_demo_static.html
+```
+在 JupyterLab 檔案列表對產生的 HTML 按右鍵 → Open in New Browser Tab（或下載到自己電腦用瀏覽器開）。
+預設風況下所有候選組合都已預先算好（含模型選擇，若有設定 GCS_LLM_*），操作和伺服器版相同，但不能改風速。

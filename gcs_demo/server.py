@@ -86,6 +86,7 @@ def handle(path, body):
         if path == "/api/start":
             s.chosen = _find(s.plan["candidates"], body["choice_id"])
             s.run = MissionRun(s.vehicle(), s.wind, S.TRUE_CALIB, S.WIND_EVENTS)
+            s.replans, s.alerts = [], []
             feed = AlertFeed(s.mission["home"], s.chosen["path"], s.vehicle())
             # 飛到告警引擎發出「電量不足以飛完／即將到最晚返航點」的預測告警為止
             state = s.run.fly(s.chosen, on_tick=lambda rec, i: battery_raise(feed.tick(rec, i)) is not None)

@@ -74,8 +74,12 @@ class LLMBackend:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
-    def _finish(self, text: str, t0: float, schema: dict):
+    def _finish(self, text: str, t0: float, schema: dict, msg: dict = None):
         latency = time.time() - t0
+        if not text.strip():
+            think = (msg or {}).get("thinking") or (msg or {}).get("reasoning_content") or ""
+            return _result(False, raw=f"[content 空] thinking 前 800 字：{think[:800]}", latency=latency,
+                           error="empty content", backend=self.name, model=self.model)
         try:
             data = _extract_json(text)
         except (ValueError, json.JSONDecodeError) as exc:
@@ -97,16 +101,19 @@ class OpenAICompatBackend(LLMBackend):
     def complete_json(self, system, user, schema, timeout_s=None):
         timeout_s = timeout_s or default_timeout()
         t0 = time.time()
-        body = {"model": self.model, "temperature": 0, "max_tokens": 512,
+        # 關閉 thinking（Gemma 4 等預設會先思考，吃光輸出上限、content 變空）；不認得的伺服器會忽略
+        body = {"model": self.model, "temperature": 0, "max_tokens": 1024,
+                "chat_template_kwargs": {"enable_thinking": False},
                 "messages": [{"role": "system", "content": system},
                              {"role": "user", "content": user}]}
         try:
             out = self._post("/chat/completions", body, timeout_s)
-            text = out["choices"][0]["message"]["content"]
+            msg = out["choices"][0]["message"]
+            text = msg.get("content") or ""
         except (urllib.error.URLError, TimeoutError, KeyError, IndexError, OSError) as exc:
             return _result(False, raw="", latency=time.time() - t0, error=str(exc),
                            backend=self.name, model=self.model)
-        return self._finish(text, t0, schema)
+        return self._finish(text, t0, schema, msg)
 
 
 class OllamaBackend(LLMBackend):
@@ -118,17 +125,18 @@ class OllamaBackend(LLMBackend):
     def complete_json(self, system, user, schema, timeout_s=None):
         timeout_s = timeout_s or default_timeout()
         t0 = time.time()
-        body = {"model": self.model, "stream": False, "format": "json",
-                "options": {"temperature": 0, "seed": 17, "num_predict": 512},
+        body = {"model": self.model, "stream": False, "format": "json", "think": False,
+                "options": {"temperature": 0, "seed": 17, "num_predict": 1024},
                 "messages": [{"role": "system", "content": system},
                              {"role": "user", "content": user}]}
         try:
             out = self._post("/api/chat", body, timeout_s)
-            text = out["message"]["content"]
+            msg = out["message"]
+            text = msg.get("content") or ""
         except (urllib.error.URLError, TimeoutError, KeyError, OSError) as exc:
             return _result(False, raw="", latency=time.time() - t0, error=str(exc),
                            backend=self.name, model=self.model)
-        return self._finish(text, t0, schema)
+        return self._finish(text, t0, schema, msg)
 
 
 def get_backend() -> LLMBackend:
