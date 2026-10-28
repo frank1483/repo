@@ -75,7 +75,7 @@ const extraCases = [
     ],
     [
         "action dock 隱藏",
-        "LAY_actionDock_HIDE"
+        ""
     ],
     [
         "payload rail 放大一點",
@@ -107,7 +107,7 @@ const extraCases = [
     ],
     [
         "把姿態儀藏起來好嗎",
-        "LAY_attitude_HIDE"
+        ""
     ],
     [
         "底部遙測列先收起來",
@@ -267,7 +267,8 @@ const extraCases = [
 let fail = 0
 for (const [q, id, extra] of extraCases) {
     const r = C.analyze(q, Object.assign({}, ctx, extra || {}))
-    const ok = r.rule.decision === "SELECT" && r.rule.choice_id === id
+    // id 為空字串：v3 鎖定模組（指令區、姿態儀）不可隱藏，預期 HOLD
+    const ok = id === "" ? r.rule.decision === "HOLD" : (r.rule.decision === "SELECT" && r.rule.choice_id === id)
     if (!ok) fail++
     console.log((ok ? "PASS " : "FAIL ") + q + " → " + r.rule.decision + " " + r.rule.choice_id)
 }

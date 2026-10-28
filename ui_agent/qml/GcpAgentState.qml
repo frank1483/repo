@@ -1,6 +1,8 @@
 pragma Singleton
 import QtQuick
 import QtQml
+import QtCore
+import "GcpAgentCore.js" as Core
 
 // UI agent 的共用狀態：可調整模組的登記、版面覆寫值、復原／重做堆疊。
 // 每次 agent 套用變更前先存一份快照（目前畫面＋子頁＋全部版面覆寫），復原就是把快照放回去。
@@ -9,10 +11,61 @@ QtObject {
 
     // 由 GcpMainShell 提供：agentLocation() → {page, section}；agentGoTo(page, section) → bool
     property var shell: null
+    property QtObject _layoutSettings: Settings {
+        category: "GCP/AgentLayouts"
+        property string layoutsJson: "{}"
+    }
+
+    function _layoutStore() {
+        const value = JSON.parse(_layoutSettings.layoutsJson)
+        if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("invalid layout store")
+        return value
+    }
+
+    function layoutNames() {
+        try { return Object.keys(_layoutStore()).filter(name => Core.validLayoutName(name)) }
+        catch (e) { return [] } // Preserve corrupt storage for inspection; never silently overwrite it.
+    }
+
+    function checkedLayout(snap) {
+        if (!snap || snap.layoutVersion !== 2 || !Number.isInteger(snap.page) || snap.page < 0 || snap.page > 13 ||
+            !Number.isInteger(snap.section) || snap.section < -1 || snap.section > 14 ||
+            !snap.overrides || typeof snap.overrides !== "object" || Array.isArray(snap.overrides)) throw new Error("invalid layout")
+        const clean = {}
+        for (const id of Object.keys(snap.overrides)) {
+            const p = Core.MODULES.filter(m => m.id === id)[0], o = snap.overrides[id]
+            if (!p || !o || typeof o.rx !== "number" || typeof o.ry !== "number" ||
+                !isFinite(o.rx) || !isFinite(o.ry) || Math.abs(o.rx) > 4 || Math.abs(o.ry) > 4 ||
+                p.scales.indexOf(o.scale) < 0 || typeof o.hidden !== "boolean" || (p.locked && o.hidden)) throw new Error("invalid module override")
+            clean[id] = { rx: o.rx, ry: o.ry, scale: o.scale, hidden: o.hidden }
+        }
+        return { layoutVersion: 2, page: snap.page, section: snap.section, overrides: clean }
+    }
+
+    function saveLayout(name) {
+        if (!Core.validLayoutName(name)) throw new Error("invalid name")
+        const store = _layoutStore()
+        store[name] = checkedLayout(snapshot())
+        _layoutSettings.layoutsJson = JSON.stringify(store)
+    }
+
+    function applyLayout(name) {
+        const store = _layoutStore()
+        if (!Object.prototype.hasOwnProperty.call(store, name)) throw new Error("unknown layout")
+        const snap = checkedLayout(store[name])
+        if (!shell || !shell.agentGoTo(snap.page, snap.section)) throw new Error("layout page denied")
+        _restore(snap, true)
+    }
+
+    function defaultLayout() {
+        const snap = snapshot()
+        snap.overrides = {}
+        _restore(snap)
+    }
 
     property int revision: 0                 // 任何覆寫或堆疊變動都 +1，給 QML 綁定重算
     property var _modules: ({})              // id → { item, container }
-    property var _overrides: ({})            // id → { dx, dy, scale, hidden }
+    property var _overrides: ({})            // id → { rx, ry, scale, hidden } (container fractions)
     property var _cancelRedo: []             // 失敗交易不得丟失原本的重做堆疊
     property var undoStack: []               // [{ label, snap }]
     property var redoStack: []
@@ -90,15 +143,31 @@ QtObject {
     }
 
     function overrideOf(id) {
-        const o = _overrides[id]
-        return o ? { dx: o.dx, dy: o.dy, scale: o.scale, hidden: o.hidden } : { dx: 0, dy: 0, scale: 1, hidden: false }
+        const o = _overrides[id], b = baseBox(id)
+        if (!o) return { dx: 0, dy: 0, scale: 1, hidden: false }
+        const dx = b ? o.rx * b.areaW : 0, dy = b ? o.ry * b.areaH : 0
+        return { dx: b ? Math.max(-b.x, Math.min(b.areaW - Math.min(b.w * o.scale, b.areaW) - b.x, dx)) : dx,
+                 dy: b ? Math.max(-b.y, Math.min(b.areaH - Math.min(b.h * o.scale, b.areaH) - b.y, dy)) : dy,
+                 scale: o.scale, hidden: o.hidden }
     }
 
     function setOverride(id, ov) {
+        const policy = Core.MODULES.filter(m => m.id === id)[0]
+        const b = baseBox(id)
+        if (!policy || (policy.locked && ov.hidden)) throw new Error("invalid or locked module")
+        if (!b || b.areaW <= 0 || b.areaH <= 0 || !isFinite(ov.dx) || !isFinite(ov.dy) || !isFinite(ov.scale))
+            throw new Error("invalid module dimensions")
+        ov = Object.assign({}, ov, { scale: Core.nearestScale(ov.scale, policy) })
         const copy = Object.assign({}, _overrides)
         if (ov.dx === 0 && ov.dy === 0 && ov.scale === 1 && !ov.hidden) delete copy[id]
-        else copy[id] = { dx: ov.dx, dy: ov.dy, scale: ov.scale, hidden: !!ov.hidden }
+        else copy[id] = { rx: ov.dx / b.areaW, ry: ov.dy / b.areaH, scale: ov.scale, hidden: !!ov.hidden }
         _overrides = copy
+        _apply(id)
+        revision++
+    }
+
+    function reflow(id) {
+        if (!_modules[id]) return
         _apply(id)
         revision++
     }
@@ -135,16 +204,16 @@ QtObject {
     // ------------------------------------------------------------ 快照與復原
     function snapshot() {
         const loc = shell && shell.agentLocation ? shell.agentLocation() : { page: -1, section: -1 }
-        return { page: loc.page, section: loc.section, overrides: JSON.parse(JSON.stringify(_overrides)) }
+        return { layoutVersion: 2, page: loc.page, section: loc.section, overrides: JSON.parse(JSON.stringify(_overrides)) }
     }
 
-    function _restore(snap) {
+    function _restore(snap, skipNavigation) {
         const ids = {}
         for (const id in _overrides) ids[id] = true
         for (const id in snap.overrides) ids[id] = true
         _overrides = JSON.parse(JSON.stringify(snap.overrides))
         for (const id in ids) _apply(id)
-        if (shell && shell.agentGoTo && snap.page >= 0) shell.agentGoTo(snap.page, snap.section)
+        if (!skipNavigation && shell && shell.agentGoTo && snap.page >= 0) shell.agentGoTo(snap.page, snap.section)
         revision++
     }
 

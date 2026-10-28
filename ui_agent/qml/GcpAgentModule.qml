@@ -11,6 +11,20 @@ QtObject {
     property Item target: null
     property Item container: null
 
+    // Transforms do not alter target x/y, so this does not feed back into itself.
+    property Connections _containerResize: Connections {
+        target: root._registeredContainer
+        function onWidthChanged() { GcpAgentState.reflow(root._registeredId) }
+        function onHeightChanged() { GcpAgentState.reflow(root._registeredId) }
+    }
+    property Connections _targetGeometry: Connections {
+        target: root._registeredTarget
+        function onXChanged() { GcpAgentState.reflow(root._registeredId) }
+        function onYChanged() { GcpAgentState.reflow(root._registeredId) }
+        function onWidthChanged() { GcpAgentState.reflow(root._registeredId) }
+        function onHeightChanged() { GcpAgentState.reflow(root._registeredId) }
+    }
+
     property bool _ready: false
     property string _registeredId: ""
     property Item _registeredTarget: null

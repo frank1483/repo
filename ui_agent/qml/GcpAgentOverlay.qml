@@ -44,6 +44,8 @@ Item {
     property var _pending: null        // 目前的分析結果
     property real _t0: 0
     property var _cancelModel: null
+    property int _modelGeneration: 0
+    property var _choiceGuard: null
 
     readonly property color cBg: "#E6111827"
     readonly property color cPanel: "#F2172033"
@@ -59,7 +61,24 @@ Item {
     function context() {
         const loc = shell && shell.agentLocation ? shell.agentLocation() : { page: 0, section: -1 }
         return { page: loc.page, section: loc.section, modules: GcpAgentState.moduleInfo(),
-                 canUndo: GcpAgentState.canUndo, canRedo: GcpAgentState.canRedo }
+                 canUndo: GcpAgentState.canUndo, canRedo: GcpAgentState.canRedo, layoutNames: GcpAgentState.layoutNames() }
+    }
+
+    function sameContext(guard) {
+        const now = context()
+        return guard && guard.revision === GcpAgentState.revision && guard.page === now.page && guard.section === now.section
+    }
+
+    function cancelWaiting() {
+        if (!_cancelModel) return
+        _modelGeneration++
+        _cancelModel()
+        busy = false
+        statusText = ""
+        choices = []
+        _pending = null
+        _choiceGuard = null
+        messageText = qsTr("已取消")
     }
 
     function submit(text) {
@@ -79,7 +98,20 @@ Item {
         if (ask && result.candidates.length) {
             busy = true
             statusText = qsTr("模型判斷中…")
-            callModel(result, ctx, function (model) { busy = false; statusText = ""; finish(result, model) })
+            const generation = ++_modelGeneration
+            const guard = { revision: GcpAgentState.revision, page: ctx.page, section: ctx.section }
+            callModel(result, ctx, function (model) {
+                if (generation !== _modelGeneration) return
+                busy = false
+                statusText = ""
+                if (!sameContext(guard)) {
+                    _pending = null
+                    choices = []
+                    messageText = qsTr("畫面已改變，請再說一次")
+                    return
+                }
+                finish(result, model)
+            })
         } else {
             finish(result, null)
         }
@@ -95,7 +127,9 @@ Item {
             source = qsTr("規則（模型無效：%1）").arg(model.error)
         }
         // 模型被給全目錄但無效時，規則原本就沒有候選 → 保持 HOLD
-        if (decision.decision === "SELECT" && !Core.candidateById(result, decision.choice_id))
+        const selectedIds = decision.steps ? decision.steps.map(s => s.choice_id) : [decision.choice_id]
+        if (decision.decision === "SELECT" && (!selectedIds.length || selectedIds.length > 3 ||
+            selectedIds.some(id => !Core.candidateById(result, id))))
             decision = { decision: "HOLD", choice_id: "", reason_zh: qsTr("沒有對應的動作") }
 
         const entry = { time: new Date().toISOString(), intent: result.intent, rule: result.rule,
@@ -105,20 +139,22 @@ Item {
         decisionLogged(entry)
 
         if (decision.decision === "SELECT") {
-            execute(Core.candidateById(result, decision.choice_id), source)
+            executeSteps(selectedIds.map(id => Core.candidateById(result, id)), source)
         } else if (decision.decision === "CLARIFY") {
-            choices = result.candidates.filter(c => c.score > 0 || source !== qsTr("規則")).slice(0, 6)
-            messageText = (decision.reason_zh || qsTr("有多個可能")).replace(/[，。,]?\s*請選一個[：:]?$/, "") + qsTr("，請選一個：")
+            const loc = context()
+            _choiceGuard = { revision: GcpAgentState.revision, page: loc.page, section: loc.section }
+            choices = result.compound ? [] : result.candidates.filter(c => c.score > 0 || source !== qsTr("規則")).slice(0, 6)
+            messageText = result.compound ? decision.reason_zh : (decision.reason_zh || qsTr("有多個可能")).replace(/[，。,]?\s*請選一個[：:]?$/, "") + qsTr("，請選一個：")
         } else {
             messageText = decision.reason_zh || qsTr("我沒辦法處理這個要求。可以試試「切到告警中心」或「把風速計移到左上角」。")
         }
     }
 
     function callModel(result, ctx, done) {
-        const xhr = new XMLHttpRequest()
-        let finished = false
-        const t0 = Date.now()
-        const requestBackend = backend
+        let xhr = null, finished = false, fallbackSent = false
+        const t0 = Date.now(), requestBackend = backend
+        const schemaOn = envValue("GCS_LLM_SCHEMA", "1") === "1"
+        const schema = Core.decisionSchema(result)
         function end(r) {
             if (finished) return
             finished = true
@@ -128,42 +164,62 @@ Item {
             r.latency_ms = Date.now() - t0
             done(r)
         }
-        root._cancelModel = function () { finished = true; timeoutTimer.stop(); xhr.abort() }
-        // abort() 可能同步發 readyState；先 end 才不會把逾時記為 HTTP 0。
-        timeoutTimer.onFire = function () { end({ ok: false, error: qsTr("逾時") }); xhr.abort() }
+        root._cancelModel = function () {
+            if (finished) return
+            finished = true
+            timeoutTimer.stop()
+            timeoutTimer.onFire = null
+            root._cancelModel = null
+            if (xhr) xhr.abort()
+        }
+        timeoutTimer.onFire = function () { const active = xhr; end({ ok: false, error: qsTr("逾時") }); if(active) active.abort() }
         timeoutTimer.interval = modelTimeoutMs
-        timeoutTimer.restart()
-
+        timeoutTimer.restart() // One deadline covers both attempts.
         const messages = [{ role: "system", content: Core.SYSTEM_PROMPT },
                           { role: "user", content: Core.buildUserMessage(result, ctx) }]
-        let url, body
-        if (requestBackend === "ollama") {
-            url = modelUrl.replace(/\/$/, "") + "/api/chat"
-            body = { model: modelName, messages: messages, stream: false, format: "json", options: { temperature: 0 } }
-        } else {
-            url = modelUrl.replace(/\/$/, "") + "/chat/completions"
-            body = { model: modelName, messages: messages, temperature: 0, max_tokens: 200 }
-            if (envValue("GCS_LLM_JSON_MODE", "1") === "1") body.response_format = { type: "json_object" }
-        }
-        xhr.onreadystatechange = function () {
-            if (finished || xhr.readyState !== XMLHttpRequest.DONE) return
-            if (xhr.status < 200 || xhr.status >= 300) { end({ ok: false, error: "HTTP " + xhr.status }); return }
-            let content = ""
+        function send(useSchema) {
+            const current = new XMLHttpRequest()
+            xhr = current
+            let url, body
+            if (requestBackend === "ollama") {
+                url = modelUrl.replace(/\/$/, "") + "/api/chat"
+                body = { model: modelName, messages: messages, stream: false,
+                         format: useSchema ? schema : "json", options: { temperature: 0 } }
+            } else {
+                url = modelUrl.replace(/\/$/, "") + "/chat/completions"
+                body = { model: modelName, messages: messages, temperature: 0, max_tokens: 500 }
+                if (useSchema) body.response_format = { type: "json_schema",
+                    json_schema: { name: "gcp_ui_decision", strict: false, schema: schema } }
+                else if (fallbackSent || envValue("GCS_LLM_JSON_MODE", "1") === "1")
+                    body.response_format = { type: "json_object" }
+            }
+            current.onreadystatechange = function () {
+                if (finished || current !== xhr || current.readyState !== XMLHttpRequest.DONE) return
+                if (requestBackend !== "ollama" && useSchema && current.status === 400 && !fallbackSent) {
+                    fallbackSent = true
+                    send(false)
+                    return
+                }
+                if (current.status < 200 || current.status >= 300) { end({ ok: false, error: "HTTP " + current.status }); return }
+                let content = ""
+                try {
+                    const j = JSON.parse(current.responseText)
+                    content = requestBackend === "ollama" ? j.message.content : j.choices[0].message.content
+                } catch (e) { end({ ok: false, error: qsTr("回覆格式錯誤") }); return }
+                const v = Core.validateModelDecision(Core.extractJson(content), result)
+                v.raw = String(content).substring(0, 400)
+                v.schema_fallback = fallbackSent
+                end(v)
+            }
             try {
-                const j = JSON.parse(xhr.responseText)
-                content = requestBackend === "ollama" ? j.message.content : j.choices[0].message.content
-            } catch (e) { end({ ok: false, error: qsTr("回覆格式錯誤") }); return }
-            const v = Core.validateModelDecision(Core.extractJson(content), result)
-            v.raw = String(content).substring(0, 400)
-            end(v)
+                current.open("POST", url)
+                current.setRequestHeader("Content-Type", "application/json")
+                const key = envValue("GCS_LLM_API_KEY", "")
+                if (key) current.setRequestHeader("Authorization", "Bearer " + key)
+                current.send(JSON.stringify(body))
+            } catch (e) { end({ ok: false, error: qsTr("無法建立模型請求") }); current.abort() }
         }
-        try {
-            xhr.open("POST", url)
-            xhr.setRequestHeader("Content-Type", "application/json")
-            const key = envValue("GCS_LLM_API_KEY", "")
-            if (key) xhr.setRequestHeader("Authorization", "Bearer " + key)
-            xhr.send(JSON.stringify(body))
-        } catch (e) { end({ ok: false, error: qsTr("無法建立模型請求") }); xhr.abort() }
+        send(schemaOn)
     }
 
     Timer {
@@ -174,10 +230,24 @@ Item {
     }
 
     // ------------------------------------------------------------ 執行
+    function choose(c) {
+        if (!sameContext(_choiceGuard)) {
+            choices = []
+            messageText = qsTr("畫面已改變，請再說一次")
+            return
+        }
+        execute(c, qsTr("使用者選擇"))
+    }
+
     function execute(c, source) {
-        if (busy || _layoutJob) return
+        if (busy || _transaction) return
         choices = []
         if (!c) return
+        if (c.kind === "layout_save") {
+            try { GcpAgentState.saveLayout(c.name); messageText = qsTr("已儲存：%1").arg(c.name) }
+            catch (e) { messageText = qsTr("無法儲存版面，未變更設定") }
+            return
+        }
         if (c.kind === "undo") {
             const labels = GcpAgentState.undo(c.steps || 1)
             messageText = labels.length ? qsTr("已復原：%1").arg(labels.join("、")) : qsTr("目前沒有可復原的變更")
@@ -196,68 +266,103 @@ Item {
             showToast(messageText, ok)
             return
         }
-        if (c.kind === "nav") {
-            GcpAgentState.beginChange(c.label_zh.replace("切到", "切換到"))
-            if (!shell || !shell.agentGoTo(c.page, c.section)) {
-                GcpAgentState.cancelChange()
-                messageText = qsTr("無法切到這個畫面（帳號權限不足或畫面不存在）")
-                return
-            }
-            done(c, source)
-            return
-        }
-        if (c.kind === "layout") {
-            const mod = Core.MODULES.filter(m => m.id === c.module)[0]
-            GcpAgentState.beginChange(c.label_zh)
-            const loc = context()
-            if (!mod || (loc.page !== mod.page && (!shell || !shell.agentGoTo(mod.page, -1)))) {
-                GcpAgentState.cancelChange()
-                messageText = qsTr("無法開啟模組所在畫面，沒有調整。")
-                return
-            }
-            busy = true
-            statusText = qsTr("等待版面模組…")
-            _layoutJob = { c: c, source: source, tries: 0 }
-            layoutRetry.restart()   // 換頁後模組要等畫面載入才登記
-            return
-        }
+        executeSteps([c], source)
     }
 
+    property var _transaction: null
     property var _layoutJob: null
+    function executeSteps(steps, source) {
+        if (busy || _transaction || !steps.length || steps.length > 3 || steps.some(c => !c)) return
+        if (steps.length === 1 && ["nav", "layout", "layout_load", "layout_default"].indexOf(steps[0].kind) < 0) {
+            execute(steps[0], source)
+            return
+        }
+        if (steps.some(c => ["nav", "layout", "layout_load", "layout_default"].indexOf(c.kind) < 0)) {
+            messageText = qsTr("這些動作必須分開操作")
+            return
+        }
+        choices = []
+        const label = steps.map(c => c.label_zh).join("、")
+        GcpAgentState.beginChange(label)
+        _transaction = { steps: steps, index: 0, source: source, label: label }
+        busy = true
+        advanceSteps()
+    }
+
+    function failSteps(reason) {
+        layoutRetry.stop()
+        _layoutJob = null
+        if (_transaction) GcpAgentState.cancelChange()
+        _transaction = null
+        busy = false
+        statusText = ""
+        messageText = reason
+    }
+
+    function advanceSteps() {
+        const tx = _transaction
+        if (!tx) return
+        if (tx.index >= tx.steps.length) {
+            _transaction = null
+            busy = false
+            statusText = ""
+            done({ label_zh: tx.label }, tx.source)
+            return
+        }
+        const c = tx.steps[tx.index]
+        try {
+            if (c.kind === "layout_load" || c.kind === "layout_default") {
+                if (c.kind === "layout_load") GcpAgentState.applyLayout(c.name)
+                else GcpAgentState.defaultLayout()
+                tx.index++
+                Qt.callLater(advanceSteps)
+            } else if (c.kind === "nav") {
+                if (!shell || !shell.agentGoTo(c.page, c.section)) {
+                    failSteps(qsTr("無法切換畫面（權限不足或畫面不存在），已還原整組"))
+                    return
+                }
+                tx.index++
+                Qt.callLater(advanceSteps)
+            } else {
+                const mod = Core.MODULES.filter(m => m.id === c.module)[0]
+                if (!mod || (context().page !== mod.page && (!shell || !shell.agentGoTo(mod.page, -1)))) {
+                    failSteps(qsTr("無法開啟模組畫面，已還原整組"))
+                    return
+                }
+                _layoutJob = { c: c, tries: 0, page: mod.page }
+                statusText = qsTr("等待版面模組…")
+                layoutRetry.restart()
+            }
+        } catch (e) { failSteps(qsTr("動作失敗，已還原整組")) }
+    }
+
     Timer {
         id: layoutRetry
         interval: 120
         repeat: false
         onTriggered: {
             const job = root._layoutJob
-            if (!job) return
+            if (!job || !root._transaction) return
             const c = job.c
+            if (root.context().page !== job.page) {
+                root.failSteps(qsTr("等待時畫面已改變，已還原整組"))
+                return
+            }
             const box = GcpAgentState.baseBox(c.module)
-            if (!box) {
+            if (!box || box.areaW <= 0 || box.areaH <= 0) {
                 if (++job.tries < 20) { restart(); return }
-                root._layoutJob = null
-                GcpAgentState.cancelChange()
-                root.busy = false
-                root.statusText = ""
-                root.messageText = qsTr("這個模組目前不在畫面上，沒有調整。")
+                root.failSteps(qsTr("模組尚未就緒，已還原整組"))
                 return
             }
             root._layoutJob = null
             try {
                 const arg = c.op === "move" ? c.region : c.op === "nudge" ? c.dir : c.factor
                 const next = Core.layoutTarget(c.op, box, { w: box.areaW, h: box.areaH }, GcpAgentState.overrideOf(c.module), arg,
-                                                GcpAgentState.otherRects(c.module))
+                                                GcpAgentState.otherRects(c.module), Core.MODULES.filter(m => m.id === c.module)[0])
                 GcpAgentState.setOverride(c.module, next)
-            } catch (e) {
-                GcpAgentState.cancelChange()
-                root.busy = false
-                root.statusText = ""
-                root.messageText = qsTr("版面調整失敗，已撤回本次變更。")
-                return
-            }
-            root.busy = false
-            root.statusText = ""
-            root.done(c, job.source)
+                root._transaction.index++
+                root.advanceSteps()
+            } catch (e) { root.failSteps(qsTr("版面調整失敗，已還原整組")) }
         }
     }
 
@@ -269,7 +374,7 @@ Item {
 
     Component.onDestruction: {
         if (_cancelModel) _cancelModel()
-        if (_layoutJob) { layoutRetry.stop(); GcpAgentState.cancelChange() }
+        if (_transaction) { layoutRetry.stop(); GcpAgentState.cancelChange() }
     }
 
     // ------------------------------------------------------------ 提示列（面板關閉時也能一鍵復原）
@@ -461,6 +566,12 @@ Item {
                 text: root.statusText
                 color: root.cWarn; font.pixelSize: 20
             }
+            Button {
+                objectName: "agentCancelModel"
+                visible: root._cancelModel !== null
+                text: qsTr("取消")
+                onClicked: root.cancelWaiting()
+            }
             Text {
                 objectName: "agentMessage"
                 Layout.fillWidth: true
@@ -484,7 +595,7 @@ Item {
                         width: parent.width - 32; elide: Text.ElideRight
                         text: parent.modelData.label_zh; color: root.cText; font.pixelSize: 20
                     }
-                    MouseArea { anchors.fill: parent; onClicked: root.execute(parent.modelData, qsTr("使用者選擇")) }
+                    MouseArea { anchors.fill: parent; onClicked: root.choose(parent.modelData) }
                 }
             }
 

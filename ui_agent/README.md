@@ -77,8 +77,10 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ninja -C build-android-arm64-debug 
 
 ```bash
 node ui_agent/test/test_core.js                              # 決策核心 69 項
+node ui_agent/test/run_regression.js                         # 規則回歸集 265 句（正確率、最後畫面正確率）
 pip install PySide6==6.8.3
 python -I ui_agent/test/run_harness.py /tmp/agent_out        # 模擬畫面 18 項，存截圖
+python -I ui_agent/test/run_harness_v3.py /tmp/agent_out_v3  # v3：多步、鎖定、相對位置、命名版面、schema、取消 20 項
 ```
 
 模擬畫面用的是假的殼層與假模型伺服器（固定回覆），只驗證流程與復原邏輯，不代表正式 UI 已編譯通過或真實模型的表現。
