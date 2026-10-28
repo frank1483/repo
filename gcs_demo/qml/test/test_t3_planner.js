@@ -54,7 +54,7 @@ test('all four event contexts bind effective inputs without mutating caller',()=
 })
 test('S1 has two feasible full-battery return-home sorties and exact target union',()=>{
     const {m,v,w}=fixture(),r=C.planMission(m,v,w),s=r.candidates.find(c=>c.id==='S1')
-    assert(s);assert.strictEqual(r.rule_choice,'S1');assert.strictEqual(s.sorties.length,2)
+    assert(s);assert.strictEqual(r.rule_choice,'');assert.strictEqual(s.sorties.length,2) // 使用者 10/28：分兩趟只列建議，不當預設
     assert(r.candidates.filter(c=>c.id!=='S1').every(c=>!c.feasible))
     assert.deepStrictEqual(plain(s.order).sort(),m.targets.map(t=>t.id).sort())
     assert.strictEqual(new Set(s.order).size,m.targets.length)

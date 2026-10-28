@@ -99,7 +99,7 @@ class T3PlannerTests(unittest.TestCase):
         m, v, w = fixture()
         out = self.plan(m, v, w)
         split = next(c for c in out["candidates"] if c["id"] == "S1")
-        self.assertEqual(out["rule_choice"], "S1")
+        self.assertEqual(out["rule_choice"], "")  # 使用者 10/28：分兩趟只列建議，不當預設
         self.assertFalse(any(c["feasible"] for c in out["candidates"] if c["id"] != "S1"))
         self.assertEqual(sorted(split["order"]), sorted(t["id"] for t in m["targets"]))
         self.assertEqual(len(split["order"]), len(set(split["order"])))

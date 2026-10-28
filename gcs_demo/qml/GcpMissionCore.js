@@ -215,7 +215,8 @@ function evaluate(cid, label, how, mission, v, w, path, speed, startPct) {
 }
 
 function ruleChoice(cands) {
-    var feas = cands.filter(function (c) { return c.feasible })
+    // 分兩趟（S1）需要換電、目前無法一次套用：只列為建議，不當規則選擇
+    var feas = cands.filter(function (c) { return c.feasible && !c.requires_battery_swap })
     if (!feas.length) return ""
     var best = feas.reduce(function (a, c) {
         if (c.order.length !== a.order.length) return c.order.length > a.order.length ? c : a
@@ -441,6 +442,7 @@ function validatePick(result, text) {
     if (dec !== "SELECT" || ids.indexOf(d.choice_id) < 0) { fb.reason_zh += "（模型選了不存在的候選，已退回規則）"; return fb }
     var selected = result.candidates.filter(function (c) { return c.id === d.choice_id })[0]
     if (!selected.feasible) { fb.reason_zh += "（模型選了不可行候選，已退回規則）"; return fb }
+    if (selected.requires_battery_swap) { fb.reason_zh += "（模型選了需換電的分趟候選，已退回規則）"; return fb }
     return { choice_id: d.choice_id, source: "llm", decision: "SELECT", reason_zh: String(d.reason_zh || ""), evidence_ids: cited }
 }
 

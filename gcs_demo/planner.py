@@ -172,7 +172,8 @@ def _targets(mission, ids=None):
 
 
 def rule_choice(cands):
-    feas = [c for c in cands if c["feasible"]]
+    # 分兩趟（S1）需要換電、目前無法一次套用：只列為建議，不當規則選擇
+    feas = [c for c in cands if c["feasible"] and not c.get("requires_battery_swap")]
     if not feas:
         return ""
     # 先比涵蓋目標數（多者優先），再比能耗
@@ -207,7 +208,8 @@ def evidence_for(cands, vehicle, wind, extra=None):
 
 def _brief(c):
     return {k: c[k] for k in ("id", "label", "order", "speed_mps", "dist_km", "time_min",
-                              "energy_wh", "end_pct", "margin_pct", "feasible")}
+                              "energy_wh", "end_pct", "margin_pct", "feasible")} | (
+        {"requires_battery_swap": True} if c.get("requires_battery_swap") else {})
 
 
 def plan_mission(mission: dict, vehicle: Vehicle, wind: Wind, backend=None) -> dict:
