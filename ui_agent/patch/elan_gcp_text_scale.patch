@@ -1,3 +1,153 @@
+--- a/GCP/GcpDeviceHealthCard.qml
++++ b/GCP/GcpDeviceHealthCard.qml
+@@ -107,7 +107,7 @@
+                 text: root.valueLabel
+                 color: GcpTheme.color.textLabel
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 11
++                font.pixelSize: (11 * GcpTheme.font.textScale)
+                 horizontalAlignment: Text.AlignRight
+                 wrapMode: Text.Wrap
+             }
+--- a/GCP/GcpGallery.qml
++++ b/GCP/GcpGallery.qml
+@@ -70,7 +70,7 @@
+             text: "GCP Gallery"
+             color: GcpTheme.color.textPrimary
+             font.family: GcpTheme.font.latinFamily
+-            font.pixelSize: 24
++            font.pixelSize: (24 * GcpTheme.font.textScale)
+             font.bold: true
+         }
+ 
+@@ -88,7 +88,7 @@
+                 id: sectionTitle
+                 color: GcpTheme.color.textDisabled
+                 font.family: GcpTheme.font.latinFamily
+-                font.pixelSize: 18
++                font.pixelSize: (18 * GcpTheme.font.textScale)
+                 font.bold: true
+             }
+             Item {
+@@ -120,7 +120,7 @@
+                             text: "GcpCard"
+                             color: GcpTheme.color.textSecondary
+                             font.family: GcpTheme.font.latinFamily
+-                            font.pixelSize: 14
++                            font.pixelSize: (14 * GcpTheme.font.textScale)
+                         }
+                     }
+                 }
+@@ -546,7 +546,7 @@
+                                 text: qsTr("子頁內容區（示範）")
+                                 color: GcpTheme.color.textSecondary
+                                 font.family: GcpTheme.font.chineseFamily
+-                                font.pixelSize: 14
++                                font.pixelSize: (14 * GcpTheme.font.textScale)
+                             }
+                         }
+                     }
+@@ -588,7 +588,7 @@
+                     text: "GcpIcon（" + iconGrid.iconNames.length + " 個，resources/gcp/icons/）"
+                     color: GcpTheme.color.textLabel
+                     font.family: GcpTheme.font.chineseFamily
+-                    font.pixelSize: 13
++                    font.pixelSize: (13 * GcpTheme.font.textScale)
+                 }
+ 
+                 GridLayout {
+@@ -628,7 +628,7 @@
+                                 text: iconDelegate.modelData
+                                 color: GcpTheme.color.textLabel
+                                 font.family: GcpTheme.font.latinFamily
+-                                font.pixelSize: 10
++                                font.pixelSize: (10 * GcpTheme.font.textScale)
+                                 horizontalAlignment: Text.AlignHCenter
+                                 elide: Text.ElideRight
+                             }
+@@ -656,14 +656,14 @@
+                                 text: "GcpPanel"
+                                 color: GcpTheme.color.textPrimary
+                                 font.family: GcpTheme.font.latinFamily
+-                                font.pixelSize: 14
++                                font.pixelSize: (14 * GcpTheme.font.textScale)
+                             }
+                             Text {
+                                 Layout.alignment: Qt.AlignHCenter
+                                 text: "blurSource 未設定，退回不模糊填色"
+                                 color: GcpTheme.color.textDescription
+                                 font.family: GcpTheme.font.chineseFamily
+-                                font.pixelSize: 11
++                                font.pixelSize: (11 * GcpTheme.font.textScale)
+                             }
+                         }
+                     }
+--- a/GCP/GcpMapPreloader.qml
++++ b/GCP/GcpMapPreloader.qml
+@@ -30,7 +30,7 @@
+     Text {
+         anchors.centerIn: parent
+         color: GcpTheme.color.textPrimary
+-        font.pixelSize: 36
++        font.pixelSize: (36 * GcpTheme.font.textScale)
+         horizontalAlignment: Text.AlignHCenter
+         text: !root.started ? "準備下載…"
+               : root._set ? "圖磚預載中 " + root._set.savedTileCount + " / " + root._set.totalTileCount
+--- a/GCP/GcpMissionMapCanvas.qml
++++ b/GCP/GcpMissionMapCanvas.qml
+@@ -144,7 +144,7 @@
+                         text: waypoint.object ? waypoint.object.sequenceNumber : ""
+                         color: waypoint._current ? GcpTheme.color.bgBase : GcpTheme.color.textPrimary
+                         font.family: GcpTheme.font.monoFamily
+-                        font.pixelSize: 13
++                        font.pixelSize: (13 * GcpTheme.font.textScale)
+                         font.bold: true
+                     }
+ 
+--- a/GCP/GcpSafetyPage.qml
++++ b/GCP/GcpSafetyPage.qml
+@@ -339,7 +339,7 @@
+                        : (safetySettingsModel.hasValidationErrors
+                           ? GcpTheme.color.statusCritical : GcpTheme.color.textDescription)
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 13
++                font.pixelSize: (13 * GcpTheme.font.textScale)
+                 wrapMode: Text.Wrap
+             }
+         }
+--- a/GCP/GcpSystemCommunicationPanel.qml
++++ b/GCP/GcpSystemCommunicationPanel.qml
+@@ -218,7 +218,7 @@
+                                     text: linkCard.object.link ? qsTr("已連線") : qsTr("未連線")
+                                     color: linkCard.object.link ? GcpTheme.color.statusSuccess : GcpTheme.color.textSecondary
+                                     font.family: GcpTheme.font.chineseFamily
+-                                    font.pixelSize: 13
++                                    font.pixelSize: (13 * GcpTheme.font.textScale)
+                                 }
+                             }
+                             GcpButton {
+--- a/GCP/GcpTelemetryFlightList.qml
++++ b/GCP/GcpTelemetryFlightList.qml
+@@ -44,7 +44,7 @@
+             text: qsTr("飛航數據")
+             color: GcpTheme.color.primary
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 22
++            font.pixelSize: (22 * GcpTheme.font.textScale)
+             font.bold: true
+         }
+ 
+--- a/GCP/GcpTelemetryPage.qml
++++ b/GCP/GcpTelemetryPage.qml
+@@ -304,7 +304,7 @@
+                         text: root._downloaded ? qsTr("下載完成") : root._downloadStatus
+                         color: GcpTheme.color.primary
+                         font.family: GcpTheme.font.monoFamily
+-                        font.pixelSize: 12
++                        font.pixelSize: (12 * GcpTheme.font.textScale)
+                     }
+                 }
+ 
 --- a/GCP/GcpThemeFont.qml
 +++ b/GCP/GcpThemeFont.qml
 @@ -10,6 +10,8 @@
@@ -14,166 +164,166 @@
      // 14 px body / 18 px section-heading scale; larger page headings remain in
      // GcpPageHeader, which owns its own title treatment.
 -    readonly property real body: 14
--    readonly property real caption: 12
--    readonly property real sectionTitle: 18
--    readonly property real missionPlannerSummaryValue: 54
--    readonly property real missionPlannerStatLabel: 33
--    readonly property real missionPlannerAttrLabel: 30
--    readonly property real missionPlannerAttrValue: 42
--    readonly property real missionPlannerCardTitle: 54
--    readonly property real missionPlannerCoord: 36
--    readonly property real missionRailLabel: 27
--    readonly property real missionPlannerItemTitle: 48
--    readonly property real missionPlannerItemMeta: 40
--    readonly property real missionSaveAsTitle: 26
--    readonly property real missionPanelTitle: 39
--    readonly property real missionPanelBody: 27
--    readonly property real missionPanelLabel: 24
--    readonly property real missionPanelUnit: 20
--    readonly property real deviceHealthMetric: 28
--    readonly property real deviceHealthDetail: 24
--    readonly property real deviceHealthStatus: 11
--    readonly property real deviceHealthSummaryMeta: 13
--    readonly property real deviceFirmwareLog: 21
--    readonly property real telemetryMetricValue: 66
 +    readonly property real body: 14 * root.textScale
+-    readonly property real caption: 12
 +    readonly property real caption: 12 * root.textScale
+-    readonly property real sectionTitle: 18
 +    readonly property real sectionTitle: 18 * root.textScale
+-    readonly property real missionPlannerSummaryValue: 54
 +    readonly property real missionPlannerSummaryValue: 54 * root.textScale
+-    readonly property real missionPlannerStatLabel: 33
 +    readonly property real missionPlannerStatLabel: 33 * root.textScale
+-    readonly property real missionPlannerAttrLabel: 30
 +    readonly property real missionPlannerAttrLabel: 30 * root.textScale
+-    readonly property real missionPlannerAttrValue: 42
 +    readonly property real missionPlannerAttrValue: 42 * root.textScale
+-    readonly property real missionPlannerCardTitle: 54
 +    readonly property real missionPlannerCardTitle: 54 * root.textScale
+-    readonly property real missionPlannerCoord: 36
 +    readonly property real missionPlannerCoord: 36 * root.textScale
+-    readonly property real missionRailLabel: 27
 +    readonly property real missionRailLabel: 27 * root.textScale
+-    readonly property real missionPlannerItemTitle: 48
 +    readonly property real missionPlannerItemTitle: 48 * root.textScale
+-    readonly property real missionPlannerItemMeta: 40
 +    readonly property real missionPlannerItemMeta: 40 * root.textScale
+-    readonly property real missionSaveAsTitle: 26
 +    readonly property real missionSaveAsTitle: 26 * root.textScale
+-    readonly property real missionPanelTitle: 39
 +    readonly property real missionPanelTitle: 39 * root.textScale
+-    readonly property real missionPanelBody: 27
 +    readonly property real missionPanelBody: 27 * root.textScale
+-    readonly property real missionPanelLabel: 24
 +    readonly property real missionPanelLabel: 24 * root.textScale
+-    readonly property real missionPanelUnit: 20
 +    readonly property real missionPanelUnit: 20 * root.textScale
+-    readonly property real deviceHealthMetric: 28
 +    readonly property real deviceHealthMetric: 28 * root.textScale
+-    readonly property real deviceHealthDetail: 24
 +    readonly property real deviceHealthDetail: 24 * root.textScale
+-    readonly property real deviceHealthStatus: 11
 +    readonly property real deviceHealthStatus: 11 * root.textScale
+-    readonly property real deviceHealthSummaryMeta: 13
 +    readonly property real deviceHealthSummaryMeta: 13 * root.textScale
+-    readonly property real deviceFirmwareLog: 21
 +    readonly property real deviceFirmwareLog: 21 * root.textScale
+-    readonly property real telemetryMetricValue: 66
 +    readonly property real telemetryMetricValue: 66 * root.textScale
      // 飛行日誌次級分頁標籤（KI-039：Figma 約 16，原 body 14 偏小）
 -    readonly property real telemetrySubNav: 33
 +    readonly property real telemetrySubNav: 33 * root.textScale
      // v1.4 Telemetry 1.5x（Prototype 07 Summary 實測）
 -    readonly property real telemetryChipTitle: 36
--    readonly property real telemetryChipMeta: 27
--    readonly property real telemetryChipRight: 33
--    readonly property real telemetryMetricLabel: 33
--    readonly property real telemetryMetricUnit: 33
 +    readonly property real telemetryChipTitle: 36 * root.textScale
+-    readonly property real telemetryChipMeta: 27
 +    readonly property real telemetryChipMeta: 27 * root.textScale
+-    readonly property real telemetryChipRight: 33
 +    readonly property real telemetryChipRight: 33 * root.textScale
+-    readonly property real telemetryMetricLabel: 33
 +    readonly property real telemetryMetricLabel: 33 * root.textScale
+-    readonly property real telemetryMetricUnit: 33
 +    readonly property real telemetryMetricUnit: 33 * root.textScale
      // v1.4 Telemetry 子分頁內文（Prototype 06 Telemetry 實測：標題 54、內文 33、小字 27、主控台 Mono 45）
 -    readonly property real telemetryPanelTitle: 54
--    readonly property real telemetryPanelBody: 33
--    readonly property real telemetryPanelCaption: 27
--    readonly property real telemetryConsoleMono: 45
 +    readonly property real telemetryPanelTitle: 54 * root.textScale
+-    readonly property real telemetryPanelBody: 33
 +    readonly property real telemetryPanelBody: 33 * root.textScale
+-    readonly property real telemetryPanelCaption: 27
 +    readonly property real telemetryPanelCaption: 27 * root.textScale
+-    readonly property real telemetryConsoleMono: 45
 +    readonly property real telemetryConsoleMono: 45 * root.textScale
      // 設定列（Prototype 1920×1200 實測：列標題約 24、說明約 18）
      // Weather（Prototype 1920×1200 實測）
 -    readonly property real weatherCardTitle: 42
--    readonly property real weatherLabel: 30
--    readonly property real weatherValue: 54
--    readonly property real weatherUnit: 54
--    readonly property real weatherNote: 30
--    readonly property real weatherNoteLarge: 36
--    readonly property real weatherSummaryLine: 36
--    readonly property real weatherCompassValue: 94
--    readonly property real weatherTileTime: 42
--    readonly property real weatherTileWind: 42
--    readonly property real weatherBanner: 39
--    readonly property real weatherSubtitle: 33
--    readonly property real weatherCompassLabel: 33   // 羅盤 N／E／S／W（v1.4 在圓環內側）
 +    readonly property real weatherCardTitle: 42 * root.textScale
+-    readonly property real weatherLabel: 30
 +    readonly property real weatherLabel: 30 * root.textScale
+-    readonly property real weatherValue: 54
 +    readonly property real weatherValue: 54 * root.textScale
+-    readonly property real weatherUnit: 54
 +    readonly property real weatherUnit: 54 * root.textScale
+-    readonly property real weatherNote: 30
 +    readonly property real weatherNote: 30 * root.textScale
+-    readonly property real weatherNoteLarge: 36
 +    readonly property real weatherNoteLarge: 36 * root.textScale
+-    readonly property real weatherSummaryLine: 36
 +    readonly property real weatherSummaryLine: 36 * root.textScale
+-    readonly property real weatherCompassValue: 94
 +    readonly property real weatherCompassValue: 94 * root.textScale
+-    readonly property real weatherTileTime: 42
 +    readonly property real weatherTileTime: 42 * root.textScale
+-    readonly property real weatherTileWind: 42
 +    readonly property real weatherTileWind: 42 * root.textScale
+-    readonly property real weatherBanner: 39
 +    readonly property real weatherBanner: 39 * root.textScale
+-    readonly property real weatherSubtitle: 33
 +    readonly property real weatherSubtitle: 33 * root.textScale
+-    readonly property real weatherCompassLabel: 33   // 羅盤 N／E／S／W（v1.4 在圓環內側）
 +    readonly property real weatherCompassLabel: 33 * root.textScale   // 羅盤 N／E／S／W（v1.4 在圓環內側）
      // Alerts（Prototype 1920×1200 實測）
      // 指紋錄入（Figma PRESENT_00_First_Run_CreateFingerPrint：標題 90 Bold、說明 60 Bold 70% 白）
 -    readonly property real fingerprintHeading: 90
--    readonly property real fingerprintHint: 60
--    readonly property real fingerprintSkip: 30
 +    readonly property real fingerprintHeading: 90 * root.textScale
+-    readonly property real fingerprintHint: 60
 +    readonly property real fingerprintHint: 60 * root.textScale
+-    readonly property real fingerprintSkip: 30
 +    readonly property real fingerprintSkip: 30 * root.textScale
      // 子選單項目（Prototype 設備管理／系統設定左欄約 26；原 22）
      // v1.4 頁首標題群組（GCP_Shell_PageHeader_TitleGroup：標題 60 Bold／副標 40 Mono）
 -    readonly property real pageTitle: 66
--    readonly property real pageSubtitle: 40
--    readonly property real subNavItem: 26
--    readonly property real alertTitle: 60
 +    readonly property real pageTitle: 66 * root.textScale
+-    readonly property real pageSubtitle: 40
 +    readonly property real pageSubtitle: 40 * root.textScale
+-    readonly property real subNavItem: 26
 +    readonly property real subNavItem: 26 * root.textScale
+-    readonly property real alertTitle: 60
 +    readonly property real alertTitle: 60 * root.textScale
      // UserManagement 頁首標題（Prototype 實測 44）
 -    readonly property real userPageTitle: 44
--    readonly property real alertSubtitle: 40
--    readonly property real alertFilter: 42
--    readonly property real alertDetailTitle: 40
--    readonly property real alertDetailLabel: 22
--    readonly property real alertDetailValue: 28
--    readonly property real alertAction: 26
--    readonly property real alertFilterLabel: 39
 +    readonly property real userPageTitle: 44 * root.textScale
+-    readonly property real alertSubtitle: 40
 +    readonly property real alertSubtitle: 40 * root.textScale
+-    readonly property real alertFilter: 42
 +    readonly property real alertFilter: 42 * root.textScale
+-    readonly property real alertDetailTitle: 40
 +    readonly property real alertDetailTitle: 40 * root.textScale
+-    readonly property real alertDetailLabel: 22
 +    readonly property real alertDetailLabel: 22 * root.textScale
+-    readonly property real alertDetailValue: 28
 +    readonly property real alertDetailValue: 28 * root.textScale
+-    readonly property real alertAction: 26
 +    readonly property real alertAction: 26 * root.textScale
+-    readonly property real alertFilterLabel: 39
 +    readonly property real alertFilterLabel: 39 * root.textScale
      // v1.4 1.5x 告警列表（Prototype 05 Alerts 實測）
 -    readonly property real alertTab: 42
--    readonly property real alertRowTitle: 45
--    readonly property real alertRowMeta: 35
--    readonly property real alertBadge: 36
--    readonly property real settingRowTitle: 24
--    readonly property real settingRowDescription: 18
 +    readonly property real alertTab: 42 * root.textScale
+-    readonly property real alertRowTitle: 45
 +    readonly property real alertRowTitle: 45 * root.textScale
+-    readonly property real alertRowMeta: 35
 +    readonly property real alertRowMeta: 35 * root.textScale
+-    readonly property real alertBadge: 36
 +    readonly property real alertBadge: 36 * root.textScale
+-    readonly property real settingRowTitle: 24
 +    readonly property real settingRowTitle: 24 * root.textScale
+-    readonly property real settingRowDescription: 18
 +    readonly property real settingRowDescription: 18 * root.textScale
      // 安全設定左側分類卡（Prototype Safety 1920×1200 實測：分類名約 28、摘要約 22）
 -    readonly property real safetyCategoryTitle: 46     // v1.4 1.5x（Prototype 04 Safety 實測）
--    readonly property real safetyCategorySummary: 36
--    readonly property real safetyCategoryLabel: 36
--    readonly property real safetyHeaderStatus: 45
--    readonly property real safetyRowTitle: 45
--    readonly property real safetyRowDescription: 36
--    readonly property real safetyFieldValue: 54
--    readonly property real safetyFieldUnit: 36
 +    readonly property real safetyCategoryTitle: 46 * root.textScale     // v1.4 1.5x（Prototype 04 Safety 實測）
+-    readonly property real safetyCategorySummary: 36
 +    readonly property real safetyCategorySummary: 36 * root.textScale
+-    readonly property real safetyCategoryLabel: 36
 +    readonly property real safetyCategoryLabel: 36 * root.textScale
+-    readonly property real safetyHeaderStatus: 45
 +    readonly property real safetyHeaderStatus: 45 * root.textScale
+-    readonly property real safetyRowTitle: 45
 +    readonly property real safetyRowTitle: 45 * root.textScale
+-    readonly property real safetyRowDescription: 36
 +    readonly property real safetyRowDescription: 36 * root.textScale
+-    readonly property real safetyFieldValue: 54
 +    readonly property real safetyFieldValue: 54 * root.textScale
+-    readonly property real safetyFieldUnit: 36
 +    readonly property real safetyFieldUnit: 36 * root.textScale
      // 安全設定右側卡標題（Prototype 實測約 38、粗體）
 -    readonly property real safetyCardTitle: 59
@@ -183,120 +333,120 @@
      // 放大字級（scale_SizeNN：Figma 原 14 → 20、16 → 22、24 → 32…），新畫面依這組字級
      // 實作；既有畫面在各自改版單元（P3 起）再換用，避免一次改動全部版面。
 -    readonly property real titlePage: 38
--    readonly property real titleSection: 28
--    readonly property real cameraCardTitle: 36
 +    readonly property real titlePage: 38 * root.textScale
+-    readonly property real titleSection: 28
 +    readonly property real titleSection: 28 * root.textScale
+-    readonly property real cameraCardTitle: 36
 +    readonly property real cameraCardTitle: 36 * root.textScale
      // v1.4（1.5×）影像設置
 -    readonly property real cameraBody: 33
--    readonly property real cameraDesc: 27
--    readonly property real cameraRowTitle: 36
--    readonly property real cameraSection: 27
--    readonly property real cameraChip: 33
--    readonly property real cameraSmall: 21
--    readonly property real cameraTab: 36
--    readonly property real contentPrimary: 22
--    readonly property real contentSecondary: 22
 +    readonly property real cameraBody: 33 * root.textScale
+-    readonly property real cameraDesc: 27
 +    readonly property real cameraDesc: 27 * root.textScale
+-    readonly property real cameraRowTitle: 36
 +    readonly property real cameraRowTitle: 36 * root.textScale
+-    readonly property real cameraSection: 27
 +    readonly property real cameraSection: 27 * root.textScale
+-    readonly property real cameraChip: 33
 +    readonly property real cameraChip: 33 * root.textScale
+-    readonly property real cameraSmall: 21
 +    readonly property real cameraSmall: 21 * root.textScale
+-    readonly property real cameraTab: 36
 +    readonly property real cameraTab: 36 * root.textScale
+-    readonly property real contentPrimary: 22
 +    readonly property real contentPrimary: 22 * root.textScale
+-    readonly property real contentSecondary: 22
 +    readonly property real contentSecondary: 22 * root.textScale
      // v1.4 T2：Typography token 寫 22，但匯出的 Button 狀態 PNG 實測字高 32px、字寬對照約 36px，以匯出圖為準（KI-011 作廢）
 -    readonly property real buttonStandard: 36
--    readonly property real buttonLarge: 32
--    readonly property real buttonCompact: 20
--    readonly property real dialogButton: 22   // Prototype 未儲存變更對話框底部按鈕（64 高、22 Bold）
--    readonly property real buttonNavigation: 22
--    readonly property real buttonNavigationSecondary: 20
 +    readonly property real buttonStandard: 36 * root.textScale
+-    readonly property real buttonLarge: 32
 +    readonly property real buttonLarge: 32 * root.textScale
+-    readonly property real buttonCompact: 20
 +    readonly property real buttonCompact: 20 * root.textScale
+-    readonly property real dialogButton: 22   // Prototype 未儲存變更對話框底部按鈕（64 高、22 Bold）
 +    readonly property real dialogButton: 22 * root.textScale   // Prototype 未儲存變更對話框底部按鈕（64 高、22 Bold）
+-    readonly property real buttonNavigation: 22
 +    readonly property real buttonNavigation: 22 * root.textScale
+-    readonly property real buttonNavigationSecondary: 20
 +    readonly property real buttonNavigationSecondary: 20 * root.textScale
      // 輸入框標準字級（P1b-2，GCP/PopUp/Field 輸入值 18）
 -    readonly property real inputStandard: 18
 +    readonly property real inputStandard: 18 * root.textScale
      // 對話框／Toast 字級（P1c：ClearDialog 標題 38 Bold、內文 28；ToastBanner 標題 24 Bold、副標 16）
 -    readonly property real dialogTitle: 38
--    readonly property real dialogBody: 28
--    readonly property real toastTitle: 30
--    readonly property real missionToastTitle: 34
--    readonly property real missionToastMessage: 26
--    readonly property real missionRallyTitle: 36         // v1.4 T10：Rally Point Edit
--    readonly property real missionRallyFieldLabel: 24
--    readonly property real missionRallyFieldValue: 34
--    readonly property real missionRallyHelper: 26
--    readonly property real missionLayerMenuLabel: 26     // v1.4 T10：圖層選單標題／列文字
--    readonly property real missionLayerMenuItem: 26
--    readonly property real toastSub: 24
 +    readonly property real dialogTitle: 38 * root.textScale
+-    readonly property real dialogBody: 28
 +    readonly property real dialogBody: 28 * root.textScale
+-    readonly property real toastTitle: 30
 +    readonly property real toastTitle: 30 * root.textScale
+-    readonly property real missionToastTitle: 34
 +    readonly property real missionToastTitle: 34 * root.textScale
+-    readonly property real missionToastMessage: 26
 +    readonly property real missionToastMessage: 26 * root.textScale
+-    readonly property real missionRallyTitle: 36         // v1.4 T10：Rally Point Edit
 +    readonly property real missionRallyTitle: 36 * root.textScale         // v1.4 T10：Rally Point Edit
+-    readonly property real missionRallyFieldLabel: 24
 +    readonly property real missionRallyFieldLabel: 24 * root.textScale
+-    readonly property real missionRallyFieldValue: 34
 +    readonly property real missionRallyFieldValue: 34 * root.textScale
+-    readonly property real missionRallyHelper: 26
 +    readonly property real missionRallyHelper: 26 * root.textScale
+-    readonly property real missionLayerMenuLabel: 26     // v1.4 T10：圖層選單標題／列文字
 +    readonly property real missionLayerMenuLabel: 26 * root.textScale     // v1.4 T10：圖層選單標題／列文字
+-    readonly property real missionLayerMenuItem: 26
 +    readonly property real missionLayerMenuItem: 26 * root.textScale
+-    readonly property real toastSub: 24
 +    readonly property real toastSub: 24 * root.textScale
      // 未儲存變更對話框（GCP/Dialog/UnsavedChangeRow：區域名稱 30 Medium、說明 26、項目數 26 mono）
 -    readonly property real unsavedRowTitle: 30
--    readonly property real unsavedRowDetail: 26
 +    readonly property real unsavedRowTitle: 30 * root.textScale
+-    readonly property real unsavedRowDetail: 26
 +    readonly property real unsavedRowDetail: 26 * root.textScale
      // 登入／建立管理員（v1.4 T8 換 1.5x；欄位／按鈕／連結字級依 Prototype 量測。P3a：品牌標題 60 Bold、副標題 32 Bold／說明 22、欄位標籤 22 Medium、
      // 輸入值 24、主要按鈕 26 Bold、指紋登入 24 Medium、錯誤訊息 22 Medium）
 -    readonly property real authBrandTitle: 60
--    readonly property real authHeading: 48
--    readonly property real authSubheading: 33
--    readonly property real authFieldLabel: 33
--    readonly property real authFieldValue: 36
--    readonly property real authButton: 39
--    readonly property real authLink: 36
--    readonly property real firstRunEyebrow: 33
--    readonly property real firstRunTitle: 66
--    readonly property real firstRunSection: 39
--    readonly property real firstRunTile: 39
--    readonly property real firstRunTileSub: 27
--    readonly property real firstRunUnitLabel: 36
--    readonly property real authError: 33
 +    readonly property real authBrandTitle: 60 * root.textScale
+-    readonly property real authHeading: 48
 +    readonly property real authHeading: 48 * root.textScale
+-    readonly property real authSubheading: 33
 +    readonly property real authSubheading: 33 * root.textScale
+-    readonly property real authFieldLabel: 33
 +    readonly property real authFieldLabel: 33 * root.textScale
+-    readonly property real authFieldValue: 36
 +    readonly property real authFieldValue: 36 * root.textScale
+-    readonly property real authButton: 39
 +    readonly property real authButton: 39 * root.textScale
+-    readonly property real authLink: 36
 +    readonly property real authLink: 36 * root.textScale
+-    readonly property real firstRunEyebrow: 33
 +    readonly property real firstRunEyebrow: 33 * root.textScale
+-    readonly property real firstRunTitle: 66
 +    readonly property real firstRunTitle: 66 * root.textScale
+-    readonly property real firstRunSection: 39
 +    readonly property real firstRunSection: 39 * root.textScale
+-    readonly property real firstRunTile: 39
 +    readonly property real firstRunTile: 39 * root.textScale
+-    readonly property real firstRunTileSub: 27
 +    readonly property real firstRunTileSub: 27 * root.textScale
+-    readonly property real firstRunUnitLabel: 36
 +    readonly property real firstRunUnitLabel: 36 * root.textScale
+-    readonly property real authError: 33
 +    readonly property real authError: 33 * root.textScale
      // 列表／卡片字級（P21b：用戶管理、航線庫對 Prototype 1920×1200 實測）
 -    readonly property real rowTitle: 24
--    readonly property real rowMeta: 20
--    readonly property real tableHeader: 20
--    readonly property real chipLabel: 20
--    readonly property real formLabel: 18
--    readonly property real cardTitle: 30
--    readonly property real cardMeta: 24
 +    readonly property real rowTitle: 24 * root.textScale
+-    readonly property real rowMeta: 20
 +    readonly property real rowMeta: 20 * root.textScale
+-    readonly property real tableHeader: 20
 +    readonly property real tableHeader: 20 * root.textScale
+-    readonly property real chipLabel: 20
 +    readonly property real chipLabel: 20 * root.textScale
+-    readonly property real formLabel: 18
 +    readonly property real formLabel: 18 * root.textScale
+-    readonly property real cardTitle: 30
 +    readonly property real cardTitle: 30 * root.textScale
+-    readonly property real cardMeta: 24
 +    readonly property real cardMeta: 24 * root.textScale
      // 緊湊行高倍率（Figma 文字框固定行高約字級 1.2 倍；Qt 預設行高為字型 metrics，Noto Sans TC 約 1.45 倍，
      // 且 Text.FixedHeight 無法把單行高度縮到 metrics 以下，需要時以 Layout.preferredHeight 固定文字框高度）
@@ -310,265 +460,265 @@
  
      // 首頁 Launcher（P4）
 -    readonly property real homeBrandTitle: 48
--    readonly property real homeBrandSubtitle: 40
--    readonly property real homeReady: 52
--    readonly property real homeStatusLabel: 32
--    readonly property real homeStatusValue: 44
--    readonly property real homeWeatherLabel: 32
--    readonly property real homeWeatherValue: 40
--    readonly property real homeWeatherUnit: 28
--    readonly property real homeDetails: 30
--    readonly property real homeTime: 48
--    readonly property real homeDate: 28
--    readonly property real homeUserName: 34
--    readonly property real homeUserRole: 26
--    readonly property real homeAvatar: 32
--    readonly property real homeAlertMain: 38
--    readonly property real homeAlertSub: 34
--    readonly property real homeTileEyebrow: 30
--    readonly property real homeTileArrow: 64
--    readonly property real homeTileTitle: 72
--    readonly property real homeTileSub: 36
--    readonly property real homeTileSecondaryEyebrow: 26
--    readonly property real homeTileSecondaryTitle: 56
--    readonly property real homeTileLetterSpacing: 1.2
 +    readonly property real homeBrandTitle: 48 * root.textScale
+-    readonly property real homeBrandSubtitle: 40
 +    readonly property real homeBrandSubtitle: 40 * root.textScale
+-    readonly property real homeReady: 52
 +    readonly property real homeReady: 52 * root.textScale
+-    readonly property real homeStatusLabel: 32
 +    readonly property real homeStatusLabel: 32 * root.textScale
+-    readonly property real homeStatusValue: 44
 +    readonly property real homeStatusValue: 44 * root.textScale
+-    readonly property real homeWeatherLabel: 32
 +    readonly property real homeWeatherLabel: 32 * root.textScale
+-    readonly property real homeWeatherValue: 40
 +    readonly property real homeWeatherValue: 40 * root.textScale
+-    readonly property real homeWeatherUnit: 28
 +    readonly property real homeWeatherUnit: 28 * root.textScale
+-    readonly property real homeDetails: 30
 +    readonly property real homeDetails: 30 * root.textScale
+-    readonly property real homeTime: 48
 +    readonly property real homeTime: 48 * root.textScale
+-    readonly property real homeDate: 28
 +    readonly property real homeDate: 28 * root.textScale
+-    readonly property real homeUserName: 34
 +    readonly property real homeUserName: 34 * root.textScale
+-    readonly property real homeUserRole: 26
 +    readonly property real homeUserRole: 26 * root.textScale
+-    readonly property real homeAvatar: 32
 +    readonly property real homeAvatar: 32 * root.textScale
+-    readonly property real homeAlertMain: 38
 +    readonly property real homeAlertMain: 38 * root.textScale
+-    readonly property real homeAlertSub: 34
 +    readonly property real homeAlertSub: 34 * root.textScale
+-    readonly property real homeTileEyebrow: 30
 +    readonly property real homeTileEyebrow: 30 * root.textScale
+-    readonly property real homeTileArrow: 64
 +    readonly property real homeTileArrow: 64 * root.textScale
+-    readonly property real homeTileTitle: 72
 +    readonly property real homeTileTitle: 72 * root.textScale
+-    readonly property real homeTileSub: 36
 +    readonly property real homeTileSub: 36 * root.textScale
+-    readonly property real homeTileSecondaryEyebrow: 26
 +    readonly property real homeTileSecondaryEyebrow: 26 * root.textScale
+-    readonly property real homeTileSecondaryTitle: 56
 +    readonly property real homeTileSecondaryTitle: 56 * root.textScale
+-    readonly property real homeTileLetterSpacing: 1.2
 +    readonly property real homeTileLetterSpacing: 1.2 * root.textScale
      // LiveFlight HUD 讀數（P5b：地速／高度大字、標籤、單位）
 -    readonly property real flightActionLabel: 27   // 指令鈕標籤（匯出稿 27）
--    readonly property real flightTopBarMetric: 33   // Prototype 量測：「RTK FIX」7 字寬 137 px → JetBrains Mono 約 33
 +    readonly property real flightActionLabel: 27 * root.textScale   // 指令鈕標籤（匯出稿 27）
+-    readonly property real flightTopBarMetric: 33   // Prototype 量測：「RTK FIX」7 字寬 137 px → JetBrains Mono 約 33
 +    readonly property real flightTopBarMetric: 33 * root.textScale   // Prototype 量測：「RTK FIX」7 字寬 137 px → JetBrains Mono 約 33
      // v1.4（1.5×）用戶管理 Prototype「11 User Management」實測
 -    readonly property real userTitle: 66
--    readonly property real userSubtitle: 33
--    readonly property real userField: 36
--    readonly property real userTableHeader: 30
--    readonly property real userRowName: 36
--    readonly property real userRowMeta: 27
--    readonly property real userRowDate: 30
--    readonly property real userChip: 30
--    readonly property real userPanelTitle: 42
--    readonly property real userPanelSubtitle: 30
--    readonly property real userMatrixChip: 24
--    readonly property real userMatrixLabel: 33
 +    readonly property real userTitle: 66 * root.textScale
+-    readonly property real userSubtitle: 33
 +    readonly property real userSubtitle: 33 * root.textScale
+-    readonly property real userField: 36
 +    readonly property real userField: 36 * root.textScale
+-    readonly property real userTableHeader: 30
 +    readonly property real userTableHeader: 30 * root.textScale
+-    readonly property real userRowName: 36
 +    readonly property real userRowName: 36 * root.textScale
+-    readonly property real userRowMeta: 27
 +    readonly property real userRowMeta: 27 * root.textScale
+-    readonly property real userRowDate: 30
 +    readonly property real userRowDate: 30 * root.textScale
+-    readonly property real userChip: 30
 +    readonly property real userChip: 30 * root.textScale
+-    readonly property real userPanelTitle: 42
 +    readonly property real userPanelTitle: 42 * root.textScale
+-    readonly property real userPanelSubtitle: 30
 +    readonly property real userPanelSubtitle: 30 * root.textScale
+-    readonly property real userMatrixChip: 24
 +    readonly property real userMatrixChip: 24 * root.textScale
+-    readonly property real userMatrixLabel: 33
 +    readonly property real userMatrixLabel: 33 * root.textScale
      // v1.4（1.5×）航線庫 Prototype「10 Mission Library」實測
 -    readonly property real libTitle: 66
--    readonly property real libCardTitle: 51
--    readonly property real libCardMeta: 40
--    readonly property real libTag: 36
--    readonly property real libDetailTitle: 58
--    readonly property real libDetailMeta: 33
--    readonly property real libStatValue: 54
--    readonly property real libSection: 50
--    readonly property real libRowTitle: 44
--    readonly property real libRowMeta: 33
--    readonly property real libMarker: 18
--    readonly property real libField: 42
--    readonly property real libFilter: 33
--    readonly property real noticeTitle: 30   // 全域通知橫幅（原 14／13 太小）
--    readonly property real noticeMessage: 27
 +    readonly property real libTitle: 66 * root.textScale
+-    readonly property real libCardTitle: 51
 +    readonly property real libCardTitle: 51 * root.textScale
+-    readonly property real libCardMeta: 40
 +    readonly property real libCardMeta: 40 * root.textScale
+-    readonly property real libTag: 36
 +    readonly property real libTag: 36 * root.textScale
+-    readonly property real libDetailTitle: 58
 +    readonly property real libDetailTitle: 58 * root.textScale
+-    readonly property real libDetailMeta: 33
 +    readonly property real libDetailMeta: 33 * root.textScale
+-    readonly property real libStatValue: 54
 +    readonly property real libStatValue: 54 * root.textScale
+-    readonly property real libSection: 50
 +    readonly property real libSection: 50 * root.textScale
+-    readonly property real libRowTitle: 44
 +    readonly property real libRowTitle: 44 * root.textScale
+-    readonly property real libRowMeta: 33
 +    readonly property real libRowMeta: 33 * root.textScale
+-    readonly property real libMarker: 18
 +    readonly property real libMarker: 18 * root.textScale
+-    readonly property real libField: 42
 +    readonly property real libField: 42 * root.textScale
+-    readonly property real libFilter: 33
 +    readonly property real libFilter: 33 * root.textScale
+-    readonly property real noticeTitle: 30   // 全域通知橫幅（原 14／13 太小）
 +    readonly property real noticeTitle: 30 * root.textScale   // 全域通知橫幅（原 14／13 太小）
+-    readonly property real noticeMessage: 27
 +    readonly property real noticeMessage: 27 * root.textScale
      // 設備管理各子頁（參考設備健康頁的大字級）
 -    readonly property real deviceCardTitle: 42
--    readonly property real deviceBody: 27
--    readonly property real deviceRowTitle: 36
--    readonly property real flightProTapeLabel: 24
--    readonly property real flightProTapeValue: 36
--    readonly property real flightReadoutValue: 90
--    readonly property real flightReadoutValueCompact: 56
--    readonly property real flightReadoutLabel: 27
--    readonly property real flightReadoutUnit: 30
 +    readonly property real deviceCardTitle: 42 * root.textScale
+-    readonly property real deviceBody: 27
 +    readonly property real deviceBody: 27 * root.textScale
+-    readonly property real deviceRowTitle: 36
 +    readonly property real deviceRowTitle: 36 * root.textScale
+-    readonly property real flightProTapeLabel: 24
 +    readonly property real flightProTapeLabel: 24 * root.textScale
+-    readonly property real flightProTapeValue: 36
 +    readonly property real flightProTapeValue: 36 * root.textScale
+-    readonly property real flightReadoutValue: 90
 +    readonly property real flightReadoutValue: 90 * root.textScale
+-    readonly property real flightReadoutValueCompact: 56
 +    readonly property real flightReadoutValueCompact: 56 * root.textScale
+-    readonly property real flightReadoutLabel: 27
 +    readonly property real flightReadoutLabel: 27 * root.textScale
+-    readonly property real flightReadoutUnit: 30
 +    readonly property real flightReadoutUnit: 30 * root.textScale
  
      // v1.4 Token `GCP_Global_Typography.scale_SizeNN`：舊 Figma 字級（NN）放大後的實際字級。
      // 換皮時把畫面中舊的 14／16／24 等字級改引用對應的 scaleNN，不用全域 scale。
 -    readonly property real scale08: 18   // 08–13 皆為 18
--    readonly property real scale13: 18
--    readonly property real scale14: 20
--    readonly property real scale15: 22
--    readonly property real scale16: 22
--    readonly property real scale17: 24
--    readonly property real scale18: 26
--    readonly property real scale20: 28
--    readonly property real scale22: 30
--    readonly property real scale24: 32
--    readonly property real scale28: 38
--    readonly property real scale30: 40
--    readonly property real scale32: 44
--    readonly property real scale36: 48
 +    readonly property real scale08: 18 * root.textScale   // 08–13 皆為 18
+-    readonly property real scale13: 18
 +    readonly property real scale13: 18 * root.textScale
+-    readonly property real scale14: 20
 +    readonly property real scale14: 20 * root.textScale
+-    readonly property real scale15: 22
 +    readonly property real scale15: 22 * root.textScale
+-    readonly property real scale16: 22
 +    readonly property real scale16: 22 * root.textScale
+-    readonly property real scale17: 24
 +    readonly property real scale17: 24 * root.textScale
+-    readonly property real scale18: 26
 +    readonly property real scale18: 26 * root.textScale
+-    readonly property real scale20: 28
 +    readonly property real scale20: 28 * root.textScale
+-    readonly property real scale22: 30
 +    readonly property real scale22: 30 * root.textScale
+-    readonly property real scale24: 32
 +    readonly property real scale24: 32 * root.textScale
+-    readonly property real scale28: 38
 +    readonly property real scale28: 38 * root.textScale
+-    readonly property real scale30: 40
 +    readonly property real scale30: 40 * root.textScale
+-    readonly property real scale32: 44
 +    readonly property real scale32: 44 * root.textScale
+-    readonly property real scale36: 48
 +    readonly property real scale36: 48 * root.textScale
  
 -    readonly property real optionMenuItem: 20
--    readonly property real optionMenuTitle: 16
 +    readonly property real optionMenuItem: 20 * root.textScale
+-    readonly property real optionMenuTitle: 16
 +    readonly property real optionMenuTitle: 16 * root.textScale
  
      // v1.4 媒體庫（Prototype 13 Media Library 實測）
 -    readonly property real mediaSideTitle: 66
--    readonly property real mediaCategory: 42
--    readonly property real mediaSubtitle: 36
--    readonly property real mediaFileName: 36
--    readonly property real mediaMeta: 30
--    readonly property real mediaBadge: 30
 +    readonly property real mediaSideTitle: 66 * root.textScale
+-    readonly property real mediaCategory: 42
 +    readonly property real mediaCategory: 42 * root.textScale
+-    readonly property real mediaSubtitle: 36
 +    readonly property real mediaSubtitle: 36 * root.textScale
+-    readonly property real mediaFileName: 36
 +    readonly property real mediaFileName: 36 * root.textScale
+-    readonly property real mediaMeta: 30
 +    readonly property real mediaMeta: 30 * root.textScale
+-    readonly property real mediaBadge: 30
 +    readonly property real mediaBadge: 30 * root.textScale
  
      // v1.4 設備管理（Prototype 06 Devices 實測）
 -    readonly property real devicesNavItem: 43
--    readonly property real devicesNavGroup: 35
--    readonly property real devicesHeaderTitle: 66
--    readonly property real devicesHeaderSubtitle: 36
 +    readonly property real devicesNavItem: 43 * root.textScale
+-    readonly property real devicesNavGroup: 35
 +    readonly property real devicesNavGroup: 35 * root.textScale
+-    readonly property real devicesHeaderTitle: 66
 +    readonly property real devicesHeaderTitle: 66 * root.textScale
+-    readonly property real devicesHeaderSubtitle: 36
 +    readonly property real devicesHeaderSubtitle: 36 * root.textScale
  
      // v1.4 系統設定（Prototype 09 System 實測）
 -    readonly property real systemNavTitle: 54
--    readonly property real systemHeaderSubtitle: 33
--    readonly property real systemCardTitle: 42
--    readonly property real systemRowTitle: 39
--    readonly property real systemRowDescription: 30
--    readonly property real systemChip: 33
--    readonly property real systemChangeText: 33
--    readonly property real systemChipUnit: 27
 +    readonly property real systemNavTitle: 54 * root.textScale
+-    readonly property real systemHeaderSubtitle: 33
 +    readonly property real systemHeaderSubtitle: 33 * root.textScale
+-    readonly property real systemCardTitle: 42
 +    readonly property real systemCardTitle: 42 * root.textScale
+-    readonly property real systemRowTitle: 39
 +    readonly property real systemRowTitle: 39 * root.textScale
+-    readonly property real systemRowDescription: 30
 +    readonly property real systemRowDescription: 30 * root.textScale
+-    readonly property real systemChip: 33
 +    readonly property real systemChip: 33 * root.textScale
+-    readonly property real systemChangeText: 33
 +    readonly property real systemChangeText: 33 * root.textScale
+-    readonly property real systemChipUnit: 27
 +    readonly property real systemChipUnit: 27 * root.textScale
      // Prototype 12 System › Link Edit (UDP) 實測
 -    readonly property real systemLinkDialogTitle: 48
--    readonly property real systemLinkDialogSubtitle: 33
--    readonly property real systemLinkLabel: 24
--    readonly property real systemLinkField: 27
--    readonly property real systemLinkSection: 36
 +    readonly property real systemLinkDialogTitle: 48 * root.textScale
+-    readonly property real systemLinkDialogSubtitle: 33
 +    readonly property real systemLinkDialogSubtitle: 33 * root.textScale
+-    readonly property real systemLinkLabel: 24
 +    readonly property real systemLinkLabel: 24 * root.textScale
+-    readonly property real systemLinkField: 27
 +    readonly property real systemLinkField: 27 * root.textScale
+-    readonly property real systemLinkSection: 36
 +    readonly property real systemLinkSection: 36 * root.textScale
  
      // v1.4 設備健康面板（Prototype 06 Devices 實測 1.5x）
 -    readonly property real dhSummaryLabel: 33
--    readonly property real dhSummaryBig: 105
--    readonly property real dhSummaryUnit: 45
--    readonly property real dhSummaryMeta: 39
--    readonly property real dhAlertTitle: 45
--    readonly property real dhAlertDetail: 36
--    readonly property real dhGroupTitle: 45
--    readonly property real dhGroupCount: 36
--    readonly property real dhRowTitle: 45
--    readonly property real dhRowDetail: 33
--    readonly property real dhRowValue: 54
--    readonly property real dhRowUnit: 33
 +    readonly property real dhSummaryLabel: 33 * root.textScale
+-    readonly property real dhSummaryBig: 105
 +    readonly property real dhSummaryBig: 105 * root.textScale
+-    readonly property real dhSummaryUnit: 45
 +    readonly property real dhSummaryUnit: 45 * root.textScale
+-    readonly property real dhSummaryMeta: 39
 +    readonly property real dhSummaryMeta: 39 * root.textScale
+-    readonly property real dhAlertTitle: 45
 +    readonly property real dhAlertTitle: 45 * root.textScale
+-    readonly property real dhAlertDetail: 36
 +    readonly property real dhAlertDetail: 36 * root.textScale
+-    readonly property real dhGroupTitle: 45
 +    readonly property real dhGroupTitle: 45 * root.textScale
+-    readonly property real dhGroupCount: 36
 +    readonly property real dhGroupCount: 36 * root.textScale
+-    readonly property real dhRowTitle: 45
 +    readonly property real dhRowTitle: 45 * root.textScale
+-    readonly property real dhRowDetail: 33
 +    readonly property real dhRowDetail: 33 * root.textScale
+-    readonly property real dhRowValue: 54
 +    readonly property real dhRowValue: 54 * root.textScale
+-    readonly property real dhRowUnit: 33
 +    readonly property real dhRowUnit: 33 * root.textScale
  
      // Prototype 12 System › Map › Offline Maps：集合名稱 39、說明／狀態 33
 -    readonly property real offlineMapName: 39
--    readonly property real offlineMapMeta: 33
 +    readonly property real offlineMapName: 39 * root.textScale
+-    readonly property real offlineMapMeta: 33
 +    readonly property real offlineMapMeta: 33 * root.textScale
  
      // Prototype 12 System › Map › Offline Region Editor：右側卡標題 39、說明 30、欄位小標 20、欄位值 21、統計 30
 -    readonly property real regionTitle: 39
--    readonly property real regionSubtitle: 30
--    readonly property real regionLabel: 20
--    readonly property real regionField: 21
--    readonly property real regionStat: 30
--    readonly property real regionBadge: 30
 +    readonly property real regionTitle: 39 * root.textScale
+-    readonly property real regionSubtitle: 30
 +    readonly property real regionSubtitle: 30 * root.textScale
+-    readonly property real regionLabel: 20
 +    readonly property real regionLabel: 20 * root.textScale
+-    readonly property real regionField: 21
 +    readonly property real regionField: 21 * root.textScale
+-    readonly property real regionStat: 30
 +    readonly property real regionStat: 30 * root.textScale
+-    readonly property real regionBadge: 30
 +    readonly property real regionBadge: 30 * root.textScale
  }
 --- a/GCP/GcpThemeSwatches.qml
@@ -582,3 +732,665 @@
                  }
              }
          }
+--- a/GCP/GcpThreeDViewPage.qml
++++ b/GCP/GcpThreeDViewPage.qml
+@@ -61,7 +61,7 @@
+                 text: qsTr("3D 視圖")
+                 color: GcpTheme.color.textPrimary
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 24
++                font.pixelSize: (24 * GcpTheme.font.textScale)
+                 font.bold: true
+             }
+ 
+@@ -69,7 +69,7 @@
+                 text: qsTr("建築 · 載具 · 任務")
+                 color: GcpTheme.color.textDescription
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 14
++                font.pixelSize: (14 * GcpTheme.font.textScale)
+             }
+ 
+             Item { Layout.fillWidth: true }
+--- a/GCP/GcpVideoSignalState.qml
++++ b/GCP/GcpVideoSignalState.qml
+@@ -76,7 +76,7 @@
+                   ? qsTr("Connecting…") : qsTr("No Signal")
+             color: GcpTheme.color.textPrimary
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 32
++            font.pixelSize: (32 * GcpTheme.font.textScale)
+             font.bold: true
+             horizontalAlignment: Text.AlignHCenter
+         }
+@@ -92,7 +92,7 @@
+                       : qsTr("影像訊號中斷，正在等待重新連線")
+             color: GcpTheme.color.textSecondary
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 16
++            font.pixelSize: (16 * GcpTheme.font.textScale)
+             horizontalAlignment: Text.AlignHCenter
+             wrapMode: Text.Wrap
+         }
+--- a/GCP/GcpWeatherForecastRow.qml
++++ b/GCP/GcpWeatherForecastRow.qml
+@@ -33,14 +33,14 @@
+             text: root.displayTime()
+             color: GcpTheme.color.textSecondary
+             font.family: GcpTheme.font.monoFamily
+-            font.pixelSize: 13
++            font.pixelSize: (13 * GcpTheme.font.textScale)
+         }
+         Text {
+             Layout.fillWidth: true
+             text: root.value("description", root.value("weather", "--"))
+             color: GcpTheme.color.textPrimary
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 13
++            font.pixelSize: (13 * GcpTheme.font.textScale)
+             elide: Text.ElideRight
+         }
+         Text {
+@@ -48,7 +48,7 @@
+             text: root.value("windSpeed", "--") + (root.value("windSpeed", "") === "" ? "" : " m/s")
+             color: GcpTheme.color.textPrimary
+             font.family: GcpTheme.font.monoFamily
+-            font.pixelSize: 12
++            font.pixelSize: (12 * GcpTheme.font.textScale)
+             horizontalAlignment: Text.AlignRight
+         }
+         Text {
+@@ -56,7 +56,7 @@
+             text: root.value("temperature", "--") + (root.value("temperature", "") === "" ? "" : "°")
+             color: GcpTheme.color.textPrimary
+             font.family: GcpTheme.font.monoFamily
+-            font.pixelSize: 12
++            font.pixelSize: (12 * GcpTheme.font.textScale)
+             horizontalAlignment: Text.AlignRight
+         }
+         GcpWeatherRainBar {
+@@ -68,7 +68,7 @@
+             text: root.value("precipitationProbability", "--") + "%"
+             color: GcpTheme.color.textSecondary
+             font.family: GcpTheme.font.monoFamily
+-            font.pixelSize: 12
++            font.pixelSize: (12 * GcpTheme.font.textScale)
+             horizontalAlignment: Text.AlignRight
+         }
+     }
+--- a/GCP/Controls/GcpChoiceCard.qml
++++ b/GCP/Controls/GcpChoiceCard.qml
+@@ -90,7 +90,7 @@
+                 text: control.title
+                 color: GcpTheme.color.textPrimary
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 18
++                font.pixelSize: (18 * GcpTheme.font.textScale)
+                 font.bold: true
+                 wrapMode: Text.Wrap
+             }
+@@ -100,7 +100,7 @@
+                 text: control.description
+                 color: GcpTheme.color.textSecondary
+                 font.family: GcpTheme.font.monoFamily
+-                font.pixelSize: 13
++                font.pixelSize: (13 * GcpTheme.font.textScale)
+                 wrapMode: Text.Wrap
+             }
+         }
+--- a/GCP/Controls/GcpConfigPage.qml
++++ b/GCP/Controls/GcpConfigPage.qml
+@@ -140,7 +140,7 @@
+                 text: root.contentTitle
+                 color: GcpTheme.color.primary
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 24
++                font.pixelSize: (24 * GcpTheme.font.textScale)
+                 font.bold: true
+             }
+             Loader {
+--- a/GCP/Controls/GcpEditState.qml
++++ b/GCP/Controls/GcpEditState.qml
+@@ -86,7 +86,7 @@
+             text: root._text
+             color: root._textColor
+             font.family: GcpTheme.font.monoFamily
+-            font.pixelSize: 13
++            font.pixelSize: (13 * GcpTheme.font.textScale)
+         }
+     }
+ }
+--- a/GCP/Controls/GcpGpsFixStatus.qml
++++ b/GCP/Controls/GcpGpsFixStatus.qml
+@@ -58,14 +58,14 @@
+         text: root._label
+         color: GcpTheme.color.textLabel
+         font.family: GcpTheme.font.monoFamily
+-        font.pixelSize: 12
++        font.pixelSize: (12 * GcpTheme.font.textScale)
+     }
+ 
+     Text {
+         text: root._value
+         color: root._color
+         font.family: GcpTheme.font.monoFamily
+-        font.pixelSize: 24
++        font.pixelSize: (24 * GcpTheme.font.textScale)
+         font.bold: true
+     }
+ }
+--- a/GCP/Controls/GcpLinkStrength.qml
++++ b/GCP/Controls/GcpLinkStrength.qml
+@@ -58,14 +58,14 @@
+         text: qsTr("LINK")
+         color: GcpTheme.color.textLabel
+         font.family: GcpTheme.font.monoFamily
+-        font.pixelSize: 12
++        font.pixelSize: (12 * GcpTheme.font.textScale)
+     }
+ 
+     Text {
+         text: root._label
+         color: root._color
+         font.family: GcpTheme.font.monoFamily
+-        font.pixelSize: 24
++        font.pixelSize: (24 * GcpTheme.font.textScale)
+         font.bold: true
+     }
+ }
+--- a/GCP/Controls/GcpNavigationLauncher.qml
++++ b/GCP/Controls/GcpNavigationLauncher.qml
+@@ -112,7 +112,7 @@
+                 text: qsTr("主選單")
+                 color: GcpTheme.color.textPrimary
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 55
++                font.pixelSize: (55 * GcpTheme.font.textScale)
+                 font.bold: true
+             }
+             Text {
+@@ -121,7 +121,7 @@
+                 text: qsTr("主選單 > %1").arg(root._pageName(root.activePage))
+                 color: GcpTheme.color.textSecondary
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 25
++                font.pixelSize: (25 * GcpTheme.font.textScale)
+                 font.bold: true
+             }
+             Item { Layout.fillWidth: true }
+@@ -159,7 +159,7 @@
+                     text: groupItem.modelData.title
+                     color: GcpTheme.color.textSecondary
+                     font.family: GcpTheme.font.chineseFamilyMedium
+-                    font.pixelSize: 27
++                    font.pixelSize: (27 * GcpTheme.font.textScale)
+                 }
+                 RowLayout {
+                     spacing: 0
+@@ -217,7 +217,7 @@
+                                 color: tile._active ? GcpTheme.color.primary : GcpTheme.color.textPrimary
+                                 font.family: tile._active ? GcpTheme.font.chineseFamily : GcpTheme.font.chineseFamilyMedium
+                                 font.bold: tile._active
+-                                font.pixelSize: 30
++                                font.pixelSize: (30 * GcpTheme.font.textScale)
+                                 GcpEntranceSlide { id: labelSlide; target: tileLabel; order: tile._order; fromX: 40; staggerMs: 22; delayMs: 150; duration: GcpTheme.motion.page }
+                             }
+                             // 主選單每次開啟，磚依序短距離滑入並淡入（只用 opacity／位移，整個面板先由上往下滑入，接著磚依序由右向左滑入（總長約 0.55 秒）；使用者 2026-10-17）
+@@ -259,7 +259,7 @@
+                     color: GcpTheme.color.statusCritical
+                     font.family: GcpTheme.font.chineseFamilyMedium
+                     font.bold: true
+-                    font.pixelSize: 36
++                    font.pixelSize: (36 * GcpTheme.font.textScale)
+                 }
+             }
+             MouseArea {
+--- a/GCP/Controls/GcpSidebar.qml
++++ b/GCP/Controls/GcpSidebar.qml
+@@ -150,7 +150,7 @@
+                     text: navItem.modelData
+                     color: navItem._selected ? GcpTheme.color.primary : GcpTheme.color.textSecondary
+                     font.family: GcpTheme.font.chineseFamily
+-                    font.pixelSize: 11
++                    font.pixelSize: (11 * GcpTheme.font.textScale)
+                     horizontalAlignment: Text.AlignHCenter
+                 }
+             }
+@@ -183,7 +183,7 @@
+                 text: qsTr("登出")
+                 color: GcpTheme.color.textLabel
+                 font.family: GcpTheme.font.chineseFamilyMedium
+-                font.pixelSize: 14
++                font.pixelSize: (14 * GcpTheme.font.textScale)
+             }
+         }
+     }
+--- a/GCP/Controls/GcpStatusDetailPopover.qml
++++ b/GCP/Controls/GcpStatusDetailPopover.qml
+@@ -71,7 +71,7 @@
+             text: root.title
+             color: GcpTheme.color.textPrimary
+             font.family: GcpTheme.font.chineseFamilyMedium
+-            font.pixelSize: 16
++            font.pixelSize: (16 * GcpTheme.font.textScale)
+         }
+ 
+         Repeater {
+@@ -88,14 +88,14 @@
+                     text: rowDelegate.modelData.label
+                     color: GcpTheme.color.textLabel
+                     font.family: GcpTheme.font.monoFamily
+-                    font.pixelSize: 13
++                    font.pixelSize: (13 * GcpTheme.font.textScale)
+                 }
+                 Item { Layout.fillWidth: true }
+                 Text {
+                     text: rowDelegate.modelData.value
+                     color: GcpTheme.color.textPrimary
+                     font.family: GcpTheme.font.monoFamily
+-                    font.pixelSize: 13
++                    font.pixelSize: (13 * GcpTheme.font.textScale)
+                     font.bold: true
+                 }
+             }
+--- a/GCP/Controls/GcpStatusItem.qml
++++ b/GCP/Controls/GcpStatusItem.qml
+@@ -44,14 +44,14 @@
+         text: root.label
+         color: GcpTheme.color.textLabel
+         font.family: GcpTheme.font.monoFamily
+-        font.pixelSize: 12
++        font.pixelSize: (12 * GcpTheme.font.textScale)
+     }
+ 
+     Text {
+         text: root.value
+         color: root._valueColor
+         font.family: GcpTheme.font.monoFamily
+-        font.pixelSize: 24
++        font.pixelSize: (24 * GcpTheme.font.textScale)
+         font.bold: true
+     }
+ }
+--- a/GCP/Controls/GcpTelemetryBlock.qml
++++ b/GCP/Controls/GcpTelemetryBlock.qml
+@@ -32,7 +32,7 @@
+         text: root.label
+         color: GcpTheme.color.textLabel
+         font.family: GcpTheme.font.monoFamily
+-        font.pixelSize: 22
++        font.pixelSize: (22 * GcpTheme.font.textScale)
+         font.letterSpacing: 1
+         horizontalAlignment: Text.AlignHCenter
+     }
+@@ -47,7 +47,7 @@
+             text: root.value
+             color: GcpTheme.color.textPrimary
+             font.family: GcpTheme.font.monoFamily
+-            font.pixelSize: 44
++            font.pixelSize: (44 * GcpTheme.font.textScale)
+             horizontalAlignment: Text.AlignHCenter
+         }
+ 
+@@ -60,7 +60,7 @@
+             text: root.unit
+             color: GcpTheme.color.textSecondary
+             font.family: GcpTheme.font.monoFamily
+-            font.pixelSize: 18
++            font.pixelSize: (18 * GcpTheme.font.textScale)
+         }
+     }
+ }
+--- a/GCP/Controls/GcpTelemetryFieldRow.qml
++++ b/GCP/Controls/GcpTelemetryFieldRow.qml
+@@ -36,7 +36,7 @@
+         text: root.label
+         color: GcpTheme.color.textLabel
+         font.family: GcpTheme.font.monoFamily
+-        font.pixelSize: 13
++        font.pixelSize: (13 * GcpTheme.font.textScale)
+     }
+ 
+     Item { Layout.fillWidth: true }
+@@ -45,7 +45,7 @@
+         text: root.value
+         color: GcpTheme.color.textPrimary
+         font.family: GcpTheme.font.monoFamily
+-        font.pixelSize: 13
++        font.pixelSize: (13 * GcpTheme.font.textScale)
+         font.bold: true
+     }
+ }
+--- a/GCP/Controls/GcpTimeoutDialog.qml
++++ b/GCP/Controls/GcpTimeoutDialog.qml
+@@ -65,7 +65,7 @@
+                 color: GcpTheme.color.textPrimary
+                 font.family: GcpTheme.font.chineseFamily
+                 font.weight: Font.Bold
+-                font.pixelSize: 20
++                font.pixelSize: (20 * GcpTheme.font.textScale)
+                 wrapMode: Text.Wrap
+             }
+         }
+@@ -76,7 +76,7 @@
+             text: root.message
+             color: GcpTheme.color.dialogBodyText
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 14
++            font.pixelSize: (14 * GcpTheme.font.textScale)
+             wrapMode: Text.Wrap
+         }
+ 
+--- a/GCP/Controls/GcpTooltip.qml
++++ b/GCP/Controls/GcpTooltip.qml
+@@ -25,7 +25,7 @@
+         text: control.text
+         color: GcpTheme.color.textPrimary
+         font.family: GcpTheme.font.chineseFamily
+-        font.pixelSize: 14
++        font.pixelSize: (14 * GcpTheme.font.textScale)
+         wrapMode: Text.WordWrap
+     }
+ 
+--- a/GCP/Controls/GcpTopStatusBar.qml
++++ b/GCP/Controls/GcpTopStatusBar.qml
+@@ -104,7 +104,7 @@
+                 text: qsTr("模式")
+                 color: GcpTheme.color.textLabel
+                 font.family: GcpTheme.font.monoFamily
+-                font.pixelSize: 11
++                font.pixelSize: (11 * GcpTheme.font.textScale)
+             }
+             GcpFlightModeSelector {
+                 vehicle: root._vehicle
+@@ -119,13 +119,13 @@
+                 text: qsTr("狀態")
+                 color: GcpTheme.color.textLabel
+                 font.family: GcpTheme.font.monoFamily
+-                font.pixelSize: 11
++                font.pixelSize: (11 * GcpTheme.font.textScale)
+             }
+             Text {
+                 text: root._statusText
+                 color: root._statusColor
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 18
++                font.pixelSize: (18 * GcpTheme.font.textScale)
+                 font.bold: true
+             }
+         }
+--- a/GCP/Flight/GcpFlightCanvas.qml
++++ b/GCP/Flight/GcpFlightCanvas.qml
+@@ -24,6 +24,6 @@
+         text: root.contentKind === "map" ? qsTr("地圖尚未接入") : qsTr("影像尚未接入")
+         color: GcpTheme.color.textSecondary
+         font.family: GcpTheme.font.chineseFamily
+-        font.pixelSize: 18
++        font.pixelSize: (18 * GcpTheme.font.textScale)
+     }
+ }
+--- a/GCP/Flight/GcpFlightGuidedActionItem.qml
++++ b/GCP/Flight/GcpFlightGuidedActionItem.qml
+@@ -31,7 +31,7 @@
+             text: root.label
+             color: "#e500d3f2"
+             font.family: GcpTheme.font.chineseFamilyMedium
+-            font.pixelSize: 26
++            font.pixelSize: (26 * GcpTheme.font.textScale)
+             font.weight: Font.Bold
+         }
+ 
+@@ -40,7 +40,7 @@
+             text: root.description
+             color: "#a6ffffff"
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 22
++            font.pixelSize: (22 * GcpTheme.font.textScale)
+             elide: Text.ElideRight
+         }
+     }
+--- a/GCP/Flight/GcpFlightMapProbe.qml
++++ b/GCP/Flight/GcpFlightMapProbe.qml
+@@ -1,4 +1,5 @@
+ import QtQuick
++import QGroundControl.GCP
+ 
+ // Opt-in development preview used to isolate QGC FlightMap module loading.
+ Item {
+@@ -42,7 +43,7 @@
+         Text {
+             anchors.centerIn: parent
+             color: "white"
+-            font.pixelSize: 16
++            font.pixelSize: (16 * GcpTheme.font.textScale)
+             text: root.mapReady ? qsTr("系統地圖已載入") : qsTr("正在載入 系統地圖…")
+         }
+     }
+--- a/GCP/Flight/GcpFlightMapView.qml
++++ b/GCP/Flight/GcpFlightMapView.qml
+@@ -145,7 +145,7 @@
+             id: loadingText
+             anchors.centerIn: parent
+             color: GcpTheme.color.textPrimary
+-            font.pixelSize: 14
++            font.pixelSize: (14 * GcpTheme.font.textScale)
+             text: qsTr("正在載入 系統地圖…")
+         }
+     }
+--- a/GCP/Flight/GcpFlightMissionProgress.qml
++++ b/GCP/Flight/GcpFlightMissionProgress.qml
+@@ -96,14 +96,14 @@
+                     text: qsTr("任務") + " " + root._progressText
+                     color: GcpTheme.color.statusSuccess
+                     font.family: GcpTheme.font.chineseFamilyMedium
+-                    font.pixelSize: 27
++                    font.pixelSize: (27 * GcpTheme.font.textScale)
+                     font.weight: Font.Bold
+                 }
+                 Text {
+                     text: root._etaText
+                     color: GcpTheme.color.textPrimary
+                     font.family: GcpTheme.font.monoFamily
+-                    font.pixelSize: 24
++                    font.pixelSize: (24 * GcpTheme.font.textScale)
+                     font.weight: Font.Bold
+                 }
+             }
+@@ -127,7 +127,7 @@
+                 text: root._nextWaypointText
+                 color: GcpTheme.color.textSecondary
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 21
++                font.pixelSize: (21 * GcpTheme.font.textScale)
+                 elide: Text.ElideRight
+             }
+ 
+@@ -158,7 +158,7 @@
+                     text: qsTr("任務進度")
+                     color: GcpTheme.color.textPrimary
+                     font.family: GcpTheme.font.chineseFamilyMedium
+-                    font.pixelSize: 20
++                    font.pixelSize: (20 * GcpTheme.font.textScale)
+                     font.weight: Font.Bold
+                 }
+                 GcpButton {
+@@ -175,7 +175,7 @@
+                 text: root._progressText + "        " + root._etaText
+                 color: GcpTheme.color.primary
+                 font.family: GcpTheme.font.monoFamily
+-                font.pixelSize: 20
++                font.pixelSize: (20 * GcpTheme.font.textScale)
+                 font.weight: Font.Bold
+             }
+ 
+@@ -198,7 +198,7 @@
+                 text: qsTr("下一航點") + "\n" + root._nextWaypointText
+                 color: GcpTheme.color.textSecondary
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 15
++                font.pixelSize: (15 * GcpTheme.font.textScale)
+                 wrapMode: Text.Wrap
+             }
+ 
+@@ -207,7 +207,7 @@
+                 text: qsTr("ETA 為載具目前地速下，至下一個有效航點的直線距離估算。")
+                 color: GcpTheme.color.textSecondary
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 12
++                font.pixelSize: (12 * GcpTheme.font.textScale)
+                 wrapMode: Text.Wrap
+             }
+ 
+--- a/GCP/Flight/GcpFlightPreflightChecklist.qml
++++ b/GCP/Flight/GcpFlightPreflightChecklist.qml
+@@ -166,7 +166,7 @@
+                         text: root._passCount + " / " + root._items.length
+                         color: GcpTheme.color.textPrimary
+                         font.family: GcpTheme.font.monoFamily
+-                        font.pixelSize: 66
++                        font.pixelSize: (66 * GcpTheme.font.textScale)
+                         font.weight: Font.Bold
+                     }
+                 }
+@@ -178,7 +178,7 @@
+                     text: root._toneTitle
+                     color: root._tone
+                     font.family: GcpTheme.font.chineseFamilyMedium
+-                    font.pixelSize: 45
++                    font.pixelSize: (45 * GcpTheme.font.textScale)
+                     font.weight: Font.Bold
+                 }
+ 
+@@ -190,7 +190,7 @@
+                                            : qsTr("未連接載具，無法完成遙測檢查")
+                     color: GcpTheme.color.textSecondary
+                     font.family: GcpTheme.font.chineseFamily
+-                    font.pixelSize: 27
++                    font.pixelSize: (27 * GcpTheme.font.textScale)
+                     wrapMode: Text.Wrap
+                 }
+ 
+@@ -251,14 +251,14 @@
+                                 text: modelData.label
+                                 color: GcpTheme.color.textPrimary
+                                 font.family: GcpTheme.font.chineseFamily
+-                                font.pixelSize: 33
++                                font.pixelSize: (33 * GcpTheme.font.textScale)
+                             }
+                             Text {
+                                 text: modelData.state === 0 ? qsTr("通過")
+                                       : (modelData.state === 1 ? qsTr("警告") : qsTr("失敗"))
+                                 color: accent
+                                 font.family: GcpTheme.font.chineseFamilyMedium
+-                                font.pixelSize: 27
++                                font.pixelSize: (27 * GcpTheme.font.textScale)
+                                 font.weight: Font.Bold
+                             }
+                         }
+--- a/GCP/Flight/GcpFlightVehicleListRow.qml
++++ b/GCP/Flight/GcpFlightVehicleListRow.qml
+@@ -46,7 +46,7 @@
+                 text: root.vehicle ? qsTr("UAV-%1").arg(String(root.vehicle.id).padStart(2, "0")) : "--"
+                 color: GcpTheme.color.textPrimary
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 16
++                font.pixelSize: (16 * GcpTheme.font.textScale)
+                 font.bold: true
+             }
+             Text {
+@@ -69,7 +69,7 @@
+                       ? root.vehicle.batteries.get(0).percentRemaining.valueString + "%" : "--"
+                 color: GcpTheme.color.textPrimary
+                 font.family: GcpTheme.font.monoFamily
+-                font.pixelSize: 16
++                font.pixelSize: (16 * GcpTheme.font.textScale)
+                 font.bold: true
+             }
+             Text {
+@@ -78,7 +78,7 @@
+                       ? qsTr("GPS %1").arg(root.vehicle.gps.count.value) : qsTr("GPS --")
+                 color: GcpTheme.color.textLabel
+                 font.family: GcpTheme.font.monoFamily
+-                font.pixelSize: 14
++                font.pixelSize: (14 * GcpTheme.font.textScale)
+             }
+         }
+     }
+--- a/GCP/Flight/GcpFlightVehicleSelectorPanel.qml
++++ b/GCP/Flight/GcpFlightVehicleSelectorPanel.qml
+@@ -33,7 +33,7 @@
+             text: qsTr("載具")
+             color: GcpTheme.color.textPrimary
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 22
++            font.pixelSize: (22 * GcpTheme.font.textScale)
+             font.bold: true
+         }
+ 
+@@ -60,7 +60,7 @@
+             text: qsTr("多載具管理  ›")
+             color: GcpTheme.color.primary
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 15
++            font.pixelSize: (15 * GcpTheme.font.textScale)
+             horizontalAlignment: Text.AlignRight
+             TapHandler { onTapped: root.showMultiVehiclePanel() }
+         }
+--- a/GCP/Flight/GcpFlightVideoSignalState.qml
++++ b/GCP/Flight/GcpFlightVideoSignalState.qml
+@@ -26,7 +26,7 @@
+                   ? qsTr("Connecting…") : qsTr("No Signal")
+             color: GcpTheme.color.textPrimary
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 32
++            font.pixelSize: (32 * GcpTheme.font.textScale)
+             font.bold: true
+         }
+ 
+@@ -36,7 +36,7 @@
+                   ? qsTr("正在連線影像串流") : qsTr("影像訊號中斷，正在等待重新連線")
+             color: GcpTheme.color.textSecondary
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 16
++            font.pixelSize: (16 * GcpTheme.font.textScale)
+             horizontalAlignment: Text.AlignHCenter
+         }
+     }
+--- a/GCP/Safety/GcpSafetyDraftField.qml
++++ b/GCP/Safety/GcpSafetyDraftField.qml
+@@ -50,7 +50,7 @@
+                 text: root.label
+                 color: GcpTheme.color.textPrimary
+                 font.family: GcpTheme.font.chineseFamilyMedium
+-                font.pixelSize: 15
++                font.pixelSize: (15 * GcpTheme.font.textScale)
+                 elide: Text.ElideRight
+             }
+             Text {
+@@ -59,7 +59,7 @@
+                 text: root.isBatteryThreshold ? "%" : (root.hasFact ? root.fact.units : "")
+                 color: GcpTheme.color.textLabel
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 12
++                font.pixelSize: (12 * GcpTheme.font.textScale)
+             }
+             Text {
+                 Layout.fillWidth: true
+@@ -67,7 +67,7 @@
+                 text: root.validationError
+                 color: GcpTheme.color.statusCritical
+                 font.family: GcpTheme.font.chineseFamily
+-                font.pixelSize: 11
++                font.pixelSize: (11 * GcpTheme.font.textScale)
+                 elide: Text.ElideRight
+             }
+         }
+@@ -107,7 +107,7 @@
+             selectionColor: GcpTheme.color.primaryStrong
+             selectedTextColor: GcpTheme.color.textOnPrimary
+             font.family: GcpTheme.font.chineseFamily
+-            font.pixelSize: 15
++            font.pixelSize: (15 * GcpTheme.font.textScale)
+             leftPadding: GcpTheme.spacing.md
+             rightPadding: GcpTheme.spacing.md
+             background: Rectangle {

@@ -5,7 +5,7 @@ No comparison button is implemented (user-confirmed item 7).
 - Home -> move wind gauge: first Undo restores geometry on flight page; next Undo returns Home. Redo replays each separately.
 - Explicit navigation + two layout actions: one navigation step and one layout step. A failure after any substep restores original page, geometry, scale AND both history stacks; no automatic persistence.
 - Toast after Undo shows Redo iff available; after Redo shows Undo; repeat clicks and expiry are checked.
-- All 251 theme properties scale. Inspect every numeric font.pixelSize in the complete formal GCP source; supplied snapshot only contains one of the requested 84 lines. Never claim the other 83 are patched.
+- All 251 theme properties scale. Inspect every numeric font.pixelSize in the complete formal GCP source; all 84 lines are patched by patch/elan_gcp_text_scale.patch (Codex CODEX-APP-0303 complete version, 37 files); still verify on the real build.
 - Verify 0.85/1/1.15/1.3 at 1280x800 and 1920x1200; layout uiScale and appFontPointSize unchanged. Undo and named snapshots include textScale. Validate v2 legacy layouts without textScale.
 - Pending request remains without timeout (wait >10 minutes); complete request/cancel/save/close clears it. Model request contains pending original. Cancel during a model request suppresses late callbacks. Scope-free font request offers global + visible current-page modules.
 - Save via PANEL button, TOAST button and each of 儲存 / 存起來 / 儲存版面. Pending clears. Only these explicit paths (including named save) write Settings. Panel shows 未儲存 when layout/textScale differs from last saved snapshot; page-only navigation does not make it dirty.

@@ -1,1268 +1,2945 @@
 {
+  "source_manifest_sha256": "9e5324f22b21dbac1677f18bf62940ce5468f0ba2fc693418316f861bf1e9737",
+  "verified_source_files": 272,
   "theme_properties": 251,
-  "hardcoded_lines_in_supplied_snapshot": 1,
-  "requested_hardcoded_lines": 84,
-  "status": "PARTIAL_FORMAL_UI_SNAPSHOT: remaining source files required",
+  "direct_numeric_sites": 84,
+  "previous_direct_sites": 1,
+  "remaining_direct_sites": 83,
+  "changed_qml_files": 37,
+  "import_additions": [
+    "GCP/Flight/GcpFlightMapProbe.qml"
+  ],
   "entries": [
     {
+      "kind": "direct",
+      "file": "GCP/GcpDeviceHealthCard.qml",
+      "line": 110,
+      "base": 11,
+      "before": "                font.pixelSize: 11",
+      "after": "                font.pixelSize: (11 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpGallery.qml",
+      "line": 73,
+      "base": 24,
+      "before": "            font.pixelSize: 24",
+      "after": "            font.pixelSize: (24 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpGallery.qml",
+      "line": 91,
+      "base": 18,
+      "before": "                font.pixelSize: 18",
+      "after": "                font.pixelSize: (18 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpGallery.qml",
+      "line": 123,
+      "base": 14,
+      "before": "                            font.pixelSize: 14",
+      "after": "                            font.pixelSize: (14 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpGallery.qml",
+      "line": 549,
+      "base": 14,
+      "before": "                                font.pixelSize: 14",
+      "after": "                                font.pixelSize: (14 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpGallery.qml",
+      "line": 591,
+      "base": 13,
+      "before": "                    font.pixelSize: 13",
+      "after": "                    font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpGallery.qml",
+      "line": 631,
+      "base": 10,
+      "before": "                                font.pixelSize: 10",
+      "after": "                                font.pixelSize: (10 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpGallery.qml",
+      "line": 659,
+      "base": 14,
+      "before": "                                font.pixelSize: 14",
+      "after": "                                font.pixelSize: (14 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpGallery.qml",
+      "line": 666,
+      "base": 11,
+      "before": "                                font.pixelSize: 11",
+      "after": "                                font.pixelSize: (11 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpMapPreloader.qml",
+      "line": 33,
+      "base": 36,
+      "before": "        font.pixelSize: 36",
+      "after": "        font.pixelSize: (36 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpMissionMapCanvas.qml",
+      "line": 147,
+      "base": 13,
+      "before": "                        font.pixelSize: 13",
+      "after": "                        font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpSafetyPage.qml",
+      "line": 342,
+      "base": 13,
+      "before": "                font.pixelSize: 13",
+      "after": "                font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpSystemCommunicationPanel.qml",
+      "line": 221,
+      "base": 13,
+      "before": "                                    font.pixelSize: 13",
+      "after": "                                    font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpTelemetryFlightList.qml",
+      "line": 47,
+      "base": 22,
+      "before": "            font.pixelSize: 22",
+      "after": "            font.pixelSize: (22 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpTelemetryPage.qml",
+      "line": 307,
+      "base": 12,
+      "before": "                        font.pixelSize: 12",
+      "after": "                        font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 27,
       "property": "body",
-      "base": 14
+      "base": 14,
+      "before": "    readonly property real body: 14",
+      "after": "    readonly property real body: 14 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 28,
       "property": "caption",
-      "base": 12
+      "base": 12,
+      "before": "    readonly property real caption: 12",
+      "after": "    readonly property real caption: 12 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 29,
       "property": "sectionTitle",
-      "base": 18
+      "base": 18,
+      "before": "    readonly property real sectionTitle: 18",
+      "after": "    readonly property real sectionTitle: 18 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 30,
       "property": "missionPlannerSummaryValue",
-      "base": 54
+      "base": 54,
+      "before": "    readonly property real missionPlannerSummaryValue: 54",
+      "after": "    readonly property real missionPlannerSummaryValue: 54 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 31,
       "property": "missionPlannerStatLabel",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real missionPlannerStatLabel: 33",
+      "after": "    readonly property real missionPlannerStatLabel: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 32,
       "property": "missionPlannerAttrLabel",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real missionPlannerAttrLabel: 30",
+      "after": "    readonly property real missionPlannerAttrLabel: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 33,
       "property": "missionPlannerAttrValue",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real missionPlannerAttrValue: 42",
+      "after": "    readonly property real missionPlannerAttrValue: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 34,
       "property": "missionPlannerCardTitle",
-      "base": 54
+      "base": 54,
+      "before": "    readonly property real missionPlannerCardTitle: 54",
+      "after": "    readonly property real missionPlannerCardTitle: 54 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 35,
       "property": "missionPlannerCoord",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real missionPlannerCoord: 36",
+      "after": "    readonly property real missionPlannerCoord: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 36,
       "property": "missionRailLabel",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real missionRailLabel: 27",
+      "after": "    readonly property real missionRailLabel: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 37,
       "property": "missionPlannerItemTitle",
-      "base": 48
+      "base": 48,
+      "before": "    readonly property real missionPlannerItemTitle: 48",
+      "after": "    readonly property real missionPlannerItemTitle: 48 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 38,
       "property": "missionPlannerItemMeta",
-      "base": 40
+      "base": 40,
+      "before": "    readonly property real missionPlannerItemMeta: 40",
+      "after": "    readonly property real missionPlannerItemMeta: 40 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 39,
       "property": "missionSaveAsTitle",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real missionSaveAsTitle: 26",
+      "after": "    readonly property real missionSaveAsTitle: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 40,
       "property": "missionPanelTitle",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real missionPanelTitle: 39",
+      "after": "    readonly property real missionPanelTitle: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 41,
       "property": "missionPanelBody",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real missionPanelBody: 27",
+      "after": "    readonly property real missionPanelBody: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 42,
       "property": "missionPanelLabel",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real missionPanelLabel: 24",
+      "after": "    readonly property real missionPanelLabel: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 43,
       "property": "missionPanelUnit",
-      "base": 20
+      "base": 20,
+      "before": "    readonly property real missionPanelUnit: 20",
+      "after": "    readonly property real missionPanelUnit: 20 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 44,
       "property": "deviceHealthMetric",
-      "base": 28
+      "base": 28,
+      "before": "    readonly property real deviceHealthMetric: 28",
+      "after": "    readonly property real deviceHealthMetric: 28 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 45,
       "property": "deviceHealthDetail",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real deviceHealthDetail: 24",
+      "after": "    readonly property real deviceHealthDetail: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 46,
       "property": "deviceHealthStatus",
-      "base": 11
+      "base": 11,
+      "before": "    readonly property real deviceHealthStatus: 11",
+      "after": "    readonly property real deviceHealthStatus: 11 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 47,
       "property": "deviceHealthSummaryMeta",
-      "base": 13
+      "base": 13,
+      "before": "    readonly property real deviceHealthSummaryMeta: 13",
+      "after": "    readonly property real deviceHealthSummaryMeta: 13 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 48,
       "property": "deviceFirmwareLog",
-      "base": 21
+      "base": 21,
+      "before": "    readonly property real deviceFirmwareLog: 21",
+      "after": "    readonly property real deviceFirmwareLog: 21 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 49,
       "property": "telemetryMetricValue",
-      "base": 66
+      "base": 66,
+      "before": "    readonly property real telemetryMetricValue: 66",
+      "after": "    readonly property real telemetryMetricValue: 66 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 51,
       "property": "telemetrySubNav",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real telemetrySubNav: 33",
+      "after": "    readonly property real telemetrySubNav: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 53,
       "property": "telemetryChipTitle",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real telemetryChipTitle: 36",
+      "after": "    readonly property real telemetryChipTitle: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 54,
       "property": "telemetryChipMeta",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real telemetryChipMeta: 27",
+      "after": "    readonly property real telemetryChipMeta: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 55,
       "property": "telemetryChipRight",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real telemetryChipRight: 33",
+      "after": "    readonly property real telemetryChipRight: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 56,
       "property": "telemetryMetricLabel",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real telemetryMetricLabel: 33",
+      "after": "    readonly property real telemetryMetricLabel: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 57,
       "property": "telemetryMetricUnit",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real telemetryMetricUnit: 33",
+      "after": "    readonly property real telemetryMetricUnit: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 59,
       "property": "telemetryPanelTitle",
-      "base": 54
+      "base": 54,
+      "before": "    readonly property real telemetryPanelTitle: 54",
+      "after": "    readonly property real telemetryPanelTitle: 54 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 60,
       "property": "telemetryPanelBody",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real telemetryPanelBody: 33",
+      "after": "    readonly property real telemetryPanelBody: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 61,
       "property": "telemetryPanelCaption",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real telemetryPanelCaption: 27",
+      "after": "    readonly property real telemetryPanelCaption: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 62,
       "property": "telemetryConsoleMono",
-      "base": 45
+      "base": 45,
+      "before": "    readonly property real telemetryConsoleMono: 45",
+      "after": "    readonly property real telemetryConsoleMono: 45 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 65,
       "property": "weatherCardTitle",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real weatherCardTitle: 42",
+      "after": "    readonly property real weatherCardTitle: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 66,
       "property": "weatherLabel",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real weatherLabel: 30",
+      "after": "    readonly property real weatherLabel: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 67,
       "property": "weatherValue",
-      "base": 54
+      "base": 54,
+      "before": "    readonly property real weatherValue: 54",
+      "after": "    readonly property real weatherValue: 54 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 68,
       "property": "weatherUnit",
-      "base": 54
+      "base": 54,
+      "before": "    readonly property real weatherUnit: 54",
+      "after": "    readonly property real weatherUnit: 54 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 69,
       "property": "weatherNote",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real weatherNote: 30",
+      "after": "    readonly property real weatherNote: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 70,
       "property": "weatherNoteLarge",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real weatherNoteLarge: 36",
+      "after": "    readonly property real weatherNoteLarge: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 71,
       "property": "weatherSummaryLine",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real weatherSummaryLine: 36",
+      "after": "    readonly property real weatherSummaryLine: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 72,
       "property": "weatherCompassValue",
-      "base": 94
+      "base": 94,
+      "before": "    readonly property real weatherCompassValue: 94",
+      "after": "    readonly property real weatherCompassValue: 94 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 73,
       "property": "weatherTileTime",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real weatherTileTime: 42",
+      "after": "    readonly property real weatherTileTime: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 74,
       "property": "weatherTileWind",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real weatherTileWind: 42",
+      "after": "    readonly property real weatherTileWind: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 75,
       "property": "weatherBanner",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real weatherBanner: 39",
+      "after": "    readonly property real weatherBanner: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 76,
       "property": "weatherSubtitle",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real weatherSubtitle: 33",
+      "after": "    readonly property real weatherSubtitle: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 77,
       "property": "weatherCompassLabel",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real weatherCompassLabel: 33   // 羅盤 N／E／S／W（v1.4 在圓環內側）",
+      "after": "    readonly property real weatherCompassLabel: 33 * root.textScale   // 羅盤 N／E／S／W（v1.4 在圓環內側）"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 80,
       "property": "fingerprintHeading",
-      "base": 90
+      "base": 90,
+      "before": "    readonly property real fingerprintHeading: 90",
+      "after": "    readonly property real fingerprintHeading: 90 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 81,
       "property": "fingerprintHint",
-      "base": 60
+      "base": 60,
+      "before": "    readonly property real fingerprintHint: 60",
+      "after": "    readonly property real fingerprintHint: 60 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 82,
       "property": "fingerprintSkip",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real fingerprintSkip: 30",
+      "after": "    readonly property real fingerprintSkip: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 85,
       "property": "pageTitle",
-      "base": 66
+      "base": 66,
+      "before": "    readonly property real pageTitle: 66",
+      "after": "    readonly property real pageTitle: 66 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 86,
       "property": "pageSubtitle",
-      "base": 40
+      "base": 40,
+      "before": "    readonly property real pageSubtitle: 40",
+      "after": "    readonly property real pageSubtitle: 40 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 87,
       "property": "subNavItem",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real subNavItem: 26",
+      "after": "    readonly property real subNavItem: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 88,
       "property": "alertTitle",
-      "base": 60
+      "base": 60,
+      "before": "    readonly property real alertTitle: 60",
+      "after": "    readonly property real alertTitle: 60 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 90,
       "property": "userPageTitle",
-      "base": 44
+      "base": 44,
+      "before": "    readonly property real userPageTitle: 44",
+      "after": "    readonly property real userPageTitle: 44 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 91,
       "property": "alertSubtitle",
-      "base": 40
+      "base": 40,
+      "before": "    readonly property real alertSubtitle: 40",
+      "after": "    readonly property real alertSubtitle: 40 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 92,
       "property": "alertFilter",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real alertFilter: 42",
+      "after": "    readonly property real alertFilter: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 93,
       "property": "alertDetailTitle",
-      "base": 40
+      "base": 40,
+      "before": "    readonly property real alertDetailTitle: 40",
+      "after": "    readonly property real alertDetailTitle: 40 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 94,
       "property": "alertDetailLabel",
-      "base": 22
+      "base": 22,
+      "before": "    readonly property real alertDetailLabel: 22",
+      "after": "    readonly property real alertDetailLabel: 22 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 95,
       "property": "alertDetailValue",
-      "base": 28
+      "base": 28,
+      "before": "    readonly property real alertDetailValue: 28",
+      "after": "    readonly property real alertDetailValue: 28 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 96,
       "property": "alertAction",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real alertAction: 26",
+      "after": "    readonly property real alertAction: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 97,
       "property": "alertFilterLabel",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real alertFilterLabel: 39",
+      "after": "    readonly property real alertFilterLabel: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 99,
       "property": "alertTab",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real alertTab: 42",
+      "after": "    readonly property real alertTab: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 100,
       "property": "alertRowTitle",
-      "base": 45
+      "base": 45,
+      "before": "    readonly property real alertRowTitle: 45",
+      "after": "    readonly property real alertRowTitle: 45 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 101,
       "property": "alertRowMeta",
-      "base": 35
+      "base": 35,
+      "before": "    readonly property real alertRowMeta: 35",
+      "after": "    readonly property real alertRowMeta: 35 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 102,
       "property": "alertBadge",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real alertBadge: 36",
+      "after": "    readonly property real alertBadge: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 103,
       "property": "settingRowTitle",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real settingRowTitle: 24",
+      "after": "    readonly property real settingRowTitle: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 104,
       "property": "settingRowDescription",
-      "base": 18
+      "base": 18,
+      "before": "    readonly property real settingRowDescription: 18",
+      "after": "    readonly property real settingRowDescription: 18 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 106,
       "property": "safetyCategoryTitle",
-      "base": 46
+      "base": 46,
+      "before": "    readonly property real safetyCategoryTitle: 46     // v1.4 1.5x（Prototype 04 Safety 實測）",
+      "after": "    readonly property real safetyCategoryTitle: 46 * root.textScale     // v1.4 1.5x（Prototype 04 Safety 實測）"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 107,
       "property": "safetyCategorySummary",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real safetyCategorySummary: 36",
+      "after": "    readonly property real safetyCategorySummary: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 108,
       "property": "safetyCategoryLabel",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real safetyCategoryLabel: 36",
+      "after": "    readonly property real safetyCategoryLabel: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 109,
       "property": "safetyHeaderStatus",
-      "base": 45
+      "base": 45,
+      "before": "    readonly property real safetyHeaderStatus: 45",
+      "after": "    readonly property real safetyHeaderStatus: 45 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 110,
       "property": "safetyRowTitle",
-      "base": 45
+      "base": 45,
+      "before": "    readonly property real safetyRowTitle: 45",
+      "after": "    readonly property real safetyRowTitle: 45 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 111,
       "property": "safetyRowDescription",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real safetyRowDescription: 36",
+      "after": "    readonly property real safetyRowDescription: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 112,
       "property": "safetyFieldValue",
-      "base": 54
+      "base": 54,
+      "before": "    readonly property real safetyFieldValue: 54",
+      "after": "    readonly property real safetyFieldValue: 54 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 113,
       "property": "safetyFieldUnit",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real safetyFieldUnit: 36",
+      "after": "    readonly property real safetyFieldUnit: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 115,
       "property": "safetyCardTitle",
-      "base": 59
+      "base": 59,
+      "before": "    readonly property real safetyCardTitle: 59",
+      "after": "    readonly property real safetyCardTitle: 59 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 120,
       "property": "titlePage",
-      "base": 38
+      "base": 38,
+      "before": "    readonly property real titlePage: 38",
+      "after": "    readonly property real titlePage: 38 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 121,
       "property": "titleSection",
-      "base": 28
+      "base": 28,
+      "before": "    readonly property real titleSection: 28",
+      "after": "    readonly property real titleSection: 28 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 122,
       "property": "cameraCardTitle",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real cameraCardTitle: 36",
+      "after": "    readonly property real cameraCardTitle: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 124,
       "property": "cameraBody",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real cameraBody: 33",
+      "after": "    readonly property real cameraBody: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 125,
       "property": "cameraDesc",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real cameraDesc: 27",
+      "after": "    readonly property real cameraDesc: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 126,
       "property": "cameraRowTitle",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real cameraRowTitle: 36",
+      "after": "    readonly property real cameraRowTitle: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 127,
       "property": "cameraSection",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real cameraSection: 27",
+      "after": "    readonly property real cameraSection: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 128,
       "property": "cameraChip",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real cameraChip: 33",
+      "after": "    readonly property real cameraChip: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 129,
       "property": "cameraSmall",
-      "base": 21
+      "base": 21,
+      "before": "    readonly property real cameraSmall: 21",
+      "after": "    readonly property real cameraSmall: 21 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 130,
       "property": "cameraTab",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real cameraTab: 36",
+      "after": "    readonly property real cameraTab: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 131,
       "property": "contentPrimary",
-      "base": 22
+      "base": 22,
+      "before": "    readonly property real contentPrimary: 22",
+      "after": "    readonly property real contentPrimary: 22 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 132,
       "property": "contentSecondary",
-      "base": 22
+      "base": 22,
+      "before": "    readonly property real contentSecondary: 22",
+      "after": "    readonly property real contentSecondary: 22 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 134,
       "property": "buttonStandard",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real buttonStandard: 36",
+      "after": "    readonly property real buttonStandard: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 135,
       "property": "buttonLarge",
-      "base": 32
+      "base": 32,
+      "before": "    readonly property real buttonLarge: 32",
+      "after": "    readonly property real buttonLarge: 32 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 136,
       "property": "buttonCompact",
-      "base": 20
+      "base": 20,
+      "before": "    readonly property real buttonCompact: 20",
+      "after": "    readonly property real buttonCompact: 20 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 137,
       "property": "dialogButton",
-      "base": 22
+      "base": 22,
+      "before": "    readonly property real dialogButton: 22   // Prototype 未儲存變更對話框底部按鈕（64 高、22 Bold）",
+      "after": "    readonly property real dialogButton: 22 * root.textScale   // Prototype 未儲存變更對話框底部按鈕（64 高、22 Bold）"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 138,
       "property": "buttonNavigation",
-      "base": 22
+      "base": 22,
+      "before": "    readonly property real buttonNavigation: 22",
+      "after": "    readonly property real buttonNavigation: 22 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 139,
       "property": "buttonNavigationSecondary",
-      "base": 20
+      "base": 20,
+      "before": "    readonly property real buttonNavigationSecondary: 20",
+      "after": "    readonly property real buttonNavigationSecondary: 20 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 141,
       "property": "inputStandard",
-      "base": 18
+      "base": 18,
+      "before": "    readonly property real inputStandard: 18",
+      "after": "    readonly property real inputStandard: 18 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 143,
       "property": "dialogTitle",
-      "base": 38
+      "base": 38,
+      "before": "    readonly property real dialogTitle: 38",
+      "after": "    readonly property real dialogTitle: 38 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 144,
       "property": "dialogBody",
-      "base": 28
+      "base": 28,
+      "before": "    readonly property real dialogBody: 28",
+      "after": "    readonly property real dialogBody: 28 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 145,
       "property": "toastTitle",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real toastTitle: 30",
+      "after": "    readonly property real toastTitle: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 146,
       "property": "missionToastTitle",
-      "base": 34
+      "base": 34,
+      "before": "    readonly property real missionToastTitle: 34",
+      "after": "    readonly property real missionToastTitle: 34 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 147,
       "property": "missionToastMessage",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real missionToastMessage: 26",
+      "after": "    readonly property real missionToastMessage: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 148,
       "property": "missionRallyTitle",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real missionRallyTitle: 36         // v1.4 T10：Rally Point Edit",
+      "after": "    readonly property real missionRallyTitle: 36 * root.textScale         // v1.4 T10：Rally Point Edit"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 149,
       "property": "missionRallyFieldLabel",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real missionRallyFieldLabel: 24",
+      "after": "    readonly property real missionRallyFieldLabel: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 150,
       "property": "missionRallyFieldValue",
-      "base": 34
+      "base": 34,
+      "before": "    readonly property real missionRallyFieldValue: 34",
+      "after": "    readonly property real missionRallyFieldValue: 34 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 151,
       "property": "missionRallyHelper",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real missionRallyHelper: 26",
+      "after": "    readonly property real missionRallyHelper: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 152,
       "property": "missionLayerMenuLabel",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real missionLayerMenuLabel: 26     // v1.4 T10：圖層選單標題／列文字",
+      "after": "    readonly property real missionLayerMenuLabel: 26 * root.textScale     // v1.4 T10：圖層選單標題／列文字"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 153,
       "property": "missionLayerMenuItem",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real missionLayerMenuItem: 26",
+      "after": "    readonly property real missionLayerMenuItem: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 154,
       "property": "toastSub",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real toastSub: 24",
+      "after": "    readonly property real toastSub: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 156,
       "property": "unsavedRowTitle",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real unsavedRowTitle: 30",
+      "after": "    readonly property real unsavedRowTitle: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 157,
       "property": "unsavedRowDetail",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real unsavedRowDetail: 26",
+      "after": "    readonly property real unsavedRowDetail: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 160,
       "property": "authBrandTitle",
-      "base": 60
+      "base": 60,
+      "before": "    readonly property real authBrandTitle: 60",
+      "after": "    readonly property real authBrandTitle: 60 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 161,
       "property": "authHeading",
-      "base": 48
+      "base": 48,
+      "before": "    readonly property real authHeading: 48",
+      "after": "    readonly property real authHeading: 48 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 162,
       "property": "authSubheading",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real authSubheading: 33",
+      "after": "    readonly property real authSubheading: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 163,
       "property": "authFieldLabel",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real authFieldLabel: 33",
+      "after": "    readonly property real authFieldLabel: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 164,
       "property": "authFieldValue",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real authFieldValue: 36",
+      "after": "    readonly property real authFieldValue: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 165,
       "property": "authButton",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real authButton: 39",
+      "after": "    readonly property real authButton: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 166,
       "property": "authLink",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real authLink: 36",
+      "after": "    readonly property real authLink: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 167,
       "property": "firstRunEyebrow",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real firstRunEyebrow: 33",
+      "after": "    readonly property real firstRunEyebrow: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 168,
       "property": "firstRunTitle",
-      "base": 66
+      "base": 66,
+      "before": "    readonly property real firstRunTitle: 66",
+      "after": "    readonly property real firstRunTitle: 66 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 169,
       "property": "firstRunSection",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real firstRunSection: 39",
+      "after": "    readonly property real firstRunSection: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 170,
       "property": "firstRunTile",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real firstRunTile: 39",
+      "after": "    readonly property real firstRunTile: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 171,
       "property": "firstRunTileSub",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real firstRunTileSub: 27",
+      "after": "    readonly property real firstRunTileSub: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 172,
       "property": "firstRunUnitLabel",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real firstRunUnitLabel: 36",
+      "after": "    readonly property real firstRunUnitLabel: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 173,
       "property": "authError",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real authError: 33",
+      "after": "    readonly property real authError: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 175,
       "property": "rowTitle",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real rowTitle: 24",
+      "after": "    readonly property real rowTitle: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 176,
       "property": "rowMeta",
-      "base": 20
+      "base": 20,
+      "before": "    readonly property real rowMeta: 20",
+      "after": "    readonly property real rowMeta: 20 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 177,
       "property": "tableHeader",
-      "base": 20
+      "base": 20,
+      "before": "    readonly property real tableHeader: 20",
+      "after": "    readonly property real tableHeader: 20 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 178,
       "property": "chipLabel",
-      "base": 20
+      "base": 20,
+      "before": "    readonly property real chipLabel: 20",
+      "after": "    readonly property real chipLabel: 20 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 179,
       "property": "formLabel",
-      "base": 18
+      "base": 18,
+      "before": "    readonly property real formLabel: 18",
+      "after": "    readonly property real formLabel: 18 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 180,
       "property": "cardTitle",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real cardTitle: 30",
+      "after": "    readonly property real cardTitle: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 181,
       "property": "cardMeta",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real cardMeta: 24",
+      "after": "    readonly property real cardMeta: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 184,
       "property": "lineHeightCompact",
-      "base": 1.2
+      "base": 1.2,
+      "before": "    readonly property real lineHeightCompact: 1.2",
+      "after": "    readonly property real lineHeightCompact: 1.2 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 211,
       "property": "homeBrandTitle",
-      "base": 48
+      "base": 48,
+      "before": "    readonly property real homeBrandTitle: 48",
+      "after": "    readonly property real homeBrandTitle: 48 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 212,
       "property": "homeBrandSubtitle",
-      "base": 40
+      "base": 40,
+      "before": "    readonly property real homeBrandSubtitle: 40",
+      "after": "    readonly property real homeBrandSubtitle: 40 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 213,
       "property": "homeReady",
-      "base": 52
+      "base": 52,
+      "before": "    readonly property real homeReady: 52",
+      "after": "    readonly property real homeReady: 52 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 214,
       "property": "homeStatusLabel",
-      "base": 32
+      "base": 32,
+      "before": "    readonly property real homeStatusLabel: 32",
+      "after": "    readonly property real homeStatusLabel: 32 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 215,
       "property": "homeStatusValue",
-      "base": 44
+      "base": 44,
+      "before": "    readonly property real homeStatusValue: 44",
+      "after": "    readonly property real homeStatusValue: 44 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 216,
       "property": "homeWeatherLabel",
-      "base": 32
+      "base": 32,
+      "before": "    readonly property real homeWeatherLabel: 32",
+      "after": "    readonly property real homeWeatherLabel: 32 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 217,
       "property": "homeWeatherValue",
-      "base": 40
+      "base": 40,
+      "before": "    readonly property real homeWeatherValue: 40",
+      "after": "    readonly property real homeWeatherValue: 40 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 218,
       "property": "homeWeatherUnit",
-      "base": 28
+      "base": 28,
+      "before": "    readonly property real homeWeatherUnit: 28",
+      "after": "    readonly property real homeWeatherUnit: 28 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 219,
       "property": "homeDetails",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real homeDetails: 30",
+      "after": "    readonly property real homeDetails: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 220,
       "property": "homeTime",
-      "base": 48
+      "base": 48,
+      "before": "    readonly property real homeTime: 48",
+      "after": "    readonly property real homeTime: 48 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 221,
       "property": "homeDate",
-      "base": 28
+      "base": 28,
+      "before": "    readonly property real homeDate: 28",
+      "after": "    readonly property real homeDate: 28 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 222,
       "property": "homeUserName",
-      "base": 34
+      "base": 34,
+      "before": "    readonly property real homeUserName: 34",
+      "after": "    readonly property real homeUserName: 34 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 223,
       "property": "homeUserRole",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real homeUserRole: 26",
+      "after": "    readonly property real homeUserRole: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 224,
       "property": "homeAvatar",
-      "base": 32
+      "base": 32,
+      "before": "    readonly property real homeAvatar: 32",
+      "after": "    readonly property real homeAvatar: 32 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 225,
       "property": "homeAlertMain",
-      "base": 38
+      "base": 38,
+      "before": "    readonly property real homeAlertMain: 38",
+      "after": "    readonly property real homeAlertMain: 38 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 226,
       "property": "homeAlertSub",
-      "base": 34
+      "base": 34,
+      "before": "    readonly property real homeAlertSub: 34",
+      "after": "    readonly property real homeAlertSub: 34 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 227,
       "property": "homeTileEyebrow",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real homeTileEyebrow: 30",
+      "after": "    readonly property real homeTileEyebrow: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 228,
       "property": "homeTileArrow",
-      "base": 64
+      "base": 64,
+      "before": "    readonly property real homeTileArrow: 64",
+      "after": "    readonly property real homeTileArrow: 64 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 229,
       "property": "homeTileTitle",
-      "base": 72
+      "base": 72,
+      "before": "    readonly property real homeTileTitle: 72",
+      "after": "    readonly property real homeTileTitle: 72 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 230,
       "property": "homeTileSub",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real homeTileSub: 36",
+      "after": "    readonly property real homeTileSub: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 231,
       "property": "homeTileSecondaryEyebrow",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real homeTileSecondaryEyebrow: 26",
+      "after": "    readonly property real homeTileSecondaryEyebrow: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 232,
       "property": "homeTileSecondaryTitle",
-      "base": 56
+      "base": 56,
+      "before": "    readonly property real homeTileSecondaryTitle: 56",
+      "after": "    readonly property real homeTileSecondaryTitle: 56 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 233,
       "property": "homeTileLetterSpacing",
-      "base": 1.2
+      "base": 1.2,
+      "before": "    readonly property real homeTileLetterSpacing: 1.2",
+      "after": "    readonly property real homeTileLetterSpacing: 1.2 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 235,
       "property": "flightActionLabel",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real flightActionLabel: 27   // 指令鈕標籤（匯出稿 27）",
+      "after": "    readonly property real flightActionLabel: 27 * root.textScale   // 指令鈕標籤（匯出稿 27）"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 236,
       "property": "flightTopBarMetric",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real flightTopBarMetric: 33   // Prototype 量測：「RTK FIX」7 字寬 137 px → JetBrains Mono 約 33",
+      "after": "    readonly property real flightTopBarMetric: 33 * root.textScale   // Prototype 量測：「RTK FIX」7 字寬 137 px → JetBrains Mono 約 33"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 238,
       "property": "userTitle",
-      "base": 66
+      "base": 66,
+      "before": "    readonly property real userTitle: 66",
+      "after": "    readonly property real userTitle: 66 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 239,
       "property": "userSubtitle",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real userSubtitle: 33",
+      "after": "    readonly property real userSubtitle: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 240,
       "property": "userField",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real userField: 36",
+      "after": "    readonly property real userField: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 241,
       "property": "userTableHeader",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real userTableHeader: 30",
+      "after": "    readonly property real userTableHeader: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 242,
       "property": "userRowName",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real userRowName: 36",
+      "after": "    readonly property real userRowName: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 243,
       "property": "userRowMeta",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real userRowMeta: 27",
+      "after": "    readonly property real userRowMeta: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 244,
       "property": "userRowDate",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real userRowDate: 30",
+      "after": "    readonly property real userRowDate: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 245,
       "property": "userChip",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real userChip: 30",
+      "after": "    readonly property real userChip: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 246,
       "property": "userPanelTitle",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real userPanelTitle: 42",
+      "after": "    readonly property real userPanelTitle: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 247,
       "property": "userPanelSubtitle",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real userPanelSubtitle: 30",
+      "after": "    readonly property real userPanelSubtitle: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 248,
       "property": "userMatrixChip",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real userMatrixChip: 24",
+      "after": "    readonly property real userMatrixChip: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 249,
       "property": "userMatrixLabel",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real userMatrixLabel: 33",
+      "after": "    readonly property real userMatrixLabel: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 251,
       "property": "libTitle",
-      "base": 66
+      "base": 66,
+      "before": "    readonly property real libTitle: 66",
+      "after": "    readonly property real libTitle: 66 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 252,
       "property": "libCardTitle",
-      "base": 51
+      "base": 51,
+      "before": "    readonly property real libCardTitle: 51",
+      "after": "    readonly property real libCardTitle: 51 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 253,
       "property": "libCardMeta",
-      "base": 40
+      "base": 40,
+      "before": "    readonly property real libCardMeta: 40",
+      "after": "    readonly property real libCardMeta: 40 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 254,
       "property": "libTag",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real libTag: 36",
+      "after": "    readonly property real libTag: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 255,
       "property": "libDetailTitle",
-      "base": 58
+      "base": 58,
+      "before": "    readonly property real libDetailTitle: 58",
+      "after": "    readonly property real libDetailTitle: 58 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 256,
       "property": "libDetailMeta",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real libDetailMeta: 33",
+      "after": "    readonly property real libDetailMeta: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 257,
       "property": "libStatValue",
-      "base": 54
+      "base": 54,
+      "before": "    readonly property real libStatValue: 54",
+      "after": "    readonly property real libStatValue: 54 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 258,
       "property": "libSection",
-      "base": 50
+      "base": 50,
+      "before": "    readonly property real libSection: 50",
+      "after": "    readonly property real libSection: 50 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 259,
       "property": "libRowTitle",
-      "base": 44
+      "base": 44,
+      "before": "    readonly property real libRowTitle: 44",
+      "after": "    readonly property real libRowTitle: 44 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 260,
       "property": "libRowMeta",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real libRowMeta: 33",
+      "after": "    readonly property real libRowMeta: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 261,
       "property": "libMarker",
-      "base": 18
+      "base": 18,
+      "before": "    readonly property real libMarker: 18",
+      "after": "    readonly property real libMarker: 18 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 262,
       "property": "libField",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real libField: 42",
+      "after": "    readonly property real libField: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 263,
       "property": "libFilter",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real libFilter: 33",
+      "after": "    readonly property real libFilter: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 264,
       "property": "noticeTitle",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real noticeTitle: 30   // 全域通知橫幅（原 14／13 太小）",
+      "after": "    readonly property real noticeTitle: 30 * root.textScale   // 全域通知橫幅（原 14／13 太小）"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 265,
       "property": "noticeMessage",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real noticeMessage: 27",
+      "after": "    readonly property real noticeMessage: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 267,
       "property": "deviceCardTitle",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real deviceCardTitle: 42",
+      "after": "    readonly property real deviceCardTitle: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 268,
       "property": "deviceBody",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real deviceBody: 27",
+      "after": "    readonly property real deviceBody: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 269,
       "property": "deviceRowTitle",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real deviceRowTitle: 36",
+      "after": "    readonly property real deviceRowTitle: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 270,
       "property": "flightProTapeLabel",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real flightProTapeLabel: 24",
+      "after": "    readonly property real flightProTapeLabel: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 271,
       "property": "flightProTapeValue",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real flightProTapeValue: 36",
+      "after": "    readonly property real flightProTapeValue: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 272,
       "property": "flightReadoutValue",
-      "base": 90
+      "base": 90,
+      "before": "    readonly property real flightReadoutValue: 90",
+      "after": "    readonly property real flightReadoutValue: 90 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 273,
       "property": "flightReadoutValueCompact",
-      "base": 56
+      "base": 56,
+      "before": "    readonly property real flightReadoutValueCompact: 56",
+      "after": "    readonly property real flightReadoutValueCompact: 56 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 274,
       "property": "flightReadoutLabel",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real flightReadoutLabel: 27",
+      "after": "    readonly property real flightReadoutLabel: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 275,
       "property": "flightReadoutUnit",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real flightReadoutUnit: 30",
+      "after": "    readonly property real flightReadoutUnit: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 279,
       "property": "scale08",
-      "base": 18
+      "base": 18,
+      "before": "    readonly property real scale08: 18   // 08–13 皆為 18",
+      "after": "    readonly property real scale08: 18 * root.textScale   // 08–13 皆為 18"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 280,
       "property": "scale13",
-      "base": 18
+      "base": 18,
+      "before": "    readonly property real scale13: 18",
+      "after": "    readonly property real scale13: 18 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 281,
       "property": "scale14",
-      "base": 20
+      "base": 20,
+      "before": "    readonly property real scale14: 20",
+      "after": "    readonly property real scale14: 20 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 282,
       "property": "scale15",
-      "base": 22
+      "base": 22,
+      "before": "    readonly property real scale15: 22",
+      "after": "    readonly property real scale15: 22 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 283,
       "property": "scale16",
-      "base": 22
+      "base": 22,
+      "before": "    readonly property real scale16: 22",
+      "after": "    readonly property real scale16: 22 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 284,
       "property": "scale17",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real scale17: 24",
+      "after": "    readonly property real scale17: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 285,
       "property": "scale18",
-      "base": 26
+      "base": 26,
+      "before": "    readonly property real scale18: 26",
+      "after": "    readonly property real scale18: 26 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 286,
       "property": "scale20",
-      "base": 28
+      "base": 28,
+      "before": "    readonly property real scale20: 28",
+      "after": "    readonly property real scale20: 28 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 287,
       "property": "scale22",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real scale22: 30",
+      "after": "    readonly property real scale22: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 288,
       "property": "scale24",
-      "base": 32
+      "base": 32,
+      "before": "    readonly property real scale24: 32",
+      "after": "    readonly property real scale24: 32 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 289,
       "property": "scale28",
-      "base": 38
+      "base": 38,
+      "before": "    readonly property real scale28: 38",
+      "after": "    readonly property real scale28: 38 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 290,
       "property": "scale30",
-      "base": 40
+      "base": 40,
+      "before": "    readonly property real scale30: 40",
+      "after": "    readonly property real scale30: 40 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 291,
       "property": "scale32",
-      "base": 44
+      "base": 44,
+      "before": "    readonly property real scale32: 44",
+      "after": "    readonly property real scale32: 44 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 292,
       "property": "scale36",
-      "base": 48
+      "base": 48,
+      "before": "    readonly property real scale36: 48",
+      "after": "    readonly property real scale36: 48 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 294,
       "property": "optionMenuItem",
-      "base": 20
+      "base": 20,
+      "before": "    readonly property real optionMenuItem: 20",
+      "after": "    readonly property real optionMenuItem: 20 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 295,
       "property": "optionMenuTitle",
-      "base": 16
+      "base": 16,
+      "before": "    readonly property real optionMenuTitle: 16",
+      "after": "    readonly property real optionMenuTitle: 16 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 298,
       "property": "mediaSideTitle",
-      "base": 66
+      "base": 66,
+      "before": "    readonly property real mediaSideTitle: 66",
+      "after": "    readonly property real mediaSideTitle: 66 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 299,
       "property": "mediaCategory",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real mediaCategory: 42",
+      "after": "    readonly property real mediaCategory: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 300,
       "property": "mediaSubtitle",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real mediaSubtitle: 36",
+      "after": "    readonly property real mediaSubtitle: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 301,
       "property": "mediaFileName",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real mediaFileName: 36",
+      "after": "    readonly property real mediaFileName: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 302,
       "property": "mediaMeta",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real mediaMeta: 30",
+      "after": "    readonly property real mediaMeta: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 303,
       "property": "mediaBadge",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real mediaBadge: 30",
+      "after": "    readonly property real mediaBadge: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 306,
       "property": "devicesNavItem",
-      "base": 43
+      "base": 43,
+      "before": "    readonly property real devicesNavItem: 43",
+      "after": "    readonly property real devicesNavItem: 43 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 307,
       "property": "devicesNavGroup",
-      "base": 35
+      "base": 35,
+      "before": "    readonly property real devicesNavGroup: 35",
+      "after": "    readonly property real devicesNavGroup: 35 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 308,
       "property": "devicesHeaderTitle",
-      "base": 66
+      "base": 66,
+      "before": "    readonly property real devicesHeaderTitle: 66",
+      "after": "    readonly property real devicesHeaderTitle: 66 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 309,
       "property": "devicesHeaderSubtitle",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real devicesHeaderSubtitle: 36",
+      "after": "    readonly property real devicesHeaderSubtitle: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 312,
       "property": "systemNavTitle",
-      "base": 54
+      "base": 54,
+      "before": "    readonly property real systemNavTitle: 54",
+      "after": "    readonly property real systemNavTitle: 54 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 313,
       "property": "systemHeaderSubtitle",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real systemHeaderSubtitle: 33",
+      "after": "    readonly property real systemHeaderSubtitle: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 314,
       "property": "systemCardTitle",
-      "base": 42
+      "base": 42,
+      "before": "    readonly property real systemCardTitle: 42",
+      "after": "    readonly property real systemCardTitle: 42 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 315,
       "property": "systemRowTitle",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real systemRowTitle: 39",
+      "after": "    readonly property real systemRowTitle: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 316,
       "property": "systemRowDescription",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real systemRowDescription: 30",
+      "after": "    readonly property real systemRowDescription: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 317,
       "property": "systemChip",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real systemChip: 33",
+      "after": "    readonly property real systemChip: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 318,
       "property": "systemChangeText",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real systemChangeText: 33",
+      "after": "    readonly property real systemChangeText: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 319,
       "property": "systemChipUnit",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real systemChipUnit: 27",
+      "after": "    readonly property real systemChipUnit: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 321,
       "property": "systemLinkDialogTitle",
-      "base": 48
+      "base": 48,
+      "before": "    readonly property real systemLinkDialogTitle: 48",
+      "after": "    readonly property real systemLinkDialogTitle: 48 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 322,
       "property": "systemLinkDialogSubtitle",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real systemLinkDialogSubtitle: 33",
+      "after": "    readonly property real systemLinkDialogSubtitle: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 323,
       "property": "systemLinkLabel",
-      "base": 24
+      "base": 24,
+      "before": "    readonly property real systemLinkLabel: 24",
+      "after": "    readonly property real systemLinkLabel: 24 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 324,
       "property": "systemLinkField",
-      "base": 27
+      "base": 27,
+      "before": "    readonly property real systemLinkField: 27",
+      "after": "    readonly property real systemLinkField: 27 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 325,
       "property": "systemLinkSection",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real systemLinkSection: 36",
+      "after": "    readonly property real systemLinkSection: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 328,
       "property": "dhSummaryLabel",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real dhSummaryLabel: 33",
+      "after": "    readonly property real dhSummaryLabel: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 329,
       "property": "dhSummaryBig",
-      "base": 105
+      "base": 105,
+      "before": "    readonly property real dhSummaryBig: 105",
+      "after": "    readonly property real dhSummaryBig: 105 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 330,
       "property": "dhSummaryUnit",
-      "base": 45
+      "base": 45,
+      "before": "    readonly property real dhSummaryUnit: 45",
+      "after": "    readonly property real dhSummaryUnit: 45 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 331,
       "property": "dhSummaryMeta",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real dhSummaryMeta: 39",
+      "after": "    readonly property real dhSummaryMeta: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 332,
       "property": "dhAlertTitle",
-      "base": 45
+      "base": 45,
+      "before": "    readonly property real dhAlertTitle: 45",
+      "after": "    readonly property real dhAlertTitle: 45 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 333,
       "property": "dhAlertDetail",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real dhAlertDetail: 36",
+      "after": "    readonly property real dhAlertDetail: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 334,
       "property": "dhGroupTitle",
-      "base": 45
+      "base": 45,
+      "before": "    readonly property real dhGroupTitle: 45",
+      "after": "    readonly property real dhGroupTitle: 45 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 335,
       "property": "dhGroupCount",
-      "base": 36
+      "base": 36,
+      "before": "    readonly property real dhGroupCount: 36",
+      "after": "    readonly property real dhGroupCount: 36 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 336,
       "property": "dhRowTitle",
-      "base": 45
+      "base": 45,
+      "before": "    readonly property real dhRowTitle: 45",
+      "after": "    readonly property real dhRowTitle: 45 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 337,
       "property": "dhRowDetail",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real dhRowDetail: 33",
+      "after": "    readonly property real dhRowDetail: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 338,
       "property": "dhRowValue",
-      "base": 54
+      "base": 54,
+      "before": "    readonly property real dhRowValue: 54",
+      "after": "    readonly property real dhRowValue: 54 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 339,
       "property": "dhRowUnit",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real dhRowUnit: 33",
+      "after": "    readonly property real dhRowUnit: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 342,
       "property": "offlineMapName",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real offlineMapName: 39",
+      "after": "    readonly property real offlineMapName: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 343,
       "property": "offlineMapMeta",
-      "base": 33
+      "base": 33,
+      "before": "    readonly property real offlineMapMeta: 33",
+      "after": "    readonly property real offlineMapMeta: 33 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 346,
       "property": "regionTitle",
-      "base": 39
+      "base": 39,
+      "before": "    readonly property real regionTitle: 39",
+      "after": "    readonly property real regionTitle: 39 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 347,
       "property": "regionSubtitle",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real regionSubtitle: 30",
+      "after": "    readonly property real regionSubtitle: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 348,
       "property": "regionLabel",
-      "base": 20
+      "base": 20,
+      "before": "    readonly property real regionLabel: 20",
+      "after": "    readonly property real regionLabel: 20 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 349,
       "property": "regionField",
-      "base": 21
+      "base": 21,
+      "before": "    readonly property real regionField: 21",
+      "after": "    readonly property real regionField: 21 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 350,
       "property": "regionStat",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real regionStat: 30",
+      "after": "    readonly property real regionStat: 30 * root.textScale"
     },
     {
+      "kind": "theme",
       "file": "GCP/GcpThemeFont.qml",
+      "line": 351,
       "property": "regionBadge",
-      "base": 30
+      "base": 30,
+      "before": "    readonly property real regionBadge: 30",
+      "after": "    readonly property real regionBadge: 30 * root.textScale"
     },
     {
+      "kind": "direct",
       "file": "GCP/GcpThemeSwatches.qml",
       "line": 70,
-      "base": 12
+      "base": 12,
+      "before": "                    font.pixelSize: 12",
+      "after": "                    font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpThreeDViewPage.qml",
+      "line": 64,
+      "base": 24,
+      "before": "                font.pixelSize: 24",
+      "after": "                font.pixelSize: (24 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpThreeDViewPage.qml",
+      "line": 72,
+      "base": 14,
+      "before": "                font.pixelSize: 14",
+      "after": "                font.pixelSize: (14 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpVideoSignalState.qml",
+      "line": 79,
+      "base": 32,
+      "before": "            font.pixelSize: 32",
+      "after": "            font.pixelSize: (32 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpVideoSignalState.qml",
+      "line": 95,
+      "base": 16,
+      "before": "            font.pixelSize: 16",
+      "after": "            font.pixelSize: (16 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpWeatherForecastRow.qml",
+      "line": 36,
+      "base": 13,
+      "before": "            font.pixelSize: 13",
+      "after": "            font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpWeatherForecastRow.qml",
+      "line": 43,
+      "base": 13,
+      "before": "            font.pixelSize: 13",
+      "after": "            font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpWeatherForecastRow.qml",
+      "line": 51,
+      "base": 12,
+      "before": "            font.pixelSize: 12",
+      "after": "            font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpWeatherForecastRow.qml",
+      "line": 59,
+      "base": 12,
+      "before": "            font.pixelSize: 12",
+      "after": "            font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/GcpWeatherForecastRow.qml",
+      "line": 71,
+      "base": 12,
+      "before": "            font.pixelSize: 12",
+      "after": "            font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpChoiceCard.qml",
+      "line": 93,
+      "base": 18,
+      "before": "                font.pixelSize: 18",
+      "after": "                font.pixelSize: (18 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpChoiceCard.qml",
+      "line": 103,
+      "base": 13,
+      "before": "                font.pixelSize: 13",
+      "after": "                font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpConfigPage.qml",
+      "line": 143,
+      "base": 24,
+      "before": "                font.pixelSize: 24",
+      "after": "                font.pixelSize: (24 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpEditState.qml",
+      "line": 89,
+      "base": 13,
+      "before": "            font.pixelSize: 13",
+      "after": "            font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpGpsFixStatus.qml",
+      "line": 61,
+      "base": 12,
+      "before": "        font.pixelSize: 12",
+      "after": "        font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpGpsFixStatus.qml",
+      "line": 68,
+      "base": 24,
+      "before": "        font.pixelSize: 24",
+      "after": "        font.pixelSize: (24 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpLinkStrength.qml",
+      "line": 61,
+      "base": 12,
+      "before": "        font.pixelSize: 12",
+      "after": "        font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpLinkStrength.qml",
+      "line": 68,
+      "base": 24,
+      "before": "        font.pixelSize: 24",
+      "after": "        font.pixelSize: (24 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpNavigationLauncher.qml",
+      "line": 115,
+      "base": 55,
+      "before": "                font.pixelSize: 55",
+      "after": "                font.pixelSize: (55 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpNavigationLauncher.qml",
+      "line": 124,
+      "base": 25,
+      "before": "                font.pixelSize: 25",
+      "after": "                font.pixelSize: (25 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpNavigationLauncher.qml",
+      "line": 162,
+      "base": 27,
+      "before": "                    font.pixelSize: 27",
+      "after": "                    font.pixelSize: (27 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpNavigationLauncher.qml",
+      "line": 220,
+      "base": 30,
+      "before": "                                font.pixelSize: 30",
+      "after": "                                font.pixelSize: (30 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpNavigationLauncher.qml",
+      "line": 262,
+      "base": 36,
+      "before": "                    font.pixelSize: 36",
+      "after": "                    font.pixelSize: (36 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpSidebar.qml",
+      "line": 153,
+      "base": 11,
+      "before": "                    font.pixelSize: 11",
+      "after": "                    font.pixelSize: (11 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpSidebar.qml",
+      "line": 186,
+      "base": 14,
+      "before": "                font.pixelSize: 14",
+      "after": "                font.pixelSize: (14 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpStatusDetailPopover.qml",
+      "line": 74,
+      "base": 16,
+      "before": "            font.pixelSize: 16",
+      "after": "            font.pixelSize: (16 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpStatusDetailPopover.qml",
+      "line": 91,
+      "base": 13,
+      "before": "                    font.pixelSize: 13",
+      "after": "                    font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpStatusDetailPopover.qml",
+      "line": 98,
+      "base": 13,
+      "before": "                    font.pixelSize: 13",
+      "after": "                    font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpStatusItem.qml",
+      "line": 47,
+      "base": 12,
+      "before": "        font.pixelSize: 12",
+      "after": "        font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpStatusItem.qml",
+      "line": 54,
+      "base": 24,
+      "before": "        font.pixelSize: 24",
+      "after": "        font.pixelSize: (24 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTelemetryBlock.qml",
+      "line": 35,
+      "base": 22,
+      "before": "        font.pixelSize: 22",
+      "after": "        font.pixelSize: (22 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTelemetryBlock.qml",
+      "line": 50,
+      "base": 44,
+      "before": "            font.pixelSize: 44",
+      "after": "            font.pixelSize: (44 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTelemetryBlock.qml",
+      "line": 63,
+      "base": 18,
+      "before": "            font.pixelSize: 18",
+      "after": "            font.pixelSize: (18 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTelemetryFieldRow.qml",
+      "line": 39,
+      "base": 13,
+      "before": "        font.pixelSize: 13",
+      "after": "        font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTelemetryFieldRow.qml",
+      "line": 48,
+      "base": 13,
+      "before": "        font.pixelSize: 13",
+      "after": "        font.pixelSize: (13 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTimeoutDialog.qml",
+      "line": 68,
+      "base": 20,
+      "before": "                font.pixelSize: 20",
+      "after": "                font.pixelSize: (20 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTimeoutDialog.qml",
+      "line": 79,
+      "base": 14,
+      "before": "            font.pixelSize: 14",
+      "after": "            font.pixelSize: (14 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTooltip.qml",
+      "line": 28,
+      "base": 14,
+      "before": "        font.pixelSize: 14",
+      "after": "        font.pixelSize: (14 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTopStatusBar.qml",
+      "line": 107,
+      "base": 11,
+      "before": "                font.pixelSize: 11",
+      "after": "                font.pixelSize: (11 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTopStatusBar.qml",
+      "line": 122,
+      "base": 11,
+      "before": "                font.pixelSize: 11",
+      "after": "                font.pixelSize: (11 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Controls/GcpTopStatusBar.qml",
+      "line": 128,
+      "base": 18,
+      "before": "                font.pixelSize: 18",
+      "after": "                font.pixelSize: (18 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightCanvas.qml",
+      "line": 27,
+      "base": 18,
+      "before": "        font.pixelSize: 18",
+      "after": "        font.pixelSize: (18 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightGuidedActionItem.qml",
+      "line": 34,
+      "base": 26,
+      "before": "            font.pixelSize: 26",
+      "after": "            font.pixelSize: (26 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightGuidedActionItem.qml",
+      "line": 43,
+      "base": 22,
+      "before": "            font.pixelSize: 22",
+      "after": "            font.pixelSize: (22 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightMapProbe.qml",
+      "line": 45,
+      "base": 16,
+      "before": "            font.pixelSize: 16",
+      "after": "            font.pixelSize: (16 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightMapView.qml",
+      "line": 148,
+      "base": 14,
+      "before": "            font.pixelSize: 14",
+      "after": "            font.pixelSize: (14 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightMissionProgress.qml",
+      "line": 99,
+      "base": 27,
+      "before": "                    font.pixelSize: 27",
+      "after": "                    font.pixelSize: (27 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightMissionProgress.qml",
+      "line": 106,
+      "base": 24,
+      "before": "                    font.pixelSize: 24",
+      "after": "                    font.pixelSize: (24 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightMissionProgress.qml",
+      "line": 130,
+      "base": 21,
+      "before": "                font.pixelSize: 21",
+      "after": "                font.pixelSize: (21 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightMissionProgress.qml",
+      "line": 161,
+      "base": 20,
+      "before": "                    font.pixelSize: 20",
+      "after": "                    font.pixelSize: (20 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightMissionProgress.qml",
+      "line": 178,
+      "base": 20,
+      "before": "                font.pixelSize: 20",
+      "after": "                font.pixelSize: (20 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightMissionProgress.qml",
+      "line": 201,
+      "base": 15,
+      "before": "                font.pixelSize: 15",
+      "after": "                font.pixelSize: (15 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightMissionProgress.qml",
+      "line": 210,
+      "base": 12,
+      "before": "                font.pixelSize: 12",
+      "after": "                font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightPreflightChecklist.qml",
+      "line": 169,
+      "base": 66,
+      "before": "                        font.pixelSize: 66",
+      "after": "                        font.pixelSize: (66 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightPreflightChecklist.qml",
+      "line": 181,
+      "base": 45,
+      "before": "                    font.pixelSize: 45",
+      "after": "                    font.pixelSize: (45 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightPreflightChecklist.qml",
+      "line": 193,
+      "base": 27,
+      "before": "                    font.pixelSize: 27",
+      "after": "                    font.pixelSize: (27 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightPreflightChecklist.qml",
+      "line": 254,
+      "base": 33,
+      "before": "                                font.pixelSize: 33",
+      "after": "                                font.pixelSize: (33 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightPreflightChecklist.qml",
+      "line": 261,
+      "base": 27,
+      "before": "                                font.pixelSize: 27",
+      "after": "                                font.pixelSize: (27 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightVehicleListRow.qml",
+      "line": 49,
+      "base": 16,
+      "before": "                font.pixelSize: 16",
+      "after": "                font.pixelSize: (16 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightVehicleListRow.qml",
+      "line": 72,
+      "base": 16,
+      "before": "                font.pixelSize: 16",
+      "after": "                font.pixelSize: (16 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightVehicleListRow.qml",
+      "line": 81,
+      "base": 14,
+      "before": "                font.pixelSize: 14",
+      "after": "                font.pixelSize: (14 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightVehicleSelectorPanel.qml",
+      "line": 36,
+      "base": 22,
+      "before": "            font.pixelSize: 22",
+      "after": "            font.pixelSize: (22 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightVehicleSelectorPanel.qml",
+      "line": 63,
+      "base": 15,
+      "before": "            font.pixelSize: 15",
+      "after": "            font.pixelSize: (15 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightVideoSignalState.qml",
+      "line": 29,
+      "base": 32,
+      "before": "            font.pixelSize: 32",
+      "after": "            font.pixelSize: (32 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Flight/GcpFlightVideoSignalState.qml",
+      "line": 39,
+      "base": 16,
+      "before": "            font.pixelSize: 16",
+      "after": "            font.pixelSize: (16 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Safety/GcpSafetyDraftField.qml",
+      "line": 53,
+      "base": 15,
+      "before": "                font.pixelSize: 15",
+      "after": "                font.pixelSize: (15 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Safety/GcpSafetyDraftField.qml",
+      "line": 62,
+      "base": 12,
+      "before": "                font.pixelSize: 12",
+      "after": "                font.pixelSize: (12 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Safety/GcpSafetyDraftField.qml",
+      "line": 70,
+      "base": 11,
+      "before": "                font.pixelSize: 11",
+      "after": "                font.pixelSize: (11 * GcpTheme.font.textScale)"
+    },
+    {
+      "kind": "direct",
+      "file": "GCP/Safety/GcpSafetyDraftField.qml",
+      "line": 110,
+      "base": 15,
+      "before": "            font.pixelSize: 15",
+      "after": "            font.pixelSize: (15 * GcpTheme.font.textScale)"
     }
   ]
 }
