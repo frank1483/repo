@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import QtQml
 
 // UI agent 的共用狀態：可調整模組的登記、版面覆寫值、復原／重做堆疊。
 // 每次 agent 套用變更前先存一份快照（目前畫面＋子頁＋全部版面覆寫），復原就是把快照放回去。
@@ -12,7 +13,7 @@ QtObject {
     property int revision: 0                 // 任何覆寫或堆疊變動都 +1，給 QML 綁定重算
     property var _modules: ({})              // id → { item, container }
     property var _overrides: ({})            // id → { dx, dy, scale, hidden }
-    property var _saved: ({})                // id → { opacity, enabled }（隱藏前的原值）
+    property var _cancelRedo: []             // 失敗交易不得丟失原本的重做堆疊
     property var undoStack: []               // [{ label, snap }]
     property var redoStack: []
     readonly property bool canUndo: revision >= 0 && undoStack.length > 0
@@ -20,19 +21,37 @@ QtObject {
 
     property Component _scaleComponent: Component { Scale { origin.x: 0; origin.y: 0 } }
     property Component _translateComponent: Component { Translate {} }
+    // Binding 停用時恢復原本的 binding/value，避免隱藏破壞遙測綁定。
+    property Component _opacityComponent: Component { Binding { property: "opacity"; value: 0; when: false } }
+    property Component _enabledComponent: Component { Binding { property: "enabled"; value: false; when: false } }
 
     // ------------------------------------------------------------ 模組登記
     function register(id, item, container) {
         if (!id || !item) return
-        _modules[id] = { item: item, container: container || item.parent, scale: null, translate: null }
+        if (_modules[id]) unregister(id, _modules[id].item)
+        _modules[id] = { item: item, container: container || item.parent,
+                         scale: null, translate: null, opacityBinding: null, enabledBinding: null }
         _apply(id)
         revision++
     }
 
     function unregister(id, item) {
         if (_modules[id] && _modules[id].item === item) {
+            const m = _modules[id]
+            // 先停用 Binding，再銷毀；target 改指向時不把舊物件留在隱藏狀態。
+            if (m.opacityBinding) { m.opacityBinding.when = false; m.opacityBinding.destroy() }
+            if (m.enabledBinding) { m.enabledBinding.when = false; m.enabledBinding.destroy() }
+            if (m.item) {
+                const list = []
+                for (let i = 0; i < m.item.transform.length; ++i) {
+                    const t = m.item.transform[i]
+                    if (t !== m.scale && t !== m.translate) list.push(t)
+                }
+                m.item.transform = list
+            }
+            if (m.scale) m.scale.destroy()
+            if (m.translate) m.translate.destroy()
             delete _modules[id]
-            delete _saved[id]
             revision++
         }
     }
@@ -41,7 +60,7 @@ QtObject {
         const out = {}
         for (const id in _modules) {
             const m = _modules[id]
-            out[id] = { registered: true, visible: !!(m.item && m.item.visible) }
+            out[id] = { registered: true, visible: !!(m.item && m.item.visible && !overrideOf(id).hidden) }
         }
         return out
     }
@@ -58,8 +77,9 @@ QtObject {
     // 其他可見模組目前（含 agent 變換）的矩形，給移動時避開重疊
     function otherRects(exceptId) {
         const out = []
+        if (!_modules[exceptId]) return out
         for (const id in _modules) {
-            if (id === exceptId) continue
+            if (id === exceptId || _modules[id].container !== _modules[exceptId].container) continue
             const m = _modules[id]
             const b = baseBox(id)
             const o = overrideOf(id)
@@ -104,15 +124,12 @@ QtObject {
             m.translate.x = o.dx
             m.translate.y = o.dy
         }
-        if (o.hidden && !_saved[id]) {
-            _saved[id] = { opacity: m.item.opacity, enabled: m.item.enabled }
-            m.item.opacity = 0
-            m.item.enabled = false
-        } else if (!o.hidden && _saved[id]) {
-            m.item.opacity = _saved[id].opacity
-            m.item.enabled = _saved[id].enabled
-            delete _saved[id]
+        if (o.hidden && !m.opacityBinding) {
+            m.opacityBinding = _opacityComponent.createObject(m.item, { target: m.item })
+            m.enabledBinding = _enabledComponent.createObject(m.item, { target: m.item })
         }
+        if (m.opacityBinding) m.opacityBinding.when = o.hidden
+        if (m.enabledBinding) m.enabledBinding.when = o.hidden
     }
 
     // ------------------------------------------------------------ 快照與復原
@@ -133,6 +150,7 @@ QtObject {
 
     // 套用一個變更前呼叫：記下目前狀態，並清掉重做堆疊
     function beginChange(label) {
+        _cancelRedo = redoStack.slice()
         undoStack = undoStack.concat([{ label: label, snap: snapshot() }])
         redoStack = []
         revision++
@@ -141,7 +159,10 @@ QtObject {
     // 套用失敗時撤回剛剛的 beginChange（狀態沒有變，不留下空的復原步驟）
     function cancelChange() {
         if (!undoStack.length) return
+        const entry = undoStack[undoStack.length - 1]
         undoStack = undoStack.slice(0, -1)
+        _restore(entry.snap)
+        redoStack = _cancelRedo.slice()
         revision++
     }
 

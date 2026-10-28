@@ -29,7 +29,10 @@ Item {
     readonly property string backend: agentSettings.backend || envValue("GCS_LLM_BACKEND", "openai")
     readonly property string modelUrl: agentSettings.llmUrl || envValue("GCS_LLM_URL", "")
     readonly property string modelName: agentSettings.llmModel || envValue("GCS_LLM_MODEL", "")
-    readonly property int modelTimeoutMs: parseInt(envValue("GCS_LLM_TIMEOUT_MS", "20000"), 10)
+    readonly property int modelTimeoutMs: {
+        const n = Number(envValue("GCS_LLM_TIMEOUT_MS", "20000"))
+        return isFinite(n) && n > 0 ? Math.max(1, Math.min(120000, Math.floor(n))) : 20000
+    }
     readonly property bool modelAlways: envValue("GCS_AGENT_LLM_ALWAYS", "0") === "1"
     readonly property bool modelEnabled: backend !== "none" && modelUrl !== ""
 
@@ -40,6 +43,7 @@ Item {
     property var choices: []           // CLARIFY 時讓使用者點選的候選
     property var _pending: null        // 目前的分析結果
     property real _t0: 0
+    property var _cancelModel: null
 
     readonly property color cBg: "#E6111827"
     readonly property color cPanel: "#F2172033"
@@ -114,15 +118,26 @@ Item {
         const xhr = new XMLHttpRequest()
         let finished = false
         const t0 = Date.now()
-        function end(r) { if (finished) return; finished = true; timeoutTimer.stop(); r.latency_ms = Date.now() - t0; done(r) }
-        timeoutTimer.onFire = function () { xhr.abort(); end({ ok: false, error: qsTr("逾時") }) }
+        const requestBackend = backend
+        function end(r) {
+            if (finished) return
+            finished = true
+            timeoutTimer.stop()
+            timeoutTimer.onFire = null
+            root._cancelModel = null
+            r.latency_ms = Date.now() - t0
+            done(r)
+        }
+        root._cancelModel = function () { finished = true; timeoutTimer.stop(); xhr.abort() }
+        // abort() 可能同步發 readyState；先 end 才不會把逾時記為 HTTP 0。
+        timeoutTimer.onFire = function () { end({ ok: false, error: qsTr("逾時") }); xhr.abort() }
         timeoutTimer.interval = modelTimeoutMs
         timeoutTimer.restart()
 
         const messages = [{ role: "system", content: Core.SYSTEM_PROMPT },
                           { role: "user", content: Core.buildUserMessage(result, ctx) }]
         let url, body
-        if (backend === "ollama") {
+        if (requestBackend === "ollama") {
             url = modelUrl.replace(/\/$/, "") + "/api/chat"
             body = { model: modelName, messages: messages, stream: false, format: "json", options: { temperature: 0 } }
         } else {
@@ -131,22 +146,24 @@ Item {
             if (envValue("GCS_LLM_JSON_MODE", "1") === "1") body.response_format = { type: "json_object" }
         }
         xhr.onreadystatechange = function () {
-            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (finished || xhr.readyState !== XMLHttpRequest.DONE) return
             if (xhr.status < 200 || xhr.status >= 300) { end({ ok: false, error: "HTTP " + xhr.status }); return }
             let content = ""
             try {
                 const j = JSON.parse(xhr.responseText)
-                content = backend === "ollama" ? j.message.content : j.choices[0].message.content
+                content = requestBackend === "ollama" ? j.message.content : j.choices[0].message.content
             } catch (e) { end({ ok: false, error: qsTr("回覆格式錯誤") }); return }
             const v = Core.validateModelDecision(Core.extractJson(content), result)
             v.raw = String(content).substring(0, 400)
             end(v)
         }
-        xhr.open("POST", url)
-        xhr.setRequestHeader("Content-Type", "application/json")
-        const key = envValue("GCS_LLM_API_KEY", "")
-        if (key) xhr.setRequestHeader("Authorization", "Bearer " + key)
-        xhr.send(JSON.stringify(body))
+        try {
+            xhr.open("POST", url)
+            xhr.setRequestHeader("Content-Type", "application/json")
+            const key = envValue("GCS_LLM_API_KEY", "")
+            if (key) xhr.setRequestHeader("Authorization", "Bearer " + key)
+            xhr.send(JSON.stringify(body))
+        } catch (e) { end({ ok: false, error: qsTr("無法建立模型請求") }); xhr.abort() }
     }
 
     Timer {
@@ -158,6 +175,7 @@ Item {
 
     // ------------------------------------------------------------ 執行
     function execute(c, source) {
+        if (busy || _layoutJob) return
         choices = []
         if (!c) return
         if (c.kind === "undo") {
@@ -192,7 +210,13 @@ Item {
             const mod = Core.MODULES.filter(m => m.id === c.module)[0]
             GcpAgentState.beginChange(c.label_zh)
             const loc = context()
-            if (mod && loc.page !== mod.page && shell) shell.agentGoTo(mod.page, -1)
+            if (!mod || (loc.page !== mod.page && (!shell || !shell.agentGoTo(mod.page, -1)))) {
+                GcpAgentState.cancelChange()
+                messageText = qsTr("無法開啟模組所在畫面，沒有調整。")
+                return
+            }
+            busy = true
+            statusText = qsTr("等待版面模組…")
             _layoutJob = { c: c, source: source, tries: 0 }
             layoutRetry.restart()   // 換頁後模組要等畫面載入才登記
             return
@@ -213,14 +237,26 @@ Item {
                 if (++job.tries < 20) { restart(); return }
                 root._layoutJob = null
                 GcpAgentState.cancelChange()
+                root.busy = false
+                root.statusText = ""
                 root.messageText = qsTr("這個模組目前不在畫面上，沒有調整。")
                 return
             }
             root._layoutJob = null
-            const arg = c.op === "move" ? c.region : c.op === "nudge" ? c.dir : c.factor
-            const next = Core.layoutTarget(c.op, box, { w: box.areaW, h: box.areaH }, GcpAgentState.overrideOf(c.module), arg,
-                                            GcpAgentState.otherRects(c.module))
-            GcpAgentState.setOverride(c.module, next)
+            try {
+                const arg = c.op === "move" ? c.region : c.op === "nudge" ? c.dir : c.factor
+                const next = Core.layoutTarget(c.op, box, { w: box.areaW, h: box.areaH }, GcpAgentState.overrideOf(c.module), arg,
+                                                GcpAgentState.otherRects(c.module))
+                GcpAgentState.setOverride(c.module, next)
+            } catch (e) {
+                GcpAgentState.cancelChange()
+                root.busy = false
+                root.statusText = ""
+                root.messageText = qsTr("版面調整失敗，已撤回本次變更。")
+                return
+            }
+            root.busy = false
+            root.statusText = ""
             root.done(c, job.source)
         }
     }
@@ -229,6 +265,11 @@ Item {
         messageText = qsTr("已套用：%1（%2）").arg(c.label_zh).arg(source)
         open = false
         showToast(c.label_zh, true)
+    }
+
+    Component.onDestruction: {
+        if (_cancelModel) _cancelModel()
+        if (_layoutJob) { layoutRetry.stop(); GcpAgentState.cancelChange() }
     }
 
     // ------------------------------------------------------------ 提示列（面板關閉時也能一鍵復原）

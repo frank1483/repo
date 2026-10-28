@@ -85,18 +85,24 @@ var SECTIONS = [
 
 // 可調整的版面模組（目前在即時飛行畫面）。實際是否存在、是否可見，以執行時登記的 GcpAgentModule 為準。
 var MODULES = [
-    { id: "missionProgress", page: 1, name: "任務進度", aliases: ["任務進度條", "進度"] },
-    { id: "payloadRail",     page: 1, name: "酬載快捷列", aliases: ["酬載", "快捷列", "拍照按鈕"] },
-    { id: "attitude",        page: 1, name: "姿態儀", aliases: ["姿態", "水平儀", "人工地平儀"] },
-    { id: "headingTape",     page: 1, name: "航向帶", aliases: ["航向", "方位帶"] },
-    { id: "speedReadout",    page: 1, name: "速度顯示", aliases: ["速度", "空速", "地速"] },
-    { id: "altReadout",      page: 1, name: "高度顯示", aliases: ["高度"] },
-    { id: "compass",         page: 1, name: "羅盤", aliases: ["指南針", "半圓羅盤"] },
-    { id: "windGauge",       page: 1, name: "風速計", aliases: ["風速", "風向", "風力"] },
-    { id: "homeInfo",        page: 1, name: "返航距離與飛行時間", aliases: ["返航距離", "飛行時間", "距離"] },
-    { id: "miniView",        page: 1, name: "小地圖", aliases: ["子畫面", "迷你地圖", "小視窗", "pip"] },
-    { id: "actionDock",      page: 1, name: "指令區", aliases: ["指令按鈕", "起飛按鈕", "操作區", "dock"] },
-    { id: "telemetryBar",    page: 1, name: "底部遙測列", aliases: ["遙測列", "遙測", "狀態列"] }
+    {"id":"homeStatus","page":0,"name":"首頁狀態列","aliases":["首頁狀態","狀態卡","home status"]},
+    {"id":"homeWeather","page":0,"name":"首頁天氣卡","aliases":["天氣卡","氣象卡","天氣膠囊","weather card"]},
+    {"id":"homeDetails","page":0,"name":"系統詳情捷徑","aliases":["系統詳情","詳細資訊捷徑","詳情捷徑","details shortcut"]},
+    {"id":"homeLiveTile","page":0,"name":"即時飛行啟動磚","aliases":["即時飛行磚","飛行啟動磚","飛行卡片","live tile"]},
+    {"id":"homePlanTile","page":0,"name":"任務規劃啟動磚","aliases":["任務規劃磚","規劃啟動磚","規劃卡片","plan tile"]},
+    {"id":"homeLibraryTile","page":0,"name":"任務庫啟動磚","aliases":["任務庫磚","航線庫磚","任務庫卡片","library tile"]},
+    { id: "missionProgress", page: 1, name: "任務進度", aliases: ["任務進度條", "進度", "任務進渡", "progress bar"] },
+    { id: "payloadRail",     page: 1, name: "酬載快捷列", aliases: ["酬載", "快捷列", "拍照按鈕", "payload rail"] },
+    { id: "attitude",        page: 1, name: "姿態儀", aliases: ["姿態", "水平儀", "人工地平儀", "姿太儀", "attitude indicator"] },
+    { id: "headingTape",     page: 1, name: "航向帶", aliases: ["航向", "方位帶", "heading tape"] },
+    { id: "speedReadout",    page: 1, name: "速度顯示", aliases: ["速度", "空速", "地速", "速度表", "speed display"] },
+    { id: "altReadout",      page: 1, name: "高度顯示", aliases: ["高度", "高度表", "altitude display"] },
+    { id: "compass",         page: 1, name: "羅盤", aliases: ["指南針", "半圓羅盤", "compass"] },
+    { id: "windGauge",       page: 1, name: "風速計", aliases: ["風速", "風向", "風力", "風數計", "wind gauge"] },
+    { id: "homeInfo",        page: 1, name: "返航距離與飛行時間", aliases: ["返航距離", "飛行時間", "距離", "home distance"] },
+    { id: "miniView",        page: 1, name: "小地圖", aliases: ["子畫面", "迷你地圖", "小視窗", "pip", "小地途", "mini map"] },
+    { id: "actionDock",      page: 1, name: "指令區", aliases: ["指令按鈕", "起飛按鈕", "操作區", "dock", "action dock"] },
+    { id: "telemetryBar",    page: 1, name: "底部遙測列", aliases: ["遙測列", "遙測", "狀態列", "telemetry bar"] }
 ]
 
 var REGIONS = [
@@ -218,6 +224,38 @@ function analyze(intent, ctx) {
         var s = score(MODULES[i])
         if (s >= 0.5) mods.push({ m: MODULES[i], s: s })
     }
+    // 明確較長的完整名稱優先，避免「首頁狀態列」同時命中飛行頁的「狀態列」。
+    var longest = 0
+    for (i = 0; i < mods.length; ++i) {
+        var exactNames = [mods[i].m.name].concat(mods[i].m.aliases || [])
+        mods[i].exact = 0
+        mods[i].exactName = ""
+        for (var ei = 0; ei < exactNames.length; ++ei) {
+            var en = norm(exactNames[ei]).replace(/\s+/g, "")
+            if (en && raw.replace(/\s+/g, "").indexOf(en) >= 0 && en.length > mods[i].exact) {
+                mods[i].exact = en.length
+                mods[i].exactName = en
+            }
+        }
+        longest = Math.max(longest, mods[i].exact)
+    }
+    if (longest >= 4) mods = mods.filter(function (x) {
+        // 只排除嵌在完整名稱內的短別名；兩個獨立點名的模組仍須釐清。
+        return !x.exactName || !mods.some(function (y) {
+            return y.exact > x.exact && y.exactName.indexOf(x.exactName) >= 0
+        })
+    })
+    // 「這個／那個」僅使用目前畫面已登記且可見的模組；沒有焦點證據時不猜。
+    if (!mods.length && hasAny(raw, ["這個", "那個", "這塊", "那塊"])) {
+        for (i = 0; i < MODULES.length; ++i) {
+            var mi = (ctx.modules || {})[MODULES[i].id]
+            if (MODULES[i].page === ctx.page && mi && mi.registered && mi.visible)
+                mods.push({ m: MODULES[i], s: 0.8 })
+        }
+        if (!mods.length)
+            return { intent: String(intent || ""), candidates: [], evidence: evidence,
+                     rule: { decision: "HOLD", choice_id: "", final: true, reason_zh: "目前沒有可確認的模組，請說出模組名稱" } }
+    }
     mods.sort(function (a, b) { return b.s - a.s })
     if (mods.length > 1 && mods[1].s < mods[0].s - 0.15) mods = [mods[0]]   // 明確點名的模組優先
 
@@ -285,8 +323,9 @@ function analyze(intent, ctx) {
             }
         }
     } else if (wantShow && mods.length) {
-        add({ id: "LAY_" + mods[0].m.id + "_SHOW", kind: "layout", module: mods[0].m.id, op: "show",
-              label_zh: "重新顯示" + mods[0].m.name, score: 1.0 })
+        for (i = 0; i < mods.length; ++i)
+            add({ id: "LAY_" + mods[i].m.id + "_SHOW", kind: "layout", module: mods[i].m.id, op: "show",
+                  label_zh: "重新顯示" + mods[i].m.name, score: 1.0 })
     }
 
     // 3) 換頁（沒有版面或復原意圖時才主導；有的話仍放低分候選，交給使用者／模型判斷）

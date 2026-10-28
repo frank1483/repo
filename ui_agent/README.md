@@ -3,7 +3,7 @@
 在 ELAN GCP 新版介面的每個畫面右側加一顆「AI」按鈕。使用者用一句話說意圖，agent 會：
 
 - **切畫面**：例如在首頁說「我想查看飛行設定」，會列出可能的畫面（系統設定 › Fly View、安全設定 › 飛行限制、設備管理 › 飛行模式…）讓使用者點；說得明確（「打開系統設定的 Fly View」）就直接切過去。
-- **調整版面**：即時飛行畫面的 12 個模組可以移動（九宮格位置或往上下左右移一點）、放大縮小、隱藏與重新顯示，移動時會避開其他模組、不會跑出畫面。在別的畫面下達版面指令會先自動切到即時飛行。
+- **調整版面**：首頁 6 個與即時飛行畫面 12 個模組可以移動（九宮格位置或往上下左右移一點）、放大縮小、隱藏與重新顯示，移動時會避開其他模組、不會跑出畫面。在別的畫面下達版面指令會先自動切到即時飛行。
 - **復原**：每次變更前都存一份快照（目前畫面＋子頁＋全部模組位置）。可以復原一步、復原多步（「復原兩步」）、重做、全部復原（回到 agent 介入前，這一步本身也能再復原）。套用後畫面下方會出現「復原」按鈕。
 
 agent 只換頁與調整版面，**不送飛行或相機指令、不修改任何參數值**；換頁沿用原本的帳號權限檢查。
@@ -27,6 +27,7 @@ agent 只換頁與調整版面，**不送飛行或相機指令、不修改任何
 | `qml/GcpAgentModule.qml` | 在畫面裡登記一個可調整模組 |
 | `qml/GcpAgentOverlay.qml` | AI 按鈕、面板、復原提示列、模型呼叫（OpenAI 相容或 Ollama） |
 | `patch/elan_gcp_ui_agent.patch` | 對正式 UI 的修改：CMakeLists 加檔案、GcpMainShell 加兩個函式與疊層、即時飛行補 id 並登記 12 個模組 |
+| `patch/elan_gcp_home_modules.patch` | 首頁 6 個模組（狀態列、天氣、系統詳情、三塊啟動磚）登記；agent 掛外層，原進場動畫留內層 |
 | `install_into_ui.sh` | 把上面裝進 UI **副本** |
 | `test/` | `test_core.js`（node）與 `run_harness.py`（Qt 6.8.3 離屏模擬畫面） |
 
@@ -75,7 +76,7 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ninja -C build-android-arm64-debug 
 ## 測試
 
 ```bash
-node ui_agent/test/test_core.js                              # 決策核心 23 項
+node ui_agent/test/test_core.js                              # 決策核心 69 項
 pip install PySide6==6.8.3
 python -I ui_agent/test/run_harness.py /tmp/agent_out        # 模擬畫面 18 項，存截圖
 ```

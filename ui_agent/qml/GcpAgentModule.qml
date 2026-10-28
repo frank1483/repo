@@ -11,13 +11,30 @@ QtObject {
     property Item target: null
     property Item container: null
 
-    property bool _done: false
-    function _register() {
-        if (_done || !moduleId || !target) return
-        GcpAgentState.register(moduleId, target, container)
-        _done = true
+    property bool _ready: false
+    property string _registeredId: ""
+    property Item _registeredTarget: null
+    property Item _registeredContainer: null
+    function _unregister() {
+        if (_registeredId) GcpAgentState.unregister(_registeredId, _registeredTarget)
+        _registeredId = ""
+        _registeredTarget = null
+        _registeredContainer = null
     }
-    // 等整個畫面建立完（位置綁定已算好）才登記並套用既有覆寫
-    Component.onCompleted: Qt.callLater(_register)
-    Component.onDestruction: if (_done) GcpAgentState.unregister(moduleId, target)
+    function _register() {
+        if (!_ready) return
+        const actualContainer = container || (target ? target.parent : null)
+        if (_registeredId === moduleId && _registeredTarget === target && _registeredContainer === actualContainer) return
+        _unregister()
+        if (!moduleId || !target || !actualContainer) return
+        GcpAgentState.register(moduleId, target, actualContainer)
+        _registeredId = moduleId
+        _registeredTarget = target
+        _registeredContainer = actualContainer
+    }
+    onModuleIdChanged: Qt.callLater(_register)
+    onTargetChanged: Qt.callLater(_register)
+    onContainerChanged: Qt.callLater(_register)
+    Component.onCompleted: { _ready = true; Qt.callLater(_register) }
+    Component.onDestruction: { _ready = false; _unregister() }
 }

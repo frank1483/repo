@@ -23,7 +23,266 @@ const cases = [
     ["返航", "HOLD", ""],
     ["帶我去返航設定", "SELECT", "NAV_3_0"],
 ]
+// 0306 新增 46 句：舊20句與3個模型驗證原封保留。
+const extraCases = [
+    [
+        "風數計放大一點",
+        "LAY_windGauge_SCALE_125"
+    ],
+    [
+        "小地途縮小一點",
+        "LAY_miniView_SCALE_80"
+    ],
+    [
+        "姿太儀放大一點",
+        "LAY_attitude_SCALE_125"
+    ],
+    [
+        "任務進渡放大一點",
+        "LAY_missionProgress_SCALE_125"
+    ],
+    [
+        "拜託把 wind gauge 放大一點",
+        "LAY_windGauge_SCALE_125"
+    ],
+    [
+        "mini map 縮小一點啦",
+        "LAY_miniView_SCALE_80"
+    ],
+    [
+        "attitude indicator 放大一點",
+        "LAY_attitude_SCALE_125"
+    ],
+    [
+        "高度表縮小一點",
+        "LAY_altReadout_SCALE_80"
+    ],
+    [
+        "速度表放大一點",
+        "LAY_speedReadout_SCALE_125"
+    ],
+    [
+        "telemetry bar 隱藏",
+        "LAY_telemetryBar_HIDE"
+    ],
+    [
+        "heading tape 放大一點",
+        "LAY_headingTape_SCALE_125"
+    ],
+    [
+        "compass 縮小一點",
+        "LAY_compass_SCALE_80"
+    ],
+    [
+        "action dock 隱藏",
+        "LAY_actionDock_HIDE"
+    ],
+    [
+        "payload rail 放大一點",
+        "LAY_payloadRail_SCALE_125"
+    ],
+    [
+        "home distance 縮小一點",
+        "LAY_homeInfo_SCALE_80"
+    ],
+    [
+        "progress bar 放大一點",
+        "LAY_missionProgress_SCALE_125"
+    ],
+    [
+        "風速計大一點啦",
+        "LAY_windGauge_SCALE_125"
+    ],
+    [
+        "麻煩小地圖小一點",
+        "LAY_miniView_SCALE_80"
+    ],
+    [
+        "高度顯示變成兩倍",
+        "LAY_altReadout_SCALE_200"
+    ],
+    [
+        "速度顯示減半吧",
+        "LAY_speedReadout_SCALE_50"
+    ],
+    [
+        "把姿態儀藏起來好嗎",
+        "LAY_attitude_HIDE"
+    ],
+    [
+        "底部遙測列先收起來",
+        "LAY_telemetryBar_HIDE"
+    ],
+    [
+        "指令區往右挪一點",
+        "LAY_actionDock_NUDGE_R"
+    ],
+    [
+        "風速計往下挪一點",
+        "LAY_windGauge_NUDGE_D"
+    ],
+    [
+        "把小地圖擺在右上角啦",
+        "LAY_miniView_MOVE_TR"
+    ],
+    [
+        "高度顯示放到左下角",
+        "LAY_altReadout_MOVE_BL"
+    ],
+    [
+        "風速計回到原本大小",
+        "LAY_windGauge_RESET"
+    ],
+    [
+        "重新顯示速度表",
+        "LAY_speedReadout_SHOW"
+    ],
+    [
+        "首頁狀態列放大一點",
+        "LAY_homeStatus_SCALE_125"
+    ],
+    [
+        "天氣卡縮小一點",
+        "LAY_homeWeather_SCALE_80"
+    ],
+    [
+        "系統詳情捷徑放大一點",
+        "LAY_homeDetails_SCALE_125"
+    ],
+    [
+        "即時飛行磚放大一點",
+        "LAY_homeLiveTile_SCALE_125"
+    ],
+    [
+        "任務規劃磚縮小一點",
+        "LAY_homePlanTile_SCALE_80"
+    ],
+    [
+        "任務庫磚隱藏",
+        "LAY_homeLibraryTile_HIDE"
+    ],
+    [
+        "weather card 放大一點",
+        "LAY_homeWeather_SCALE_125"
+    ],
+    [
+        "details shortcut 縮小一點",
+        "LAY_homeDetails_SCALE_80"
+    ],
+    [
+        "live tile 放大一點",
+        "LAY_homeLiveTile_SCALE_125"
+    ],
+    [
+        "plan tile 縮小一點",
+        "LAY_homePlanTile_SCALE_80"
+    ],
+    [
+        "library tile 隱藏",
+        "LAY_homeLibraryTile_HIDE"
+    ],
+    [
+        "home status 放大一點",
+        "LAY_homeStatus_SCALE_125"
+    ],
+    [
+        "這個放大一點",
+        "LAY_windGauge_SCALE_125",
+        {
+            "page": 1,
+            "modules": {
+                "windGauge": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "那個縮小一點",
+        "LAY_miniView_SCALE_80",
+        {
+            "page": 1,
+            "modules": {
+                "miniView": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "這塊藏起來",
+        "LAY_homeWeather_HIDE",
+        {
+            "page": 0,
+            "modules": {
+                "homeWeather": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "那塊放大一點",
+        "LAY_homePlanTile_SCALE_125",
+        {
+            "page": 0,
+            "modules": {
+                "homePlanTile": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "這個往右移",
+        "LAY_homeStatus_NUDGE_R",
+        {
+            "page": 0,
+            "modules": {
+                "homeStatus": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "那個還原大小",
+        "LAY_homeDetails_RESET",
+        {
+            "page": 0,
+            "modules": {
+                "homeDetails": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ]
+]
 let fail = 0
+for (const [q, id, extra] of extraCases) {
+    const r = C.analyze(q, Object.assign({}, ctx, extra || {}))
+    const ok = r.rule.decision === "SELECT" && r.rule.choice_id === id
+    if (!ok) fail++
+    console.log((ok ? "PASS " : "FAIL ") + q + " → " + r.rule.decision + " " + r.rule.choice_id)
+}
+// 不同長度的兩個明確模組名稱，不可因名稱長短自動挑一個。
+if (C.analyze("mini map 和 wind gauge 都放大一點", ctx).rule.decision !== "CLARIFY") fail++
+// 多個可見模組時只列目前頁面的候選；不可從排序第一筆推斷「這個」。
+const many = C.analyze("這個放大一點", {page:1, modules:{
+    windGauge:{registered:true,visible:true}, miniView:{registered:true,visible:true},
+    homeWeather:{registered:true,visible:true}
+}})
+if (many.rule.decision !== "CLARIFY" || many.candidates.some(c => c.kind === "layout" && !["windGauge","miniView"].includes(c.module))) fail++
+for (const q of ["這個放大", "那個縮小"]) {
+    const r = C.analyze(q, {page:1,modules:{windGauge:{registered:true,visible:false}}})
+    if (r.rule.decision !== "HOLD" || !r.rule.final || r.candidates.length) fail++
+}
 for (const [q, d, id] of cases) {
     const r = C.analyze(q, ctx)
     const ok = r.rule.decision === d && (!id || r.rule.choice_id === id)
