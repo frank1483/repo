@@ -299,5 +299,38 @@ for (const [name, ok] of [["擋下不存在的 ID", !v1.ok], ["擋下不存在�
     if (!ok) fail++
     console.log((ok ? "PASS " : "FAIL ") + name)
 }
+
+// V4: new source fixtures only. Legacy fixture contents above are unchanged.
+const v4Rows = require('fs').readFileSync(require('path').join(__dirname,'regression_ui_agent.jsonl'),'utf8')
+    .split(/\r?\n/).filter(Boolean).map(JSON.parse).filter(row=>row.id.startsWith('UIV4-'))
+for(const row of v4Rows) {
+    let pending='', turnCtx={...row.ctx}
+    for(const turn of row.turns||[{intent:row.intent,expect:row.expect}]) {
+        const result=C.analyzeTurn(turn.intent,turnCtx,pending), d=result.rule
+        const ids=d.decision==='SELECT'?(d.steps?d.steps.map(s=>s.choice_id):[d.choice_id]):[]
+        const nextPending=d.decision==='SELECT'?'':result.pending_text||''
+        const ex=turn.expect
+        const ok=d.decision===ex.decision&&JSON.stringify(ids)===JSON.stringify(ex.ids)&&
+            (ex.pending===undefined||nextPending===ex.pending)&&
+            (ex.pending_original===undefined||(result.pending_intent||'')===ex.pending_original)&&
+            (!ex.contains||ex.contains.every(id=>result.candidates.some(c=>c.id===id)))
+        if(!ok)fail++
+        console.log((ok?'PASS ':'FAIL ')+row.id+' '+turn.intent+' -> '+d.decision+' '+ids.join(','))
+        for(const id of ids)turnCtx=C.afterCandidate(turnCtx,C.candidateById(result,id))
+        pending=nextPending
+    }
+}
+for(const q of ['小地圖放大','小地圖放到最大','小地圖縮到最小']) {
+    if(C.analyze(q,{page:1,modules:{}}).candidates.some(c=>/^NAV_8_/.test(c.id)))fail++
+}
+// One navigation plus two layout actions remains executable; history behavior is in test_state_v4.js.
+const compoundV4=C.analyze('切到即時飛行然後風速計放到最大然後小地圖放到最大',ctx)
+if(compoundV4.rule.decision!=='SELECT'||compoundV4.rule.steps.length!==3)fail++
+const noScope=C.analyze('將字縮小',{page:1,modules:{windGauge:{registered:true,visible:true},homeWeather:{registered:true,visible:true}}})
+if(noScope.rule.decision!=='CLARIFY'||noScope.candidates.some(c=>c.kind==='layout'&&c.module!=='windGauge'))fail++
+const pendingForModel=C.analyzeTurn('風速計',ctx,'放大一點')
+const pendingMessage=JSON.parse(C.buildUserMessage(pendingForModel,ctx))
+if(pendingMessage.pending_intent!=='放大一點'||pendingMessage.input_intent!=='風速計')fail++
+
 console.log(fail ? fail + " 項失敗" : "全部通過")
 process.exit(fail ? 1 : 0)

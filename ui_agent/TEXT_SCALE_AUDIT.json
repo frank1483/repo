@@ -1,0 +1,1268 @@
+{
+  "theme_properties": 251,
+  "hardcoded_lines_in_supplied_snapshot": 1,
+  "requested_hardcoded_lines": 84,
+  "status": "PARTIAL_FORMAL_UI_SNAPSHOT: remaining source files required",
+  "entries": [
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "body",
+      "base": 14
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "caption",
+      "base": 12
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "sectionTitle",
+      "base": 18
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPlannerSummaryValue",
+      "base": 54
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPlannerStatLabel",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPlannerAttrLabel",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPlannerAttrValue",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPlannerCardTitle",
+      "base": 54
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPlannerCoord",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionRailLabel",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPlannerItemTitle",
+      "base": 48
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPlannerItemMeta",
+      "base": 40
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionSaveAsTitle",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPanelTitle",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPanelBody",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPanelLabel",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionPanelUnit",
+      "base": 20
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "deviceHealthMetric",
+      "base": 28
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "deviceHealthDetail",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "deviceHealthStatus",
+      "base": 11
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "deviceHealthSummaryMeta",
+      "base": 13
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "deviceFirmwareLog",
+      "base": 21
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryMetricValue",
+      "base": 66
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetrySubNav",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryChipTitle",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryChipMeta",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryChipRight",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryMetricLabel",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryMetricUnit",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryPanelTitle",
+      "base": 54
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryPanelBody",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryPanelCaption",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "telemetryConsoleMono",
+      "base": 45
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherCardTitle",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherLabel",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherValue",
+      "base": 54
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherUnit",
+      "base": 54
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherNote",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherNoteLarge",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherSummaryLine",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherCompassValue",
+      "base": 94
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherTileTime",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherTileWind",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherBanner",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherSubtitle",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "weatherCompassLabel",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "fingerprintHeading",
+      "base": 90
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "fingerprintHint",
+      "base": 60
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "fingerprintSkip",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "pageTitle",
+      "base": 66
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "pageSubtitle",
+      "base": 40
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "subNavItem",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertTitle",
+      "base": 60
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userPageTitle",
+      "base": 44
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertSubtitle",
+      "base": 40
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertFilter",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertDetailTitle",
+      "base": 40
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertDetailLabel",
+      "base": 22
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertDetailValue",
+      "base": 28
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertAction",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertFilterLabel",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertTab",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertRowTitle",
+      "base": 45
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertRowMeta",
+      "base": 35
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "alertBadge",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "settingRowTitle",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "settingRowDescription",
+      "base": 18
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "safetyCategoryTitle",
+      "base": 46
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "safetyCategorySummary",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "safetyCategoryLabel",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "safetyHeaderStatus",
+      "base": 45
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "safetyRowTitle",
+      "base": 45
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "safetyRowDescription",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "safetyFieldValue",
+      "base": 54
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "safetyFieldUnit",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "safetyCardTitle",
+      "base": 59
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "titlePage",
+      "base": 38
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "titleSection",
+      "base": 28
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cameraCardTitle",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cameraBody",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cameraDesc",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cameraRowTitle",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cameraSection",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cameraChip",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cameraSmall",
+      "base": 21
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cameraTab",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "contentPrimary",
+      "base": 22
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "contentSecondary",
+      "base": 22
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "buttonStandard",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "buttonLarge",
+      "base": 32
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "buttonCompact",
+      "base": 20
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dialogButton",
+      "base": 22
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "buttonNavigation",
+      "base": 22
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "buttonNavigationSecondary",
+      "base": 20
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "inputStandard",
+      "base": 18
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dialogTitle",
+      "base": 38
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dialogBody",
+      "base": 28
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "toastTitle",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionToastTitle",
+      "base": 34
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionToastMessage",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionRallyTitle",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionRallyFieldLabel",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionRallyFieldValue",
+      "base": 34
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionRallyHelper",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionLayerMenuLabel",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "missionLayerMenuItem",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "toastSub",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "unsavedRowTitle",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "unsavedRowDetail",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "authBrandTitle",
+      "base": 60
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "authHeading",
+      "base": 48
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "authSubheading",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "authFieldLabel",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "authFieldValue",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "authButton",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "authLink",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "firstRunEyebrow",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "firstRunTitle",
+      "base": 66
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "firstRunSection",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "firstRunTile",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "firstRunTileSub",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "firstRunUnitLabel",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "authError",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "rowTitle",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "rowMeta",
+      "base": 20
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "tableHeader",
+      "base": 20
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "chipLabel",
+      "base": 20
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "formLabel",
+      "base": 18
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cardTitle",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "cardMeta",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "lineHeightCompact",
+      "base": 1.2
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeBrandTitle",
+      "base": 48
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeBrandSubtitle",
+      "base": 40
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeReady",
+      "base": 52
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeStatusLabel",
+      "base": 32
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeStatusValue",
+      "base": 44
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeWeatherLabel",
+      "base": 32
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeWeatherValue",
+      "base": 40
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeWeatherUnit",
+      "base": 28
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeDetails",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeTime",
+      "base": 48
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeDate",
+      "base": 28
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeUserName",
+      "base": 34
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeUserRole",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeAvatar",
+      "base": 32
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeAlertMain",
+      "base": 38
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeAlertSub",
+      "base": 34
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeTileEyebrow",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeTileArrow",
+      "base": 64
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeTileTitle",
+      "base": 72
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeTileSub",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeTileSecondaryEyebrow",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeTileSecondaryTitle",
+      "base": 56
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "homeTileLetterSpacing",
+      "base": 1.2
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "flightActionLabel",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "flightTopBarMetric",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userTitle",
+      "base": 66
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userSubtitle",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userField",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userTableHeader",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userRowName",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userRowMeta",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userRowDate",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userChip",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userPanelTitle",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userPanelSubtitle",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userMatrixChip",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "userMatrixLabel",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libTitle",
+      "base": 66
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libCardTitle",
+      "base": 51
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libCardMeta",
+      "base": 40
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libTag",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libDetailTitle",
+      "base": 58
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libDetailMeta",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libStatValue",
+      "base": 54
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libSection",
+      "base": 50
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libRowTitle",
+      "base": 44
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libRowMeta",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libMarker",
+      "base": 18
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libField",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "libFilter",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "noticeTitle",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "noticeMessage",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "deviceCardTitle",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "deviceBody",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "deviceRowTitle",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "flightProTapeLabel",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "flightProTapeValue",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "flightReadoutValue",
+      "base": 90
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "flightReadoutValueCompact",
+      "base": 56
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "flightReadoutLabel",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "flightReadoutUnit",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale08",
+      "base": 18
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale13",
+      "base": 18
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale14",
+      "base": 20
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale15",
+      "base": 22
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale16",
+      "base": 22
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale17",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale18",
+      "base": 26
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale20",
+      "base": 28
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale22",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale24",
+      "base": 32
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale28",
+      "base": 38
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale30",
+      "base": 40
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale32",
+      "base": 44
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "scale36",
+      "base": 48
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "optionMenuItem",
+      "base": 20
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "optionMenuTitle",
+      "base": 16
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "mediaSideTitle",
+      "base": 66
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "mediaCategory",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "mediaSubtitle",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "mediaFileName",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "mediaMeta",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "mediaBadge",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "devicesNavItem",
+      "base": 43
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "devicesNavGroup",
+      "base": 35
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "devicesHeaderTitle",
+      "base": 66
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "devicesHeaderSubtitle",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemNavTitle",
+      "base": 54
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemHeaderSubtitle",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemCardTitle",
+      "base": 42
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemRowTitle",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemRowDescription",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemChip",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemChangeText",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemChipUnit",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemLinkDialogTitle",
+      "base": 48
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemLinkDialogSubtitle",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemLinkLabel",
+      "base": 24
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemLinkField",
+      "base": 27
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "systemLinkSection",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhSummaryLabel",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhSummaryBig",
+      "base": 105
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhSummaryUnit",
+      "base": 45
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhSummaryMeta",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhAlertTitle",
+      "base": 45
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhAlertDetail",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhGroupTitle",
+      "base": 45
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhGroupCount",
+      "base": 36
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhRowTitle",
+      "base": 45
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhRowDetail",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhRowValue",
+      "base": 54
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "dhRowUnit",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "offlineMapName",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "offlineMapMeta",
+      "base": 33
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "regionTitle",
+      "base": 39
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "regionSubtitle",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "regionLabel",
+      "base": 20
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "regionField",
+      "base": 21
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "regionStat",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeFont.qml",
+      "property": "regionBadge",
+      "base": 30
+    },
+    {
+      "file": "GCP/GcpThemeSwatches.qml",
+      "line": 70,
+      "base": 12
+    }
+  ]
+}

@@ -223,12 +223,52 @@ function parameterNavigation(intent, ctx) {
 // Each clause is analyzed against the predicted location after the previous selection.
 function afterCandidate(ctx, c) {
     var next = Object.assign({}, ctx)
+    if (c && c.kind === "text_scale") next.textScale = c.value
     if (c && c.kind === "nav") { next.page = c.page; next.section = c.section }
     if (c && c.kind === "layout") {
         var m = moduleById(c.module)
         if (m && next.page !== m.page) { next.page = m.page; next.section = -1 }
     }
     return next
+}
+
+function hasLayoutAction(text) {
+    return /放大|縮小|變大|變小|加大|大一點|小一點|大一些|小一些|最大|最小|兩倍|一半|移|搬|放到|放在|隱藏|顯示|恢復|還原/.test(norm(text))
+}
+function namedModuleTarget(text) {
+    var raw = norm(text)
+    return MODULES.some(function(m) { return [m.name].concat(m.aliases).some(function(n) { return raw.indexOf(norm(n)) >= 0 }) })
+}
+function completeRequest(text) {
+    var raw = norm(text)
+    if (/^(復原|還原|重做|取消復原|全部復原|全部還原|切回預設版面|把現在的版面存成|把目前的版面存成|將目前版面儲存為)/.test(raw)) return true
+    if (hasLayoutAction(raw) && (namedModuleTarget(raw) || globalTextTarget(raw))) return true
+    if (/切到|切換到|打開|前往|帶我去|進入|查看/.test(raw)) return true
+    return PAGES.some(function(p) { return [p.name].concat(p.aliases).some(function(n) { return norm(n) === raw }) })
+}
+function analyzeTurn(input, ctx, pending) {
+    var raw = String(input || "").trim(), prior = String(pending || "")
+    if (/^(取消|算了|cancel)[。！!]?$/i.test(raw)) return { intent: raw, candidates: [], evidence: [], cancelled: true,
+        pending_text: "", rule: { decision: "HOLD", final: true, choice_id: "", reason_zh: "已取消待補需求" } }
+    // Only a target/position fragment can continue. A fresh command never inherits stale intent.
+    var fragment = !hasLayoutAction(raw) && (namedModuleTarget(raw) || globalTextTarget(raw) ||
+        REGIONS.some(function(r) { return hasAny(raw, r.words) }))
+    var merged = prior && fragment && !completeRequest(raw) ? prior + " " + raw : raw
+    var result = analyze(merged, ctx)
+    if (hasLayoutAction(merged) && !namedModuleTarget(merged) && !globalTextTarget(merged) &&
+        !textScaleAction(merged) && !completeRequest(merged) && !/這個|那個|這塊|那塊/.test(merged)) {
+        result.candidates = result.candidates.filter(function(c) {
+            var m = c.kind === "layout" ? moduleById(c.module) : null
+            var v = m && (ctx.modules || {})[m.id]
+            return m && m.page === ctx.page && v && v.registered && v.visible
+        })
+        result.rule = { decision: "CLARIFY", final: true, choice_id: "", reason_zh: "請補充要調整的模組或文字範圍" }
+    }
+    result.input_intent = raw
+    result.pending_intent = merged !== raw ? prior : ""
+    result.pending_text = result.rule.decision === "CLARIFY" ||
+        (result.rule.decision === "HOLD" && !result.rule.final && hasLayoutAction(merged)) ? merged : ""
+    return result
 }
 
 function analyze(intent, ctx) {
@@ -248,7 +288,7 @@ function analyze(intent, ctx) {
         for (var j = 0; j < r.candidates.length; ++j) {
             var c = r.candidates[j]
             // History commands cannot participate in a transaction containing new changes.
-            if (c.kind !== "nav" && c.kind !== "layout") return hold("復原或儲存等動作請單獨提出")
+            if (c.kind !== "nav" && c.kind !== "layout" && c.kind !== "text_scale") return hold("復原或儲存等動作請單獨提出")
             if (!seen[c.id]) { seen[c.id] = true; candidates.push(c) }
         }
         for (j = 0; j < r.evidence.length; ++j)
@@ -263,8 +303,36 @@ function analyze(intent, ctx) {
                   : { decision: "CLARIFY", choice_id: "", reason_zh: "有子句不明確，請分開或補充說明；尚未套用任何一步" } }
 }
 
+var TEXT_SCALES = [0.85, 1.0, 1.15, 1.3]
+function textScaleAction(text) {
+    var raw = norm(text)
+    if (!/[字文]|font|text/.test(raw)) return null
+    if (/0[.]85|85%|百分之八十五/.test(raw)) return { value: 0.85 }
+    if (/1[.]15|115%|百分之一百一十五/.test(raw)) return { value: 1.15 }
+    if (/1[.]3(?:0)?|130%|百分之一百三十/.test(raw)) return { value: 1.3 }
+    if (/1[.]0|100%|恢復|還原|預設|原本|原來/.test(raw)) return { value: 1.0 }
+    if (/放大|變大|加大|大一點|大一些|大點/.test(raw)) return { direction: 1 }
+    if (/縮小|變小|小一點|小一些|小點/.test(raw)) return { direction: -1 }
+    return null
+}
+function globalTextTarget(text) {
+    return /全系統|整個系統|整個介面|全介面|全部.{0,4}[字文]|global|system/.test(norm(text))
+}
+function textScaleCandidate(action, ctx, score) {
+    var index = TEXT_SCALES.indexOf(ctx.textScale === undefined ? 1 : ctx.textScale)
+    if (index < 0) index = 1
+    var value = action.value === undefined ? TEXT_SCALES[Math.max(0, Math.min(3, index + action.direction))] : action.value
+    return { id: "SYS_TEXT_SCALE_" + Math.round(value * 100), kind: "text_scale", value: value,
+        label_zh: "全系統文字比例 " + value, score: score }
+}
+
 function namedLayoutIntent(intent, ctx) {
     var text = String(intent || "").trim().replace(/[。！!]+$/, "")
+    if (/^(儲存|存起來|儲存版面|保存版面|save)$/i.test(text)) {
+        var current = { id: "LAYOUT_SAVE_CURRENT", kind: "layout_save_current", label_zh: "儲存版面", score: 1.2 }
+        return { intent: String(intent), candidates: [current], evidence: [],
+            rule: { decision: "SELECT", choice_id: current.id, final: true, reason_zh: "儲存目前版面" } }
+    }
     var save = /^(?:把現在的版面存成|把目前的版面存成|將目前版面儲存為)\s*[「"]?(.+?)[」"]?$/.exec(text)
     var load = /^(?:切到|切換到)\s*[「"]?(.+?)[」"]?$/.exec(text)
     var c = null, name = save ? save[1].trim() : load ? load[1].trim() : ""
@@ -319,6 +387,13 @@ function analyzeSingle(intent, ctx) {
         evidence.push({ id: "E2", text: "意圖像是飛行或相機指令；介面助理只換頁與調整版面，不送指令" })
         return { intent: String(intent || ""), candidates: [], evidence: evidence,
                  rule: { decision: "HOLD", choice_id: "", final: true, reason_zh: "我不會送飛行或相機指令，請用畫面上的指令區（需滑動確認）" } }
+    }
+
+    var textAction = textScaleAction(raw)
+    if (textAction && globalTextTarget(raw)) {
+        var tc = textScaleCandidate(textAction, ctx, 1.2)
+        return { intent: String(intent), candidates: [tc], evidence: evidence,
+            rule: { decision: "SELECT", choice_id: tc.id, final: true, reason_zh: tc.label_zh } }
     }
 
     var wantRedo = hasAny(raw, ["重做", "redo", "取消復原", "取消還原"])
@@ -378,8 +453,8 @@ function analyzeSingle(intent, ctx) {
     var nudge = null
     for (i = 0; i < NUDGES.length && !nudge; ++i) if (hasAny(opText, NUDGES[i].words)) nudge = NUDGES[i]
     var scale = 0
-    if (hasAny(opText, ["兩倍", "2倍", "二倍"])) scale = 2.0
-    else if (hasAny(opText, ["一半", "減半"])) scale = 0.5
+    if (hasAny(opText, ["最大", "最大化", "最大尺寸", "兩倍", "2倍", "二倍"])) scale = 2.0
+    else if (hasAny(opText, ["最小", "最小化", "一半", "減半"])) scale = 0.5
     else if (hasAny(opText, ["放大", "變大", "大一點", "大一些", "加大", "大點"])) scale = 1.25
     else if (hasAny(opText, ["縮小", "變小", "小一點", "小一些", "小點"])) scale = 0.8
     var wantHide = hasAny(opText, ["隱藏", "關掉", "藏起來", "不要顯示", "拿掉", "先收起", "收起來", "關閉"])
@@ -390,7 +465,7 @@ function analyzeSingle(intent, ctx) {
     }
     var wantShow = !wantHide && hasAny(opText, ["顯示", "叫出", "打開", "恢復顯示", "放回來"])
     var wantModuleReset = hasAny(opText, ["原本大小", "原來大小", "原位", "原本位置", "原來的位置", "預設位置", "恢復原樣", "還原大小", "還原位置"])
-    var moveVerb = hasAny(opText, ["移", "搬", "放到", "放在", "挪", "擺到", "擺在", "拉到"])
+    var moveVerb = hasAny(opText, ["移", "搬", "挪", "擺到", "擺在", "拉到"]) || (!scale && hasAny(opText, ["放到", "放在"]))
     var layoutIntent = region || nudge || scale || wantHide || wantModuleReset || (moveVerb && mods.length)
 
     // 1) 復原／重做／全部復原（單純復原意圖，不是針對某模組的「還原大小」）
@@ -405,6 +480,20 @@ function analyzeSingle(intent, ctx) {
         add({ id: n > 1 ? "UNDO_" + n : "UNDO", kind: "undo", steps: n,
               label_zh: n > 1 ? "復原前 " + n + " 步變更" : "復原上一步變更", score: ctx.canUndo ? 1.2 : 0.2 })
         if (!ctx.canUndo) evidence.push({ id: "E" + (evidence.length + 1), text: "目前沒有可復原的變更" })
+    }
+
+    // Text without an explicit scope: offer global text plus visible current-page modules.
+    if (textAction && !mods.length) {
+        var options = [textScaleCandidate(textAction, ctx, 0.6)]
+        var factor = textAction.direction === -1 ? 0.8 : 1.25
+        for (i = 0; i < MODULES.length; ++i) {
+            var visible = (ctx.modules || {})[MODULES[i].id]
+            if (MODULES[i].page === ctx.page && visible && visible.registered && visible.visible)
+                options.push({ id: "LAY_" + MODULES[i].id + "_SCALE_" + Math.round(factor * 100), kind: "layout",
+                    module: MODULES[i].id, op: "scale", factor: factor, label_zh: (factor < 1 ? "縮小" : "放大") + MODULES[i].name, score: 0.6 })
+        }
+        return { intent: String(intent), candidates: options.slice(0,6), evidence: evidence,
+            rule: { decision: "CLARIFY", final: true, choice_id: "", reason_zh: "請選全系統文字或目前可見模組" } }
     }
 
     // 2) 版面調整
@@ -442,30 +531,33 @@ function analyzeSingle(intent, ctx) {
     }
 
     // 3) 換頁（沒有版面或復原意圖時才主導；有的話仍放低分候選，交給使用者／模型判斷）
+    var navRaw = mods.length ? opText : raw
+    var navText = stripFiller(navRaw)
+    function navScore(entry) { return Math.max(bestScore(navText, entry), bestScore(navRaw, entry)) }
     var navWeight = (layoutIntent || undoWord || wantRedo || wantResetAll) ? 0.5 : 1.0
     var pageScores = {}
-    for (i = 0; i < PAGES.length; ++i) pageScores[PAGES[i].page] = score(PAGES[i])
+    for (i = 0; i < PAGES.length; ++i) pageScores[PAGES[i].page] = navScore(PAGES[i])
     // 使用者完整說出的畫面名稱（3 字以上），長的先拿掉
     var pageNameSpans = []
     for (i = 0; i < PAGES.length; ++i) {
         var pnames = [PAGES[i].name].concat(PAGES[i].aliases)
         for (var pj = 0; pj < pnames.length; ++pj) {
             var pnn = norm(pnames[pj]).replace(/\s+/g, "")
-            if (pnn.length >= 3 && raw.replace(/\s+/g, "").indexOf(pnn) >= 0 && raw.indexOf(pnn) >= 0) pageNameSpans.push(pnn)
+            if (pnn.length >= 3 && navRaw.replace(/\s+/g, "").indexOf(pnn) >= 0 && navRaw.indexOf(pnn) >= 0) pageNameSpans.push(pnn)
         }
     }
     pageNameSpans.sort(function (a, b) { return b.length - a.length })
     var nav = []
     for (i = 0; i < SECTIONS.length; ++i) {
         var sec = SECTIONS[i]
-        var ss = score(sec)
+        var ss = navScore(sec)
         // 子頁名稱只出現在使用者說出的「畫面全名」裡（「影像設置」裡的「影像」），不算點名子頁
         var secHits = [sec.name].concat(sec.aliases).map(function (n) { return norm(n).replace(/\s+/g, "") })
-            .filter(function (n) { return n.length && raw.replace(/\s+/g, "").indexOf(n) >= 0 })
+            .filter(function (n) { return n.length && navRaw.replace(/\s+/g, "").indexOf(n) >= 0 })
         var covered = secHits.length > 0 && secHits.every(function (n) {
             return pageNameSpans.some(function (sp) { return sp.length > n.length && sp.indexOf(n) >= 0 }) })
         if (ss >= 1 && covered) {
-            var rest = raw
+            var rest = navRaw
             for (var pn = 0; pn < pageNameSpans.length; ++pn) rest = rest.split(pageNameSpans[pn]).join(" ")
             ss = Math.min(ss, bestScore(rest, sec))
         }
@@ -473,7 +565,7 @@ function analyzeSingle(intent, ctx) {
         // 子頁本身只部分對到時，所屬畫面的加分減半，避免「切到安全設定」被子頁搶走
         var sc = ss + (ss >= 1 ? 0.3 : 0.15) * Math.min(pageScores[sec.page], 1)
         // 使用者已完整說出畫面名稱（如「安全設定」）時，不再替它的子頁加「設定」分數
-        if (ss < 1 && pageScores[sec.page] < 1 && hasAny(raw, ["設定", "設置"]) && [3, 5, 7, 8].indexOf(sec.page) >= 0) sc += 0.1
+        if (ss < 1 && pageScores[sec.page] < 1 && hasAny(navRaw, ["設定", "設置"]) && [3, 5, 7, 8].indexOf(sec.page) >= 0) sc += 0.1
         nav.push({ id: "NAV_" + sec.page + "_" + sec.section, kind: "nav", page: sec.page, section: sec.section,
                    label_zh: "切到「" + pageName(sec.page) + " › " + sec.name + "」", score: sc * navWeight })
     }
@@ -578,6 +670,8 @@ function decisionSchema(result) {
 function buildUserMessage(result, ctx) {
     return JSON.stringify({
         intent: result.intent,
+        pending_intent: result.pending_intent || "",
+        input_intent: result.input_intent || result.intent,
         current_page: pageName(ctx.page),
         clauses: result.clauses || [],
         candidates: result.candidates.map(function (c) { return { id: c.id, label: c.label_zh } }),
@@ -610,7 +704,7 @@ function validateModelDecision(obj, result) {
                 if (!s || typeof s.choice_id !== "string" || ids.indexOf(s.choice_id) < 0)
                     return { ok: false, error: "步驟 ID 不在候選內" }
                 var action = candidateById(result, s.choice_id)
-                if (obj.steps.length > 1 && action.kind !== "nav" && action.kind !== "layout")
+                if (obj.steps.length > 1 && action.kind !== "nav" && action.kind !== "layout" && action.kind !== "text_scale")
                     return { ok: false, error: "復原等控制動作不可與其他步驟組合" }
                 steps.push({ choice_id: s.choice_id })
             }

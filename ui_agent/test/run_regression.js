@@ -28,21 +28,41 @@ function simulate(cs,ctx) {
     }
     return {...loc,applied};
 }
+function evaluateTurns(r) {
+    if (!r.turns) return { result:C.analyze(r.intent,r.ctx), ctx:r.ctx, ok:true, failures:[] };
+    let pending='', ctx={...r.ctx}, result, ok=true; const failures=[];
+    for(const [index,turn] of r.turns.entries()) {
+        // delay_ms is metadata: no timer is used to expire pending requirements.
+        result=C.analyzeTurn(turn.intent,ctx,pending);
+        const d=result.rule, ids=d.decision==='SELECT'?(d.steps?d.steps.map(s=>s.choice_id):[d.choice_id]):[];
+        const ex=turn.expect;
+        const nextPending=d.decision==='SELECT'?'':result.pending_text||'';
+        const valid=d.decision===ex.decision&&JSON.stringify(ids)===JSON.stringify(ex.ids)&&
+            (ex.pending===undefined||nextPending===ex.pending)&&
+            (ex.pending_original===undefined||(result.pending_intent||'')===ex.pending_original)&&
+            (!ex.contains||ex.contains.every(id=>result.candidates.some(c=>c.id===id)));
+        if(!valid){ok=false;failures.push({turn:index+1,intent:turn.intent,expected:ex,actual:{decision:d.decision,ids,pending:nextPending,pending_original:result.pending_intent||''}})}
+        // Simulate successful completion for selected actions only (no Qt acceptance claim).
+        for(const id of ids)ctx=C.afterCandidate(ctx,C.candidateById(result,id));
+        pending=nextPending;
+    }
+    return {result,ctx,ok,failures};
+}
 let actions=0,locations=0,passed=0;const failures=[],by_category={};
 for(const r of rows) {
-    if(!r.id||seen.has(r.id)||typeof r.intent!=='string'||!r.ctx||!r.expect||!Array.isArray(r.expect.ids))throw Error('Invalid fixture '+r.id);
+    if(!r.id||seen.has(r.id)||(typeof r.intent!=='string'&&!Array.isArray(r.turns))||!r.ctx||!r.expect||!Array.isArray(r.expect.ids))throw Error('Invalid fixture '+r.id);
     seen.add(r.id);
-    const result=C.analyze(r.intent,r.ctx), decision=result.rule;
+    const turns=evaluateTurns(r), result=turns.result, decision=result.rule;
     const ids=decision.decision==='SELECT'?(decision.steps?decision.steps.map(s=>s.choice_id):[decision.choice_id]):[];
     const candidates=ids.map(id=>C.candidateById(result,id));
-    const actionOK=decision.decision===r.expect.decision&&JSON.stringify(ids)===JSON.stringify(r.expect.ids)&&candidates.every(Boolean);
-    const final=candidates.every(Boolean)?simulate(candidates,r.ctx):{page:r.ctx.page,section:r.ctx.section,applied:false};
+    const actionOK=turns.ok&&decision.decision===r.expect.decision&&JSON.stringify(ids)===JSON.stringify(r.expect.ids)&&candidates.every(Boolean);
+    const final=candidates.every(Boolean)?simulate(candidates,r.turns?turns.ctx:r.ctx):{page:r.ctx.page,section:r.ctx.section,applied:false};
     const locationOK=final.page===r.expect.final_page&&final.section===r.expect.final_section&&
         (r.expect.applied===undefined||final.applied===r.expect.applied);
     if(actionOK)actions++;if(locationOK)locations++;if(actionOK&&locationOK)passed++;
     const bucket=by_category[r.category]||(by_category[r.category]={total:0,passed:0});bucket.total++;if(actionOK&&locationOK)bucket.passed++;
     if(!actionOK||!locationOK)failures.push({id:r.id,intent:r.intent,expect:r.expect,
-        actual:{decision:decision.decision,ids,final_page:final.page,final_section:final.section,applied:final.applied}});
+        turn_failures:turns.failures, actual:{decision:decision.decision,ids,final_page:final.page,final_section:final.section,applied:final.applied}});
 }
 console.log(JSON.stringify({verification_scope:'rules + simulated shell only; no Qt/HTTP/Settings/device',total:rows.length,passed,
     action_accuracy:actions/rows.length,final_page_accuracy:locations/rows.length,by_category,failures},null,2));

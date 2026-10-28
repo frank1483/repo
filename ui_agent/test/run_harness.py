@@ -69,7 +69,9 @@ with open(os.path.join(mod_dir, "qmldir"), "w") as fh:
     fh.write("module QGroundControl.GCP\n"
              "singleton GcpAgentState 1.0 Agent/GcpAgentState.qml\n"
              "GcpAgentModule 1.0 Agent/GcpAgentModule.qml\n"
-             "GcpAgentOverlay 1.0 Agent/GcpAgentOverlay.qml\n")
+             "GcpAgentOverlay 1.0 Agent/GcpAgentOverlay.qml\n"
+             "singleton GcpTheme 1.0 GcpTheme.qml\n")
+shutil.copy(os.path.join(HERE, "harness", "GcpTheme.qml"), mod_dir)
 shutil.copy(os.path.join(HERE, "harness", "Main.qml"), work)
 
 app = QGuiApplication(sys.argv)
@@ -186,10 +188,15 @@ shot("03_layout_changed")
 say("復原", 700)
 check("復原一步：遙測列回來", mod("telemetryBar")["opacity"] == 1)
 say("復原兩步", 900)
-check("再復原兩步：小地圖原尺寸、回到系統設定 Fly View", page() == 8 and section(8) == 11, (page(), section(8)))
+# v4：換頁另算一步，復原兩步只退版面（小地圖、風速計），仍留在即時飛行
+m = mod("miniView"); w = mod("windGauge")
+check("再復原兩步：小地圖原尺寸、風速計回原位、仍在即時飛行", page() == 1 and m and m["w"] == 360 and w and w["x"] != 24, (page(), m, w))
+say("復原", 900)
+check("再復原一步：回到系統設定 Fly View", page() == 8 and section(8) == 11, (page(), section(8)))
+say("重做", 900)
 say("重做", 900)
 w = mod("windGauge")
-check("重做：回到即時飛行且風速計在左上", page() == 1 and w and w["x"] == 24 and w["y"] >= 150, w)
+check("重做兩次：回到即時飛行且風速計在左上", page() == 1 and w and w["x"] == 24 and w["y"] >= 150, w)
 say("全部復原", 900)
 check("全部復原：回首頁", page() == 0, page())
 shot("04_reset_all_home")

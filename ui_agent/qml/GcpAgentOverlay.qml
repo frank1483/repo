@@ -41,6 +41,7 @@ Item {
     property string statusText: ""
     property string messageText: ""
     property var choices: []           // CLARIFY 時讓使用者點選的候選
+    property string pendingText: "" // No timer: retained until completion/cancel/save/close.
     property var _pending: null        // 目前的分析結果
     property real _t0: 0
     property var _cancelModel: null
@@ -57,11 +58,21 @@ Item {
 
     signal decisionLogged(var entry)   // 給測試與記錄用
 
+    onOpenChanged: {
+        if (!open) {
+            pendingText = ""
+            choices = []
+            _pending = null
+            _choiceGuard = null
+            if (_cancelModel) cancelWaiting()
+        }
+    }
+
     // ------------------------------------------------------------ 流程
     function context() {
         const loc = shell && shell.agentLocation ? shell.agentLocation() : { page: 0, section: -1 }
         return { page: loc.page, section: loc.section, modules: GcpAgentState.moduleInfo(),
-                 canUndo: GcpAgentState.canUndo, canRedo: GcpAgentState.canRedo, layoutNames: GcpAgentState.layoutNames() }
+                 textScale: GcpAgentState.textScale, canUndo: GcpAgentState.canUndo, canRedo: GcpAgentState.canRedo, layoutNames: GcpAgentState.layoutNames() }
     }
 
     function sameContext(guard) {
@@ -70,9 +81,10 @@ Item {
     }
 
     function cancelWaiting() {
-        if (!_cancelModel) return
+        pendingText = ""
         _modelGeneration++
-        _cancelModel()
+        if (_transaction) failSteps(qsTr("已取消，已還原整組"))
+        if (_cancelModel) _cancelModel()
         busy = false
         statusText = ""
         choices = []
@@ -83,11 +95,13 @@ Item {
 
     function submit(text) {
         text = String(text || "").trim()
+        if (/^(取消|算了|cancel)[。！!]?$/i.test(text)) { cancelWaiting(); return }
         if (!text || busy) return
         choices = []
         messageText = ""
         const ctx = context()
-        let result = Core.analyze(text, ctx)
+        let result = Core.analyzeTurn(text, ctx, pendingText)
+        if (!result.pending_intent) pendingText = ""
         _pending = result
         _t0 = Date.now()
         const ask = modelEnabled && !result.rule.final && (Core.needsModel(result, modelAlways) || result.candidates.length === 0)
@@ -141,11 +155,13 @@ Item {
         if (decision.decision === "SELECT") {
             executeSteps(selectedIds.map(id => Core.candidateById(result, id)), source)
         } else if (decision.decision === "CLARIFY") {
+            pendingText = result.intent
             const loc = context()
             _choiceGuard = { revision: GcpAgentState.revision, page: loc.page, section: loc.section }
             choices = result.compound ? [] : result.candidates.filter(c => c.score > 0 || source !== qsTr("規則")).slice(0, 6)
             messageText = result.compound ? decision.reason_zh : (decision.reason_zh || qsTr("有多個可能")).replace(/[，。,]?\s*請選一個[：:]?$/, "") + qsTr("，請選一個：")
         } else {
+            pendingText = result.pending_text || ""
             messageText = decision.reason_zh || qsTr("我沒辦法處理這個要求。可以試試「切到告警中心」或「把風速計移到左上角」。")
         }
     }
@@ -243,24 +259,40 @@ Item {
         if (busy || _transaction) return
         choices = []
         if (!c) return
+        if (c.kind === "layout_save_current") {
+            pendingText = ""
+            try {
+                GcpAgentState.saveCurrentLayout()
+                messageText = qsTr("已儲存版面，重開後會套回這一版")
+                showToast(messageText, false)
+            } catch (e) {
+                console.warn("[GcpAgent] Explicit save failed; prior Settings retained: " + e)
+                messageText = qsTr("無法儲存版面，原設定保留，請查看紀錄")
+            }
+            return
+        }
         if (c.kind === "layout_save") {
+            pendingText = ""
             try { GcpAgentState.saveLayout(c.name); messageText = qsTr("已儲存：%1").arg(c.name) }
             catch (e) { messageText = qsTr("無法儲存版面，未變更設定") }
             return
         }
         if (c.kind === "undo") {
             const labels = GcpAgentState.undo(c.steps || 1)
-            messageText = labels.length ? qsTr("已復原：%1").arg(labels.join("、")) : qsTr("目前沒有可復原的變更")
-            showToast(messageText, false)
+            messageText = labels.length ? qsTr("已復原：%1").arg(labels.join("、")) + GcpAgentState.undoHint() : qsTr("目前沒有可復原的變更")
+            pendingText = ""
+            showToast(messageText, labels.length ? "redo" : "")
             return
         }
         if (c.kind === "redo") {
             const label = GcpAgentState.redo()
             messageText = label ? qsTr("已重做：%1").arg(label) : qsTr("沒有可重做的變更")
-            showToast(messageText, false)
+            pendingText = ""
+            showToast(messageText, label ? "undo" : "")
             return
         }
         if (c.kind === "reset_all") {
+            pendingText = ""
             const ok = GcpAgentState.resetAll()
             messageText = ok ? qsTr("已全部復原到 agent 介入前（可再按復原取消）") : qsTr("目前沒有任何變更")
             showToast(messageText, ok)
@@ -273,18 +305,20 @@ Item {
     property var _layoutJob: null
     function executeSteps(steps, source) {
         if (busy || _transaction || !steps.length || steps.length > 3 || steps.some(c => !c)) return
-        if (steps.length === 1 && ["nav", "layout", "layout_load", "layout_default"].indexOf(steps[0].kind) < 0) {
+        if (steps.length === 1 && ["nav", "layout", "text_scale", "layout_load", "layout_default"].indexOf(steps[0].kind) < 0) {
             execute(steps[0], source)
             return
         }
-        if (steps.some(c => ["nav", "layout", "layout_load", "layout_default"].indexOf(c.kind) < 0)) {
+        if (steps.some(c => ["nav", "layout", "text_scale", "layout_load", "layout_default"].indexOf(c.kind) < 0)) {
             messageText = qsTr("這些動作必須分開操作")
             return
         }
         choices = []
         const label = steps.map(c => c.label_zh).join("、")
-        GcpAgentState.beginChange(label)
-        _transaction = { steps: steps, index: 0, source: source, label: label }
+        const checkpoint = GcpAgentState.beginGroup()
+        _transaction = { steps: steps, index: 0, source: source, label: label,
+                         checkpoint: checkpoint, layoutGroup: false }
+        _transaction.layoutLabel = steps.filter(c => c.kind !== "nav").map(c => c.label_zh).join("、")
         busy = true
         advanceSteps()
     }
@@ -292,17 +326,32 @@ Item {
     function failSteps(reason) {
         layoutRetry.stop()
         _layoutJob = null
-        if (_transaction) GcpAgentState.cancelChange()
+        if (_transaction) GcpAgentState.rollbackGroup(_transaction.checkpoint)
         _transaction = null
         busy = false
         statusText = ""
         messageText = reason
     }
 
+    function navigateStep(page, section) {
+        const loc = context()
+        if (loc.page === page && (section < 0 || loc.section === section)) return true
+        GcpAgentState.beginChange(qsTr("換頁：%1 → %2").arg(Core.pageName(loc.page)).arg(Core.pageName(page)), "navigation")
+        if (!shell || !shell.agentGoTo(page, section)) return false
+        _transaction.layoutGroup = false
+        return true
+    }
+    function beginLayoutStep() {
+        if (_transaction.layoutGroup) return
+        GcpAgentState.beginChange(_transaction.layoutLabel, "layout")
+        _transaction.layoutGroup = true
+    }
+
     function advanceSteps() {
         const tx = _transaction
         if (!tx) return
         if (tx.index >= tx.steps.length) {
+            GcpAgentState.commitGroup()
             _transaction = null
             busy = false
             statusText = ""
@@ -311,13 +360,22 @@ Item {
         }
         const c = tx.steps[tx.index]
         try {
-            if (c.kind === "layout_load" || c.kind === "layout_default") {
-                if (c.kind === "layout_load") GcpAgentState.applyLayout(c.name)
-                else GcpAgentState.defaultLayout()
+            if (c.kind === "text_scale") {
+                beginLayoutStep()
+                GcpAgentState.setTextScale(c.value)
+                tx.index++
+                Qt.callLater(advanceSteps)
+            } else if (c.kind === "layout_load" || c.kind === "layout_default") {
+                if (c.kind === "layout_load") {
+                    const saved = GcpAgentState.namedLayout(c.name)
+                    if (!navigateStep(saved.page, saved.section)) throw new Error("layout page denied")
+                    beginLayoutStep()
+                    GcpAgentState.applyLayout(c.name)
+                } else { beginLayoutStep(); GcpAgentState.defaultLayout() }
                 tx.index++
                 Qt.callLater(advanceSteps)
             } else if (c.kind === "nav") {
-                if (!shell || !shell.agentGoTo(c.page, c.section)) {
+                if (!navigateStep(c.page, c.section)) {
                     failSteps(qsTr("無法切換畫面（權限不足或畫面不存在），已還原整組"))
                     return
                 }
@@ -325,10 +383,11 @@ Item {
                 Qt.callLater(advanceSteps)
             } else {
                 const mod = Core.MODULES.filter(m => m.id === c.module)[0]
-                if (!mod || (context().page !== mod.page && (!shell || !shell.agentGoTo(mod.page, -1)))) {
+                if (!mod || !navigateStep(mod.page, -1)) {
                     failSteps(qsTr("無法開啟模組畫面，已還原整組"))
                     return
                 }
+                beginLayoutStep()
                 _layoutJob = { c: c, tries: 0, page: mod.page }
                 statusText = qsTr("等待版面模組…")
                 layoutRetry.restart()
@@ -367,6 +426,7 @@ Item {
     }
 
     function done(c, source) {
+        pendingText = ""
         messageText = qsTr("已套用：%1（%2）").arg(c.label_zh).arg(source)
         open = false
         showToast(c.label_zh, true)
@@ -374,13 +434,13 @@ Item {
 
     Component.onDestruction: {
         if (_cancelModel) _cancelModel()
-        if (_transaction) { layoutRetry.stop(); GcpAgentState.cancelChange() }
+        if (_transaction) { layoutRetry.stop(); GcpAgentState.rollbackGroup(_transaction.checkpoint) }
     }
 
     // ------------------------------------------------------------ 提示列（面板關閉時也能一鍵復原）
     function showToast(text, withUndo) {
         toast.text = text
-        toast.withUndo = withUndo && GcpAgentState.canUndo
+        toast.action = withUndo === true ? "undo" : typeof withUndo === "string" ? withUndo : ""
         toast.opacity = 1
         toastTimer.restart()
     }
@@ -389,7 +449,7 @@ Item {
     Rectangle {
         id: toast
         property string text: ""
-        property bool withUndo: false
+        property string action: ""
         z: 3
         opacity: 0
         visible: opacity > 0
@@ -397,27 +457,38 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 120
-        width: toastRow.implicitWidth + 40
+        width: Math.min(Math.max(0, root.width - 40), toastRow.implicitWidth + 40)
         height: 64
         radius: 32
         color: root.cBg
         border.color: root.cLine
         RowLayout {
             id: toastRow
-            anchors.centerIn: parent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: 20
+            anchors.rightMargin: 20
             spacing: 20
-            Text { text: "✦ " + toast.text; color: root.cText; font.pixelSize: 22 }
+            Text { Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight; text: "✦ " + toast.text; color: root.cText; font.pixelSize: (22 * GcpTheme.font.textScale) }
+            Button {
+                objectName: "agentToastSaveLayout"
+                text: qsTr("儲存版面")
+                enabled: !root.busy
+                font.pixelSize: (20 * GcpTheme.font.textScale)
+                onClicked: root.execute({ kind: "layout_save_current" }, qsTr("使用者儲存"))
+            }
             Rectangle {
-                visible: toast.withUndo
+                visible: toast.action === "undo" ? GcpAgentState.canUndo : toast.action === "redo" && GcpAgentState.canRedo
                 Layout.preferredWidth: undoText.implicitWidth + 32
                 Layout.preferredHeight: 44
                 radius: 22
                 color: "transparent"
                 border.color: root.cAccent
-                Text { id: undoText; anchors.centerIn: parent; text: qsTr("復原"); color: root.cAccent; font.pixelSize: 22; font.bold: true }
+                Text { id: undoText; anchors.centerIn: parent; text: toast.action === "redo" ? qsTr("重做") : qsTr("復原"); color: root.cAccent; font.pixelSize: (22 * GcpTheme.font.textScale); font.bold: true }
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: { root.execute({ kind: "undo", steps: 1 }, ""); toast.opacity = 0 }
+                    onClicked: root.execute({ kind: toast.action, steps: 1 }, "")
                 }
             }
         }
@@ -440,7 +511,7 @@ Item {
             anchors.centerIn: parent
             text: root.busy ? "…" : "AI"
             color: root.open ? "#0B1220" : root.cAccent
-            font.pixelSize: 26; font.bold: true
+            font.pixelSize: (26 * GcpTheme.font.textScale); font.bold: true
         }
         MouseArea {
             anchors.fill: parent
@@ -472,15 +543,15 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: qsTr("介面助理"); color: root.cText; font.pixelSize: 28; font.bold: true }
+                Text { text: qsTr("介面助理"); color: root.cText; font.pixelSize: (28 * GcpTheme.font.textScale); font.bold: true }
                 Item { Layout.fillWidth: true }
                 Text {
-                    text: "⚙"; color: settingsForm.visible ? root.cAccent : root.cSub; font.pixelSize: 26
+                    text: "⚙"; color: settingsForm.visible ? root.cAccent : root.cSub; font.pixelSize: (26 * GcpTheme.font.textScale)
                     MouseArea { anchors.fill: parent; anchors.margins: -12; onClicked: settingsForm.visible = !settingsForm.visible }
                 }
                 Item { Layout.preferredWidth: 18 }
                 Text {
-                    text: "✕"; color: root.cSub; font.pixelSize: 26
+                    text: "✕"; color: root.cSub; font.pixelSize: (26 * GcpTheme.font.textScale)
                     MouseArea { anchors.fill: parent; anchors.margins: -12; onClicked: root.open = false }
                 }
             }
@@ -490,7 +561,7 @@ Item {
                     const page = root.shell ? root.shell.currentPage : -1
                     return qsTr("目前畫面：%1").arg(Core.PAGES.filter(p => p.page === page).map(p => p.name)[0] || "-")
                 }
-                color: root.cSub; font.pixelSize: 18
+                color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale)
             }
 
             // 模型設定（存在本機，重開 App 仍保留）
@@ -509,7 +580,7 @@ Item {
                         required property var modelData
                         Layout.fillWidth: true
                         Layout.preferredHeight: 48
-                        font.pixelSize: 18
+                        font.pixelSize: (18 * GcpTheme.font.textScale)
                         color: root.cText
                         text: modelData.value
                         placeholderText: modelData.label
@@ -528,7 +599,7 @@ Item {
                     objectName: "agentInput"
                     Layout.fillWidth: true
                     Layout.preferredHeight: 56
-                    font.pixelSize: 22
+                    font.pixelSize: (22 * GcpTheme.font.textScale)
                     color: root.cText
                     placeholderText: qsTr("想做什麼？例如：查看飛行設定")
                     placeholderTextColor: root.cSub
@@ -539,7 +610,7 @@ Item {
                 Rectangle {
                     Layout.preferredWidth: 88; Layout.preferredHeight: 56; radius: 10
                     color: root.busy ? root.cLine : root.cAccent
-                    Text { anchors.centerIn: parent; text: qsTr("送出"); color: "#0B1220"; font.pixelSize: 22; font.bold: true }
+                    Text { anchors.centerIn: parent; text: qsTr("送出"); color: "#0B1220"; font.pixelSize: (22 * GcpTheme.font.textScale); font.bold: true }
                     MouseArea { anchors.fill: parent; onClicked: { root.submit(input.text); input.text = "" } }
                 }
             }
@@ -554,7 +625,7 @@ Item {
                         required property string modelData
                         width: chipText.implicitWidth + 24; height: 40; radius: 20
                         color: "transparent"; border.color: root.cLine
-                        Text { id: chipText; anchors.centerIn: parent; text: parent.modelData; color: root.cSub; font.pixelSize: 17 }
+                        Text { id: chipText; anchors.centerIn: parent; text: parent.modelData; color: root.cSub; font.pixelSize: (17 * GcpTheme.font.textScale) }
                         MouseArea { anchors.fill: parent; onClicked: root.submit(parent.modelData) }
                     }
                 }
@@ -564,13 +635,21 @@ Item {
                 Layout.fillWidth: true
                 visible: text !== ""
                 text: root.statusText
-                color: root.cWarn; font.pixelSize: 20
+                color: root.cWarn; font.pixelSize: (20 * GcpTheme.font.textScale)
             }
             Button {
                 objectName: "agentCancelModel"
-                visible: root._cancelModel !== null
+                visible: root._cancelModel !== null || root.pendingText !== ""
                 text: qsTr("取消")
                 onClicked: root.cancelWaiting()
+            }
+            Text {
+                objectName: "agentPendingRequest"
+                Layout.fillWidth: true
+                visible: root.pendingText !== ""
+                text: qsTr("接續中：%1").arg(root.pendingText)
+                wrapMode: Text.Wrap
+                color: root.cWarn; font.pixelSize: (20 * GcpTheme.font.textScale)
             }
             Text {
                 objectName: "agentMessage"
@@ -578,7 +657,7 @@ Item {
                 visible: text !== ""
                 text: root.messageText
                 wrapMode: Text.Wrap
-                color: root.cText; font.pixelSize: 21
+                color: root.cText; font.pixelSize: (21 * GcpTheme.font.textScale)
             }
             Repeater {
                 model: root.choices
@@ -593,7 +672,7 @@ Item {
                         anchors.left: parent.left; anchors.leftMargin: 16
                         anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - 32; elide: Text.ElideRight
-                        text: parent.modelData.label_zh; color: root.cText; font.pixelSize: 20
+                        text: parent.modelData.label_zh; color: root.cText; font.pixelSize: (20 * GcpTheme.font.textScale)
                     }
                     MouseArea { anchors.fill: parent; onClicked: root.choose(parent.modelData) }
                 }
@@ -601,8 +680,22 @@ Item {
 
             Item { Layout.fillHeight: true }
 
+            Text {
+                objectName: "agentUnsavedLayout"
+                Layout.fillWidth: true
+                visible: GcpAgentState.hasUnsavedChanges
+                text: qsTr("未儲存")
+                color: root.cWarn; font.pixelSize: (20 * GcpTheme.font.textScale)
+            }
+            Button {
+                objectName: "agentSaveLayout"
+                text: qsTr("儲存版面")
+                font.pixelSize: (20 * GcpTheme.font.textScale)
+                enabled: !root.busy
+                onClicked: root.execute({ kind: "layout_save_current" }, qsTr("使用者儲存"))
+            }
             // 變更紀錄與復原
-            Text { text: qsTr("變更紀錄"); color: root.cSub; font.pixelSize: 18 }
+            Text { text: qsTr("變更紀錄"); color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale) }
             ListView {
                 id: historyList
                 Layout.fillWidth: true
@@ -615,13 +708,13 @@ Item {
                     width: historyList.width
                     text: (index === 0 ? "● " : "○ ") + modelData.label
                     color: index === 0 ? root.cText : root.cSub
-                    font.pixelSize: 18; elide: Text.ElideRight
+                    font.pixelSize: (18 * GcpTheme.font.textScale); elide: Text.ElideRight
                     height: 32
                 }
                 Text {
                     anchors.centerIn: parent
                     visible: historyList.count === 0
-                    text: qsTr("尚無變更"); color: root.cSub; font.pixelSize: 18
+                    text: qsTr("尚無變更"); color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale)
                 }
             }
             RowLayout {
@@ -631,7 +724,7 @@ Item {
                     model: [
                         { label: qsTr("復原"), kind: "undo", en: GcpAgentState.canUndo },
                         { label: qsTr("重做"), kind: "redo", en: GcpAgentState.canRedo },
-                        { label: qsTr("全部復原"), kind: "reset_all", en: GcpAgentState.canUndo }
+                        { label: qsTr("全部復原"), kind: "reset_all", en: GcpAgentState.canUndo || GcpAgentState.textScale !== 1 || Object.keys(GcpAgentState._overrides).length > 0 }
                     ]
                     delegate: Rectangle {
                         required property var modelData
@@ -642,7 +735,7 @@ Item {
                         opacity: modelData.en ? 1 : 0.4
                         color: "transparent"
                         border.color: root.cAccent
-                        Text { anchors.centerIn: parent; text: parent.modelData.label; color: root.cAccent; font.pixelSize: 20 }
+                        Text { anchors.centerIn: parent; text: parent.modelData.label; color: root.cAccent; font.pixelSize: (20 * GcpTheme.font.textScale) }
                         MouseArea {
                             anchors.fill: parent
                             enabled: parent.modelData.en
@@ -655,7 +748,7 @@ Item {
                 Layout.fillWidth: true
                 text: root.modelEnabled ? qsTr("模型：%1（%2）；規則不確定時才詢問").arg(root.modelName || "-").arg(root.backend)
                                         : qsTr("規則模式（未設定 GCS_LLM_URL）")
-                color: root.cSub; font.pixelSize: 15; elide: Text.ElideRight
+                color: root.cSub; font.pixelSize: (15 * GcpTheme.font.textScale); elide: Text.ElideRight
             }
         }
     }

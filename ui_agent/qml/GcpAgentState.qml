@@ -3,6 +3,7 @@ import QtQuick
 import QtQml
 import QtCore
 import "GcpAgentCore.js" as Core
+import QGroundControl.GCP
 
 // UI agent 的共用狀態：可調整模組的登記、版面覆寫值、復原／重做堆疊。
 // 每次 agent 套用變更前先存一份快照（目前畫面＋子頁＋全部版面覆寫），復原就是把快照放回去。
@@ -11,9 +12,60 @@ QtObject {
 
     // 由 GcpMainShell 提供：agentLocation() → {page, section}；agentGoTo(page, section) → bool
     property var shell: null
+    readonly property real textScale: GcpTheme.font.textScale
+    function setTextScale(value) {
+        if (Core.TEXT_SCALES.indexOf(value) < 0) throw new Error("invalid text scale")
+        GcpTheme.font.textScale = value
+        revision++
+    }
     property QtObject _layoutSettings: Settings {
         category: "GCP/AgentLayouts"
         property string layoutsJson: "{}"
+        property string savedLayoutJson: ""
+    }
+
+    property bool _savedLoaded: false
+    property bool _savedCorrupt: false
+    property string _savedFingerprint: '{"overrides":{},"textScale":1}'
+    readonly property bool hasUnsavedChanges: revision >= 0 && layoutFingerprint() !== _savedFingerprint
+    function layoutFingerprint() {
+        const ordered = {}
+        for (const id of Object.keys(_overrides).sort()) {
+            const o = _overrides[id]
+            ordered[id] = { rx: o.rx, ry: o.ry, scale: o.scale, hidden: o.hidden }
+        }
+        return JSON.stringify({ overrides: ordered, textScale: textScale })
+    }
+    Component.onCompleted: loadSavedLayout()
+    function loadSavedLayout() {
+        if (_savedLoaded) return
+        _savedLoaded = true
+        if (!_layoutSettings.savedLayoutJson) { _savedFingerprint = layoutFingerprint(); return }
+        try {
+            const saved = checkedLayout(JSON.parse(_layoutSettings.savedLayoutJson))
+            // Restore layout only; opening a saved flight screen is not a startup side effect.
+            _overrides = saved.overrides
+            GcpTheme.font.textScale = saved.textScale
+            for (const id in _modules) _apply(id)
+            revision++
+        } catch (e) {
+            _savedCorrupt = true
+            _overrides = {}
+            GcpTheme.font.textScale = 1
+            console.warn("[GcpAgent] Invalid GCP/AgentLayouts/savedLayoutJson; using defaults; original retained; save blocked pending recovery: " + e)
+        }
+        _savedFingerprint = layoutFingerprint()
+    }
+    function saveCurrentLayout() {
+        loadSavedLayout()
+        if (_groupActive) throw new Error("change group still active")
+        if (_savedCorrupt) throw new Error("saved layout is corrupt; original retained; recovery required")
+        const snap = snapshot()
+        if (snap.page < 0) { snap.page = 0; snap.section = -1 }
+        _layoutSettings.savedLayoutJson = JSON.stringify(checkedLayout(snap))
+        _layoutSettings.sync()
+        _savedFingerprint = layoutFingerprint()
+        revision++
     }
 
     function _layoutStore() {
@@ -39,20 +91,27 @@ QtObject {
                 p.scales.indexOf(o.scale) < 0 || typeof o.hidden !== "boolean" || (p.locked && o.hidden)) throw new Error("invalid module override")
             clean[id] = { rx: o.rx, ry: o.ry, scale: o.scale, hidden: o.hidden }
         }
-        return { layoutVersion: 2, page: snap.page, section: snap.section, overrides: clean }
+        const scale = snap.textScale === undefined ? 1 : snap.textScale
+        if (Core.TEXT_SCALES.indexOf(scale) < 0) throw new Error("invalid text scale")
+        return { layoutVersion: 2, page: snap.page, section: snap.section, overrides: clean, textScale: scale }
     }
 
     function saveLayout(name) {
         if (!Core.validLayoutName(name)) throw new Error("invalid name")
         const store = _layoutStore()
         store[name] = checkedLayout(snapshot())
+        saveCurrentLayout()
         _layoutSettings.layoutsJson = JSON.stringify(store)
+        _layoutSettings.sync()
     }
 
-    function applyLayout(name) {
+    function namedLayout(name) {
         const store = _layoutStore()
         if (!Object.prototype.hasOwnProperty.call(store, name)) throw new Error("unknown layout")
-        const snap = checkedLayout(store[name])
+        return checkedLayout(store[name])
+    }
+    function applyLayout(name) {
+        const snap = namedLayout(name)
         if (!shell || !shell.agentGoTo(snap.page, snap.section)) throw new Error("layout page denied")
         _restore(snap, true)
     }
@@ -60,6 +119,7 @@ QtObject {
     function defaultLayout() {
         const snap = snapshot()
         snap.overrides = {}
+        snap.textScale = 1
         _restore(snap)
     }
 
@@ -81,6 +141,7 @@ QtObject {
     // ------------------------------------------------------------ 模組登記
     function register(id, item, container) {
         if (!id || !item) return
+        loadSavedLayout()
         if (_modules[id]) unregister(id, _modules[id].item)
         _modules[id] = { item: item, container: container || item.parent,
                          scale: null, translate: null, opacityBinding: null, enabledBinding: null }
@@ -204,7 +265,7 @@ QtObject {
     // ------------------------------------------------------------ 快照與復原
     function snapshot() {
         const loc = shell && shell.agentLocation ? shell.agentLocation() : { page: -1, section: -1 }
-        return { layoutVersion: 2, page: loc.page, section: loc.section, overrides: JSON.parse(JSON.stringify(_overrides)) }
+        return { layoutVersion: 2, page: loc.page, section: loc.section, overrides: JSON.parse(JSON.stringify(_overrides)), textScale: textScale }
     }
 
     function _restore(snap, skipNavigation) {
@@ -212,17 +273,37 @@ QtObject {
         for (const id in _overrides) ids[id] = true
         for (const id in snap.overrides) ids[id] = true
         _overrides = JSON.parse(JSON.stringify(snap.overrides))
+        GcpTheme.font.textScale = snap.textScale === undefined ? 1 : snap.textScale
         for (const id in ids) _apply(id)
         if (!skipNavigation && shell && shell.agentGoTo && snap.page >= 0) shell.agentGoTo(snap.page, snap.section)
         revision++
     }
 
     // 套用一個變更前呼叫：記下目前狀態，並清掉重做堆疊
-    function beginChange(label) {
+    function beginChange(label, kind) {
         _cancelRedo = redoStack.slice()
-        undoStack = undoStack.concat([{ label: label, snap: snapshot() }])
+        undoStack = undoStack.concat([{ label: label, kind: kind || "layout", snap: snapshot() }])
         redoStack = []
         revision++
+    }
+
+    property bool _groupActive: false
+    function beginGroup() {
+        if (_groupActive) throw new Error("nested change group")
+        _groupActive = true
+        return { snap: snapshot(), undo: undoStack.slice(), redo: redoStack.slice() }
+    }
+    function commitGroup() { _groupActive = false }
+    function rollbackGroup(checkpoint) {
+        _restore(checkpoint.snap)
+        undoStack = checkpoint.undo.slice()
+        redoStack = checkpoint.redo.slice()
+        _groupActive = false
+        revision++
+    }
+    function undoHint() {
+        const next = undoStack.length ? undoStack[undoStack.length - 1] : null
+        return next && next.kind === "navigation" ? qsTr("（再按一次復原回%1）").arg(Core.pageName(next.snap.page)) : ""
     }
 
     // 套用失敗時撤回剛剛的 beginChange（狀態沒有變，不留下空的復原步驟）
@@ -241,7 +322,7 @@ QtObject {
         while (n-- > 0 && undoStack.length) {
             const entry = undoStack[undoStack.length - 1]
             undoStack = undoStack.slice(0, -1)
-            redoStack = redoStack.concat([{ label: entry.label, snap: snapshot() }])
+            redoStack = redoStack.concat([{ label: entry.label, kind: entry.kind, snap: snapshot() }])
             _restore(entry.snap)
             labels.push(entry.label)
         }
@@ -253,7 +334,7 @@ QtObject {
         if (!redoStack.length) return ""
         const entry = redoStack[redoStack.length - 1]
         redoStack = redoStack.slice(0, -1)
-        undoStack = undoStack.concat([{ label: entry.label, snap: snapshot() }])
+        undoStack = undoStack.concat([{ label: entry.label, kind: entry.kind, snap: snapshot() }])
         _restore(entry.snap)
         revision++
         return entry.label
@@ -261,8 +342,8 @@ QtObject {
 
     // 回到 agent 第一次介入前；這個動作本身也能再復原
     function resetAll() {
-        if (!undoStack.length && Object.keys(_overrides).length === 0) return false
-        const first = undoStack.length ? undoStack[0].snap : { page: -1, section: -1, overrides: {} }
+        if (!undoStack.length && Object.keys(_overrides).length === 0 && textScale === 1) return false
+        const first = undoStack.length ? undoStack[0].snap : { page: -1, section: -1, overrides: {}, textScale: 1 }
         beginChange(qsTr("全部復原"))
         _restore(first)
         return true

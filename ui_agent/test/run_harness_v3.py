@@ -1,4 +1,4 @@
-"""v3 驗收：在 Qt 6.8.3（PySide6）離屏執行模擬殼層，跑一連串意圖並檢查換頁、版面與復原結果，順便存截圖。
+"""v3 驗收（v4 起換頁另算一步復原）：在 Qt 6.8.3（PySide6）離屏執行模擬殼層，跑一連串意圖並檢查換頁、版面與復原結果，順便存截圖。
 
 用法：python -I run_harness.py <輸出資料夾>
 模型路徑用本機假模型伺服器（固定規則回覆）測流程，不代表真實模型表現。
@@ -89,7 +89,9 @@ with open(os.path.join(mod_dir, "qmldir"), "w") as fh:
     fh.write("module QGroundControl.GCP\n"
              "singleton GcpAgentState 1.0 Agent/GcpAgentState.qml\n"
              "GcpAgentModule 1.0 Agent/GcpAgentModule.qml\n"
-             "GcpAgentOverlay 1.0 Agent/GcpAgentOverlay.qml\n")
+             "GcpAgentOverlay 1.0 Agent/GcpAgentOverlay.qml\n"
+             "singleton GcpTheme 1.0 GcpTheme.qml\n")
+shutil.copy(os.path.join(HERE, "harness", "GcpTheme.qml"), mod_dir)
 shutil.copy(os.path.join(HERE, "harness", "Main.qml"), work)
 
 app = QGuiApplication(sys.argv)
@@ -184,7 +186,10 @@ say("切到即時飛行然後把風速計移到左上角", 1500)
 w = mod("windGauge")
 check("兩步：切到即時飛行且風速計在左上", page() == 1 and w and w["x"] == 24, (page(), w, msg()))
 say("復原", 900)
-check("一次復原退整組：回首頁", page() == 0, (page(), msg()))
+check("v4：第一次復原留在即時飛行、風速計回原位", page() == 1 and mod("windGauge")["x"] != 24, (page(), msg()))
+say("復原", 900)
+check("v4：第二次復原回首頁", page() == 0, (page(), msg()))
+say("重做", 900)
 say("重做", 1500)
 w = mod("windGauge")
 check("重做整組：回到即時飛行且風速計在左上", page() == 1 and w and w["x"] == 24, (page(), w))
@@ -249,7 +254,8 @@ say("我想查看飛行設定", 1500)
 p_after = (page(), section(page()))
 check("模型回兩步 → 兩步都執行", p_after[0] in (5, 8, 3) and page() != 0, (p_after, msg()))
 say("復原", 1200)
-check("兩步一次復原 → 回首頁", page() == 0, (page(), msg()))
+say("復原", 1200)
+check("兩個換頁各算一步，復原兩次 → 回首頁", page() == 0, (page(), msg()))
 
 FakeModel.mode = "steps4"
 say("我想查看飛行設定", 1500)
