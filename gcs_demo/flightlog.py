@@ -1,4 +1,4 @@
-"""Strict, offline CSV adapter. Real QGC export dialect remains unverified.
+"""Strict offline CSV adapter with QGC Timestamp/field/missing-value support.
 
 load_csv accepts a planner envelope (vehicle/candidates/pick), or a selected
 candidate carrying vehicle. Configure aliases/units in mission['flightlog'].
@@ -11,18 +11,19 @@ import math
 from dataclasses import dataclass, field, replace
 
 from .energy import Vehicle, Wind, G, bearing_rad, haversine_m, power_w
+from .flightlog_t3 import load_plan, read_samples
 
 
 COLUMNS = {
-    't_s': ('t_s', 'time_s', 'timestamp_s'),
-    'lat': ('lat', 'latitude', 'latitude_deg'),
-    'lon': ('lon', 'longitude', 'longitude_deg'),
-    'alt': ('alt', 'altitude_m', 'alt_m'),
-    'battery_pct': ('battery_pct', 'soc_pct', 'battery_percent'),
-    'voltage': ('voltage', 'voltage_v', 'battery_voltage'),
-    'current_a': ('current_a', 'current', 'battery_current'),
-    'wind_mps': ('wind_mps', 'wind_speed_mps'),
-    'wind_from': ('wind_from', 'wind_from_deg', 'wind_direction_deg'),
+    't_s': ('t_s', 'time_s', 'timestamp_s', 'Timestamp'),
+    'lat': ('lat', 'latitude', 'latitude_deg', 'gps.lat'),
+    'lon': ('lon', 'longitude', 'longitude_deg', 'gps.lon'),
+    'alt': ('alt', 'altitude_m', 'alt_m', 'altitudeRelative'),
+    'battery_pct': ('battery_pct', 'soc_pct', 'battery_percent', 'battery0.percentRemaining'),
+    'voltage': ('voltage', 'voltage_v', 'battery_voltage', 'battery0.voltage'),
+    'current_a': ('current_a', 'current', 'battery_current', 'battery0.current'),
+    'wind_mps': ('wind_mps', 'wind_speed_mps', 'wind.speed'),
+    'wind_from': ('wind_from', 'wind_from_deg', 'wind_direction_deg', 'wind.direction'),
 }
 
 
@@ -38,6 +39,7 @@ class RunLike:
     energy_source: str = 'voltage_current_trapezoid'
     energy_estimated: bool = False
     provenance: dict = field(default_factory=dict)
+    data_quality: dict = field(default_factory=dict)
 
 
 def _number(value, label, lo=None, hi=None):
@@ -103,7 +105,8 @@ def load_csv(path, mission, plan) -> RunLike:
     same datum as plan.path, 10 m 3D arrival radius, max 30 s sample gap.
     mission['flightlog'] can set columns, time_scale, arrival_radius_m,
     max_gap_s, and soc_capacity_basis ('usable' default, or 'nominal').
-    Missing current *column* selects SOC fallback; blank current cells fail.
+    Missing current column or QGC unknown sentinel selects SOC fallback.
+    Legacy canonical blank/negative current remains invalid; wind may be unknown.
     """
     v, selected, targets = _inputs(mission, plan)
     cfg = mission.get('flightlog', {})
@@ -122,52 +125,14 @@ def load_csv(path, mission, plan) -> RunLike:
         raise ValueError('soc_capacity_basis must be nominal or usable')
     cap = v.battery_wh * (v.usable_frac if basis == 'usable' else 1)
     run = RunLike(v=v, plan=selected)
-    rows = []
-    with open(path, encoding='utf-8-sig', newline='') as stream:
-        reader = csv.DictReader(stream)
-        headers = reader.fieldnames or []
-        if len(headers) != len(set(headers)):
-            raise ValueError('duplicate CSV headers')
-        mapping = {}
-        for name, choices in aliases.items():
-            choices = [choices] if isinstance(choices, str) else choices
-            if not isinstance(choices, (tuple, list)) or not all(isinstance(c, str) for c in choices):
-                raise ValueError(f'{name}: column aliases must be strings')
-            found = [h for h in headers if h in choices]
-            if len(found) > 1:
-                raise ValueError(f'{name}: ambiguous CSV columns {found}')
-            if not found and name != 'current_a':
-                raise ValueError(f'{name}: required column missing (aliases {choices})')
-            if found:
-                mapping[name] = found[0]
-        if len(set(mapping.values())) != len(mapping):
-            raise ValueError('one CSV column cannot supply multiple canonical fields')
-        run.energy_estimated = 'current_a' not in mapping
-        if run.energy_estimated:
-            run.energy_source = 'soc_delta_' + basis + '_wh_estimate'
-        for line, raw in enumerate(reader, 2):
-            if None in raw:
-                raise ValueError(f'row {line}: extra CSV fields')
-            rec = {k: _number(raw.get(h), f'row {line}.{k}') for k, h in mapping.items()}
-            rec['t_s'] = _number(rec['t_s'] * scale, f'row {line}.scaled_time')
-            for k, lo, hi in [('lat', -90, 90), ('lon', -180, 180),
-                              ('battery_pct', 0, 100), ('wind_mps', 0, None),
-                              ('wind_from', 0, 360), ('voltage', 0.000001, None)]:
-                _number(rec[k], f'row {line}.{k}', lo, hi)
-            if not run.energy_estimated:
-                _number(rec['current_a'], f'row {line}.current_a', 0)
-                rec['power_w'] = rec['voltage'] * rec['current_a']
-                if not math.isfinite(rec['power_w']):
-                    raise ValueError(f'row {line}: nonfinite power')
-            if rows:
-                dt = rec['t_s'] - rows[-1]['t_s']
-                if dt <= 0 or dt > max_gap:
-                    raise ValueError(f'row {line}: timestamps must increase; gap <= {max_gap} s')
-                if run.energy_estimated and rec['battery_pct'] > rows[-1]['battery_pct']:
-                    raise ValueError(f'row {line}: SOC increase invalidates fallback integration')
-            rows.append(rec)
-    if len(rows) < 2:
-        raise ValueError('at least two telemetry rows required')
+    rows, mapping, quality = read_samples(path, aliases, scale, max_gap, _number)
+    run.data_quality = quality
+    run.energy_estimated = quality['soc_estimated']
+    if run.energy_estimated:
+        run.energy_source = 'soc_delta_' + basis + '_wh_estimate'
+    else:
+        for rec in rows:
+            rec['power_w'] = _number(rec['voltage'] * rec['current_a'], 'interval power', 0)
     origin = rows[0]['t_s']
     for rec in rows:
         rec['t_s'] -= origin
@@ -184,7 +149,8 @@ def load_csv(path, mission, plan) -> RunLike:
 
     def finish(leg, partial):
         seconds = leg.pop('_dt')
-        leg['headwind_mps'] = leg['headwind_mps'] / seconds if seconds else 0.0
+        leg['headwind_mps'] = (None if quality['missing_wind'] else
+                               (leg['headwind_mps'] / seconds if seconds else 0.0))
         leg['partial'] = partial
         run.legs.append(leg)
 
@@ -198,8 +164,10 @@ def load_csv(path, mission, plan) -> RunLike:
             heading = bearing_rad((prev['lat'], prev['lon']), (rec['lat'], rec['lon']))
             ground = dist / dt
             ve, vn = ground * math.sin(heading), ground * math.cos(heading)
-            w0 = Wind(prev['wind_mps'], prev['wind_from']).vector()
-            w1 = Wind(rec['wind_mps'], rec['wind_from']).vector()
+            w0 = (Wind(prev['wind_mps'], prev['wind_from']).vector()
+                  if prev['wind_mps'] is not None and prev['wind_from'] is not None else (0.0, 0.0))
+            w1 = (Wind(rec['wind_mps'], rec['wind_from']).vector()
+                  if rec['wind_mps'] is not None and rec['wind_from'] is not None else (0.0, 0.0))
             we, wn = (w0[0]+w1[0])/2, (w0[1]+w1[1])/2
             pred = power_w(physical, math.hypot(ve-we, vn-wn)) * dt / 3600
             pred += physical.mass_kg * G * max(0, rec['alt']-prev['alt']) / physical.eta / 3600
@@ -242,12 +210,12 @@ def load_csv(path, mission, plan) -> RunLike:
     run.provenance = {
         'kind': 'csv_telemetry', 'real_qgc_format_verified': False,
         'energy_source': run.energy_source, 'energy_estimated': run.energy_estimated,
-        'calibration_eligible': not run.energy_estimated,
+        'calibration_eligible': quality['calibration_eligible'], 'data_quality': quality,
         'column_map': mapping, 'time_scale': scale, 'sample_count': len(rows),
         'observed_wh': used, 'arrival_radius_m_3d': radius,
         'route_completed': next_index == len(route),
         'prediction_basis': 'uncalibrated physical model of sampled flown trajectory; not original planned legs',
         'altitude_assumption': 'CSV metres share plan.path altitude datum; caller must verify',
-        'limits': 'No inferred takeoff/landing, waypoint dwell or action completion; GNSS sampling may miss arrivals.',
+        'limits': 'Takeoff/landing are sample-threshold inferences, not armed-state proof; no dwell/action completion; GNSS sampling may miss arrivals.',
     }
     return run

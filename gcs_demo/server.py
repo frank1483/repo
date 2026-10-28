@@ -93,7 +93,8 @@ def handle(path, body):
             s.alerts = [_alert_view(e, s.chosen) for e in feed.events if e["type"] != "resolve"]
             out = {"state": state, "telemetry": s.run.log, "alerts": s.alerts}
             if state["done"]:
-                out.update({"report": make_report(s.run, s.mission, s.chosen, [], s.alerts),
+                out.update({"report": make_report(s.run, s.mission, s.chosen, [], s.alerts,
+                                                  versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")}),
                             "planned_curve": _curve(s.chosen)})
                 return out
             trig = battery_raise(feed.events) or {}
@@ -110,7 +111,8 @@ def handle(path, body):
             r["final_choice"] = body["choice_id"]
             n0 = len(s.run.log)
             state = s.run.fly(cand)
-            rep = make_report(s.run, s.mission, s.chosen, s.replans, s.alerts)
+            rep = make_report(s.run, s.mission, s.chosen, s.replans, s.alerts,
+                              versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")})
             return {"state": state, "telemetry": s.run.log[n0:], "report": rep,
                     "planned_curve": _curve(s.chosen)}
         if path == "/api/apply_calib":

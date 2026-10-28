@@ -18,6 +18,7 @@ Item {
     property var map: null                    // GcpMissionMapCanvas.map（預覽線畫在這裡；null 時不畫）
     property var activeVehicle: null          // 有連線時讀飛控估測風
     property var envValue: function (name, fallback) { return fallback }
+    property string programGitShortHash: "" // supplied by the integrating build, never invented
 
     // 外觀（預設值取自 GcpThemeColor，獨立宣告方便在沒有 GCP 模組的測試架裡載入）
     property color cPrimary: "#00D3F2"
@@ -201,17 +202,26 @@ Item {
         finishReport([result])
     }
     function finishReport(replans) {
-        report = Core.makeReport(run, mission, flown, replans, alertInfo ? [alertInfo] : [])
+        report = Core.makeReport(run, mission, flown, replans, alertInfo ? [alertInfo] : [], {git_short_hash: programGitShortHash || null})
         stage = "report"
         if (!modelEnabled) return
         busy = true
         const pr = Core.reportPrompt(report)
+        const requestedReport = report
+        const requestedModel = modelName
+        report.versions.prompt_hash = pr.prompt_hash
+        report.versions.model = requestedModel
         callModel(pr.system, pr.user, function (r) {
             busy = false
-            if (r.ok) report = Core.applyReportLlm(report, r.content)
+            if (report !== requestedReport) return
+            if (r.ok) report = Core.applyReportLlm(report, r.content, {prompt_hash: pr.prompt_hash, model: requestedModel})
         })
     }
     function applyCalib() {
+        if (!report || (report.data_quality && !report.data_quality.calibration_eligible)) {
+            status = qsTr("資料不足以校正，請先補充有效電流與風況")
+            return
+        }
         missionSettings.calib = report.next_calib
         status = qsTr("耗電修正係數已更新為 %1，之後的規劃都會套用").arg(report.next_calib.toFixed(2))
         makePlanKeepStatus()

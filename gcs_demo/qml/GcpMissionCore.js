@@ -528,8 +528,122 @@ function predictiveAlert(v, state, rp) {
 
 // ---------------- 智慧任務報告 ----------------
 
+// T3 report helpers. CSV/Plan file I/O stays in the Python offline adapter;
+// a serialized RunLike (including data_quality) uses the same report gates here.
+function sha256Text(text) {
+    var encoded=encodeURIComponent(text),bytes=[],i,j
+    for(i=0;i<encoded.length;i++) {
+        if(encoded[i]==="%") {bytes.push(parseInt(encoded.slice(i+1,i+3),16));i+=2}
+        else bytes.push(encoded.charCodeAt(i))
+    }
+    var bits=bytes.length*8
+    bytes.push(128);while(bytes.length%64!==56)bytes.push(0)
+    for(i=7;i>=0;i--)bytes.push(Math.floor(bits/Math.pow(256,i))%256)
+    var h=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]
+    var k=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]
+    function rotr(x,n){return (x>>>n)|(x<<(32-n))}
+    for(i=0;i<bytes.length;i+=64) {
+        var w=[]
+        for(j=0;j<16;j++)w[j]=(bytes[i+4*j]<<24)|(bytes[i+4*j+1]<<16)|(bytes[i+4*j+2]<<8)|bytes[i+4*j+3]
+        for(j=16;j<64;j++) {
+            var x=w[j-15],y=w[j-2],s0=rotr(x,7)^rotr(x,18)^(x>>>3),s1=rotr(y,17)^rotr(y,19)^(y>>>10)
+            w[j]=(w[j-16]+s0+w[j-7]+s1)|0
+        }
+        var a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7]
+        for(j=0;j<64;j++) {
+            var t1=(hh+(rotr(e,6)^rotr(e,11)^rotr(e,25))+((e&f)^((~e)&g))+k[j]+w[j])|0
+            var t2=((rotr(a,2)^rotr(a,13)^rotr(a,22))+((a&b)^(a&c)^(b&c)))|0
+            hh=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0
+        }
+        var v=[a,b,c,d,e,f,g,hh];for(j=0;j<8;j++)h[j]=(h[j]+v[j])|0
+    }
+    return h.map(function(n){return ("00000000"+(n>>>0).toString(16)).slice(-8)}).join("")
+}
+
+function qualityFor(run) {
+    if (run.data_quality && Object.keys(run.data_quality).length) return clone(run.data_quality)
+    var gaps = [], log = run.log || []
+    for (var i = 1; i < log.length; i++) if (log[i].t_s > log[i-1].t_s) gaps.push(log[i].t_s-log[i-1].t_s)
+    gaps.sort(function (a,b) { return a-b })
+    var missing = !log.length || log.some(function (r) { return r.wind_mps == null || r.wind_from == null })
+    var estimated = !!run.energy_estimated, mid = Math.floor(gaps.length/2)
+    return { source: "simulation_or_supplied_run", missing_wind: missing, missing_current: estimated,
+        soc_estimated: estimated, calibration_eligible: !estimated && !missing, sample_count: log.length, trimmed_samples: 0,
+        sample_interval_s: gaps.length ? {min:gaps[0],median:gaps.length%2 ? gaps[mid] : (gaps[mid-1]+gaps[mid])/2,max:gaps[gaps.length-1]} : null }
+}
+
+function numberTokens(text) {
+    var s = String(text)
+    if (s.normalize) s = s.normalize("NFKC")
+    return s.match(/[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/g) || []
+}
+function unsupportedNumbers(texts, facts) {
+    var values = [], bad = []
+    function visit(x) {
+        if (typeof x === "number" && isFinite(x)) values.push(x)
+        else if (typeof x === "string") numberTokens(x).forEach(function (s) { if (isFinite(Number(s))) values.push(Number(s)) })
+        else if (Array.isArray(x)) x.forEach(visit)
+        else if (x && typeof x === "object") Object.keys(x).forEach(function (k) { visit(x[k]) })
+    }
+    facts.forEach(function (f) { visit(f.text); visit(f.value) })
+    texts.forEach(function (text) { numberTokens(text).forEach(function (token) {
+        var parts = token.toLowerCase().split("e"), decimals = parts[0].split(".")[1] || ""
+        var tolerance = 0.5 * Math.pow(10, Number(parts[1] || 0)-decimals.length), value = Number(token)
+        if (!isFinite(tolerance)) tolerance = 0
+        if ((!isFinite(value) || !values.some(function (n) { return Math.abs(n-value) <= tolerance+1e-10 })) && bad.indexOf(token)<0) bad.push(token)
+    }) })
+    return bad
+}
+
+function reportEvents(run, mission, replans, alerts) {
+    var events = [], airborne = false, seen = {}, ids = mission.targets.map(function (t) { return t.id })
+    run.log.forEach(function (r,i) {
+        if (r.alt == null) return
+        if (!airborne && r.alt>1) { events.push({kind:i===0 ? "start_in_air" : "takeoff",t_s:r.t_s,basis:"altitude_threshold_inference"}); airborne=true }
+        else if (airborne && Math.abs(r.alt)<=1) {
+            var speed = r.ground_speed_mps == null ? Math.hypot(r.vel_e || 0,r.vel_n || 0) : r.ground_speed_mps
+            if (speed<=0.5 && !r.armed) { events.push({kind:"landing",t_s:r.t_s,basis:"stationary_ground_inference"}); airborne=false }
+        }
+    })
+    run.legs.forEach(function (l) { if (!l.partial && ids.indexOf(l.to)>=0 && !seen[l.to] && l.end_t_s!=null) {
+        seen[l.to]=true; events.push({kind:"waypoint",target_id:l.to,t_s:l.end_t_s,basis:"sample_arrival_or_supplied_leg"})
+    } })
+    ;(replans || []).forEach(function (r) { if (r.state && r.state.t_s!=null) events.push({kind:"replan",t_s:r.state.t_s,choice_id:r.final_choice || r.pick.choice_id || ""}) })
+    ;(alerts || []).forEach(function (a) { if (a.t_s!=null) events.push({kind:"alert",t_s:a.t_s,text_zh:a.text_zh || ""}) })
+    return events.sort(function (a,b) { return a.t_s-b.t_s })
+}
+
+function reserveAlertLeads(run, alerts) {
+    var result=[]
+    ;(alerts || []).forEach(function (a,i) {
+        if (a.t_s==null) return
+        var breach=a.predicted_reserve_breach_t_s, basis="caller_reserve_prediction"
+        if (breach==null) {
+            var samples=run.log.filter(function (r) { return r.t_s<=a.t_s })
+            if (samples.length<2) return
+            var p=samples[samples.length-2],q=samples[samples.length-1],dt=q.t_s-p.t_s
+            if (dt<=0 || a.t_s-q.t_s>dt) return
+            var slope=(q.battery_pct-p.battery_pct)/dt
+            if (slope>=0) return
+            breach=q.t_s+(run.v.reserve_pct-q.battery_pct)/slope
+            basis="linear_soc_at_alert_not_future_observation"
+        }
+        if (typeof breach==="number" && isFinite(breach)) result.push({alert_index:i,alert_t_s:a.t_s,predicted_reserve_breach_t_s:breach,lead_s:Math.max(0,breach-a.t_s),basis:basis})
+    })
+    return result
+}
+
 function buildFacts(run, mission, plan, replans, alerts) {
     var v = run.v, facts = []
+    var quality = qualityFor(run), windKnown = !quality.missing_wind, eligible = quality.calibration_eligible
+    var estimated = !!run.energy_estimated
     function add(key, text, value) { facts.push({ id: "F" + (facts.length + 1), key: key, text: text, value: value }) }
     var legs = run.legs.filter(function (l) { return l.pred_wh })
     var act = legs.reduce(function (s, l) { return s + l.actual_wh }, 0), pred = legs.reduce(function (s, l) { return s + l.pred_wh }, 0)
@@ -540,21 +654,22 @@ function buildFacts(run, mission, plan, replans, alerts) {
     add("completion", "完成目標 " + done.length + "/" + all.length + "（必要目標 " + must.filter(function (m) { return done.indexOf(m) >= 0 }).length + "/" + must.length + "）：" + (done.join("、") || "無"),
         { done: done, all: all, must: must })
     add("duration", "飛行 " + (run.t / 60).toFixed(1) + " 分鐘、" + (dist / 1000).toFixed(2) + " 公里", { t_s: run.t, dist_m: dist })
-    add("energy_ratio", "實際耗電 " + act.toFixed(1) + " Wh，物理模型預估 " + pred.toFixed(1) + " Wh，實際是預估的 " + Math.round(ratio * 100) + "%",
-        { actual_wh: act, pred_wh: pred, ratio: ratio })
+    add("energy_ratio", (estimated ? "以電量差估算耗電 " : "實際耗電 ") + act.toFixed(1) + " Wh，物理模型預估 " + pred.toFixed(1) + " Wh，能耗是預估的 " + Math.round(ratio * 100) + "%",
+        { actual_wh: act, pred_wh: pred, ratio: ratio, calibration_eligible: eligible })
     add("end_battery", "落地電量 " + run.pct.toFixed(1) + "%（保留門檻 " + v.reserve_pct + "%，起飛前預估落地 " + plan.end_pct + "%）",
         { end_pct: run.pct, reserve: v.reserve_pct, planned_end: plan.end_pct })
     if (legs.length) {
         var worst = legs.reduce(function (a, l) { return l.actual_wh / Math.max(l.pred_wh, 1e-6) > a.actual_wh / Math.max(a.pred_wh, 1e-6) ? l : a })
-        add("worst_leg", "超耗最多的航段 " + worst.from + "→" + worst.to + "：實際 " + worst.actual_wh + " Wh／預估 " + worst.pred_wh + " Wh，平均逆風 " + worst.headwind_mps + " m/s", worst)
+        var worstValue=clone(worst); if (!windKnown) delete worstValue.headwind_mps
+        add("worst_leg", "超耗最多的航段 " + worst.from + "→" + worst.to + "：實際 " + worst.actual_wh + " Wh／預估 " + worst.pred_wh + " Wh" + (windKnown ? "，平均逆風 " + worst.headwind_mps + " m/s" : "；風況未知"), worstValue)
     }
-    var head = legs.filter(function (l) { return l.headwind_mps > 2 })
+    var head = legs.filter(function (l) { return windKnown && l.headwind_mps != null && l.headwind_mps > 2 })
     if (head.length) {
         var hr = head.reduce(function (s, l) { return s + l.actual_wh }, 0) / Math.max(head.reduce(function (s, l) { return s + l.pred_wh }, 0), 1e-6)
         add("headwind", "逆風超過 2 m/s 的航段共 " + head.length + " 段，耗電是預估的 " + Math.round(hr * 100) + "%", { n: head.length, ratio: hr })
     }
     var seen = {}, winds = []
-    run.log.forEach(function (r) { var k = r.wind_mps + "|" + r.wind_from; if (!seen[k]) { seen[k] = 1; winds.push([r.wind_mps, r.wind_from]) } })
+    if (windKnown) run.log.forEach(function (r) { var k = r.wind_mps + "|" + r.wind_from; if (!seen[k]) { seen[k] = 1; winds.push([r.wind_mps, r.wind_from]) } })
     winds.sort(function (a, b) { return a[0] - b[0] || a[1] - b[1] })
     if (winds.length > 1) add("wind_change", "飛行中風況改變：" + winds.map(function (x) { return x[0] + " m/s（從 " + Math.round(x[1]) + "°）" }).join("→"), winds)
     ;(replans || []).forEach(function (r) {
@@ -562,12 +677,23 @@ function buildFacts(run, mission, plan, replans, alerts) {
             "（" + (r.pick.source === "llm" ? "模型選擇" : "規則選擇") + "）", { choice: r.final_choice || r.pick.choice_id, source: r.pick.source })
     })
     ;(alerts || []).forEach(function (a) { add("alert", "第 " + (a.t_s / 60).toFixed(1) + " 分鐘告警：" + a.text_zh, a) })
-    var nc = rnd(ratio, 3)
-    add("calib", "耗電修正係數建議由 " + v.calib.toFixed(2) + " 更新為 " + nc.toFixed(2), { old: v.calib, "new": nc })
-    var wl = winds.length ? wind(winds[winds.length - 1][0], winds[winds.length - 1][1]) : wind(0, 0)
-    var bs = bestSpeed(v, wl, wl.from_deg)
-    add("best_speed", "以本次最大風況（" + wl.speed_mps + " m/s）估算，逆風最省電地速約 " + bs.speed_mps + " m/s（" + bs.wh_per_km + " Wh/km），本次巡航 " + plan.speed_mps + " m/s",
-        { speed_mps: bs.speed_mps, wh_per_km: bs.wh_per_km, cruise: plan.speed_mps })
+    var nc = eligible ? rnd(ratio, 3) : v.calib
+    add("calib", eligible ? "耗電修正係數建議由 " + v.calib.toFixed(2) + " 更新為 " + nc.toFixed(2) : "缺電流或風況資料，能耗不足以校正；維持耗電修正係數", { old: v.calib, "new": nc, eligible: eligible })
+    if (windKnown) {
+        var wl = winds.length ? wind(winds[winds.length - 1][0], winds[winds.length - 1][1]) : wind(0, 0)
+        var bs = bestSpeed(v, wl, wl.from_deg)
+        add("best_speed", "以本次最大風況（" + wl.speed_mps + " m/s）估算，逆風最省電地速約 " + bs.speed_mps + " m/s（" + bs.wh_per_km + " Wh/km），本次巡航 " + plan.speed_mps + " m/s",
+            { speed_mps: bs.speed_mps, wh_per_km: bs.wh_per_km, cruise: plan.speed_mps })
+    }
+    if (run.provenance) add("telemetry_source", "CSV 遙測來源：" + run.provenance.energy_source + "；QGC 格式與實機仍須分別驗證", run.provenance)
+    var missing=[]; if (quality.missing_wind) missing.push("風速／風向"); if (quality.missing_current) missing.push("電流")
+    add("data_quality", "資料品質：" + (missing.length ? "缺少"+missing.join("、") : "所需風況與能耗資料可用") + (estimated ? "；耗電採 SOC 差值估算" : "") + "；取樣間隔（秒）"+JSON.stringify(quality.sample_interval_s), quality)
+    var timeline=reportEvents(run,mission,replans,alerts)
+    add("timeline", "事件時間軸（起降為取樣推定，不代表上鎖確認）",timeline)
+    var flightEvents=timeline.filter(function (e) {return ["takeoff","start_in_air","landing"].indexOf(e.kind)>=0})
+    var landed=!!flightEvents.length && flightEvents[flightEvents.length-1].kind==="landing"
+    add("energy_margin", (landed ? "落地" : "紀錄終點")+"能量餘裕 M = "+(run.pct-v.reserve_pct).toFixed(1)+"%", {margin_pct:run.pct-v.reserve_pct,landing_inferred:landed,basis:"terminal_soc_minus_reserve"})
+    if (alerts && alerts.length) add("alert_lead_time", "告警至預估跌破保留門檻的提前秒數；無可靠估計時不填數字",reserveAlertLeads(run,alerts))
     return facts
 }
 
@@ -577,14 +703,14 @@ function ruleSuggestions(facts) {
     function sug(text, keys, level) {
         out.push({ text_zh: text, evidence_ids: keys.filter(function (k) { return f[k] }).map(function (k) { return f[k].id }), level: level || "info" })
     }
-    var r = f.energy_ratio.value.ratio
+    var r = f.energy_ratio.value.calibration_eligible ? f.energy_ratio.value.ratio : 1
     if (r > 1.08) sug("實際耗電比預估多 " + Math.round((r - 1) * 100) + "%，下次規劃請套用新的修正係數 " + f.calib.value["new"].toFixed(2) + "（系統可自動帶入），並檢查電池健康度與循環次數。", ["energy_ratio", "calib"], "warn")
     else if (r < 0.92) sug("實際耗電比預估少 " + Math.round((1 - r) * 100) + "%，預估偏保守，可考慮套用修正係數 " + f.calib.value["new"].toFixed(2) + " 以排入更多目標。", ["energy_ratio", "calib"])
     var eb = f.end_battery.value
     if (eb.end_pct < eb.reserve) sug("落地電量 " + eb.end_pct.toFixed(1) + "% 低於保留門檻 " + eb.reserve + "%，同樣的任務下次應分兩趟或減少選配目標。", ["end_battery"], "crit")
     else if (eb.end_pct < eb.reserve + 8) sug("落地電量只比保留門檻多 " + (eb.end_pct - eb.reserve).toFixed(1) + "%，餘裕偏小，建議出發前預留更多電量或提高保留門檻。", ["end_battery"], "warn")
-    if (f.headwind && f.headwind.value.ratio > 1.1) sug("逆風航段是超耗主因，建議把逆風段排在電量充足的前段，回程順風；規劃時選用「最省電順序」候選。", ["headwind", "worst_leg"], "warn")
-    if (f.wind_change && Math.abs(f.best_speed.value.speed_mps - f.best_speed.value.cruise) >= 1)
+    if (f.energy_ratio.value.calibration_eligible && f.headwind && f.headwind.value.ratio > 1.1) sug("逆風航段是超耗主因，建議把逆風段排在電量充足的前段，回程順風；規劃時選用「最省電順序」候選。", ["headwind", "worst_leg"], "warn")
+    if (f.wind_change && f.best_speed && Math.abs(f.best_speed.value.speed_mps - f.best_speed.value.cruise) >= 1)
         sug("風大時把逆風段速度調到約 " + f.best_speed.value.speed_mps + " m/s 可降低單位距離耗電。", ["best_speed", "wind_change"])
     var comp = f.completion.value
     var missing = comp.all.filter(function (t) { return comp.done.indexOf(t) < 0 })
@@ -592,39 +718,61 @@ function ruleSuggestions(facts) {
     var doneOpt = comp.done.filter(function (t) { return comp.must.indexOf(t) < 0 })
     if (missMust.length && doneOpt.length) sug("本次先做了選配目標（" + doneOpt.join("、") + "），卻漏掉必要目標（" + missMust.join("、") + "）；下次請選「必要目標優先」順序。", ["completion"], "warn")
     if (missing.length) sug("未完成目標：" + missing.join("、") + "，建議排入下一趟任務（可從本報告一鍵帶入規劃）。", ["completion"])
-    if (!out.length) sug("本次任務耗電與預估相符、電量餘裕充足，維持目前設定即可。", ["energy_ratio", "end_battery"])
+    if (!out.length) sug(f.data_quality.value.missing_wind ? "缺少風速／風向，未產生逆風建議；請補充資料後再評估校正。" :
+        (f.data_quality.value.missing_current ? "本次能耗為電量差估算，尚不足以判定模型誤差；請補充電流紀錄再評估校正。" : "本次任務耗電與預估相符、電量餘裕充足，維持目前設定即可。"), ["energy_ratio", "end_battery"])
     return out
 }
 
-function makeReport(run, mission, plan, replans, alerts) {
+function makeReport(run, mission, plan, replans, alerts, versions) {
     var facts = buildFacts(run, mission, plan, replans, alerts)
     var by = function (k) { return facts.filter(function (x) { return x.key === k })[0] }
-    return { facts: facts, suggestions: ruleSuggestions(facts), source: "rule",
-             summary_zh: by("completion").text + "。" + by("energy_ratio").text + "。" + by("end_battery").text + "。",
-             next_calib: by("calib").value["new"] }
+    var out = { facts: facts, suggestions: ruleSuggestions(facts), source: "rule",
+             summary_zh: by("completion").text + "。" + by("energy_ratio").text + "。" + by("end_battery").text + "。" + by("data_quality").text + "。",
+             next_calib: by("calib").value["new"], data_quality: by("data_quality").value,
+             timeline: by("timeline").value, energy_margin: by("energy_margin").value,
+             versions: {git_short_hash:(versions || {}).git_short_hash || null,prompt_hash:null,model:null} }
+    if (alerts && alerts.length) out.alert_lead_time=by("alert_lead_time").value
+    if (run.provenance) { out.data_provenance=run.provenance; out.calibration_eligible=out.data_quality.calibration_eligible }
+    return out
 }
 
 var REPORT_SYSTEM = "你是無人機任務報告助理。只能根據給定事實（facts）寫，不可新增數字。輸出 JSON：{\"summary_zh\":\"3 句內繁體中文摘要\"," +
                     "\"suggestions\":[{\"text_zh\":\"建議\",\"evidence_ids\":[\"F1\"]}]}。建議依重要性排序，最多 5 條，每條都要引用 facts 的 id。可改寫給定的規則建議，但不可捏造。"
 
 function reportPrompt(rep) {
-    return { system: REPORT_SYSTEM,
+    var p = { system: REPORT_SYSTEM,
              user: JSON.stringify({ facts: rep.facts.map(function (x) { return { id: x.id, text: x.text } }), rule_suggestions: rep.suggestions }) }
+    p.prompt_hash=sha256Text(p.system+"\n---\n"+p.user).slice(0,16)
+    return p
 }
 
 // 模型改寫的報告：沒引用事實的建議丟掉；全部被丟就保留規則版
-function applyReportLlm(rep, text) {
+function applyReportLlm(rep, text, metadata) {
+    // Always rebuild from the rule snapshot, including after a prior accepted rewrite.
+    var base=rep.rule_report ? clone(rep.rule_report) : clone(rep)
+    var version=base.versions || {git_short_hash:null,prompt_hash:null,model:null}
+    version.prompt_hash=(metadata || {}).prompt_hash || reportPrompt(base).prompt_hash
+    version.model=(metadata || {}).model || null
+    base.versions=version
     var d = extractJson(text)
-    if (!d || typeof d.summary_zh !== "string" || !Array.isArray(d.suggestions)) return rep
-    var ids = rep.facts.map(function (x) { return x.id }), kept = []
+    if (!d || typeof d.summary_zh !== "string" || !Array.isArray(d.suggestions)) { base.llm_fallback_reason="invalid_report_shape"; return base }
+    var texts=[d.summary_zh]
+    d.suggestions.forEach(function (s) { if (s && typeof s.text_zh==="string") texts.push(s.text_zh) })
+    var bad=unsupportedNumbers(texts,base.facts)
+    if (bad.length) { base.llm_fallback_reason="unsupported_numbers:"+bad.join(","); return base }
+    if (base.data_quality && base.data_quality.missing_wind && texts.some(function (s) {return /逆風|順風|風況改變|風速增強|headwind|wind_change/i.test(s)})) {
+        base.llm_fallback_reason="wind_advice_without_measurements"; return base
+    }
+    var ids = base.facts.map(function (x) { return x.id }), kept = []
     d.suggestions.slice(0, 5).forEach(function (s) {
         if (!s || typeof s.text_zh !== "string") return
-        var ev = (s.evidence_ids || []).filter(function (e) { return ids.indexOf(e) >= 0 })
+        var ev = (Array.isArray(s.evidence_ids) ? s.evidence_ids : []).filter(function (e) { return ids.indexOf(e) >= 0 })
         if (ev.length) kept.push({ text_zh: s.text_zh, evidence_ids: ev, level: "info" })
     })
-    if (!kept.length) return rep
-    var out = clone(rep)
-    out.rule_suggestions = rep.suggestions; out.suggestions = kept; out.summary_zh = d.summary_zh; out.source = "llm"
+    if (!kept.length) return base
+    var out = clone(base)
+    out.rule_report=base
+    out.rule_suggestions = base.suggestions; out.suggestions = kept; out.summary_zh = d.summary_zh; out.source = "llm"
     return out
 }
 
@@ -632,5 +780,6 @@ function applyReportLlm(rep, text) {
 if (typeof module !== "undefined") module.exports = {
     haversineM: haversineM, vehicle: vehicle, wind: wind, routeEstimate: routeEstimate, bestSpeed: bestSpeed,
     planMission: planMission, replan: replan, MissionRun: MissionRun, makeReport: makeReport, predictiveAlert: predictiveAlert,
-    pickPrompt: pickPrompt, validatePick: validatePick, reportPrompt: reportPrompt, applyReportLlm: applyReportLlm
+    pickPrompt: pickPrompt, validatePick: validatePick, reportPrompt: reportPrompt, applyReportLlm: applyReportLlm,
+    unsupportedNumbers:unsupportedNumbers, reportEvents:reportEvents, reserveAlertLeads:reserveAlertLeads, sha256Text:sha256Text
 }

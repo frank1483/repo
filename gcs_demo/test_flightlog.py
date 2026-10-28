@@ -168,5 +168,7 @@ class FlightlogTests(unittest.TestCase):
             load_csv(self.path, self.mission, self.plan)
 
 
+from .test_t3_report import T3ReportTests, T3DeidentifiedSmoke
+
 if __name__ == '__main__':
     unittest.main()

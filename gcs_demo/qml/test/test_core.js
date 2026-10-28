@@ -54,3 +54,4 @@ console.log(`OK：${n} 個候選與 Python 版一致；模型驗證、模擬、�
 
 }
 require("./test_boundaries_0306")(require("./load_core")())
+require("./test_t3_report")(require("./load_core")())
