@@ -37,8 +37,16 @@ done
 echo "CMake：$(cmake --version | head -1)"
 
 cd "$DST"
-[ -f build/CMakeCache.txt ] || cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$QT_PREFIX"
-cmake --build build --parallel 4 2>&1 | tee build_agent.log | tail -5
+# libevents 在原專案用 GIT_TAG main（未鎖版），新版需要較新的 MAVLink 而編不過。
+# 給 LIBEVENTS_SOURCE=<與 Windows 建置相同版本的 libevents 目錄> 就改用那份原始碼，不動 UI 原始檔。
+EXTRA=()
+if [ -n "${LIBEVENTS_SOURCE:-}" ]; then
+    [ -f "$LIBEVENTS_SOURCE/libs/cpp/protocol/receive.h" ] || { echo "LIBEVENTS_SOURCE 不是 libevents 原始碼：$LIBEVENTS_SOURCE"; exit 1; }
+    EXTRA+=("-DCPM_libevents_SOURCE=$LIBEVENTS_SOURCE")
+    echo "libevents：$LIBEVENTS_SOURCE"
+fi
+[ -f build/CMakeCache.txt ] || cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$QT_PREFIX" "${EXTRA[@]}"
+cmake --build build --parallel 4 2>&1 | tee build_agent.log | tail -40
 echo
 echo "編譯完成。執行（不登入、規則模式）："
 echo "  cd $DST && GCP_PREVIEW=MainShell GCS_LLM_BACKEND=none ./build/Debug/QGroundControl"
