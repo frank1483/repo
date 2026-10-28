@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 
 def load_plan(path):
-    """Read SimpleItem 16/22 and RTL 20; reject unsupported commands/frames.
+    """Read waypoint 16, separate takeoff 22 metadata, terminal RTL 20.
 
     Planner altitudes are relative to planned home. Global (AMSL) items are
     converted using plannedHomePosition[2]. No equipment or implicit execution.
@@ -31,7 +31,7 @@ def load_plan(path):
     home = {'id': 'H', 'lat': _number(h[0], 'home.lat', -90, 90),
             'lon': _number(h[1], 'home.lon', -180, 180)}
     home_amsl = _number(h[2], 'home.amsl')
-    targets, rtl = [], False
+    targets, takeoff_items, rtl = [], [], False
     items = m.get('items')
     if not isinstance(items, list):
         raise ValueError('mission.items must be a list')
@@ -54,13 +54,17 @@ def load_plan(path):
         alt = _number(params[6], f'item {i}.alt')
         if item['frame'] == 0:
             alt -= home_amsl
-        targets.append({'id': f'WP{i+1}', 'lat': _number(params[4], f'item {i}.lat', -90, 90),
-                        'lon': _number(params[5], f'item {i}.lon', -180, 180),
-                        'alt': alt, 'priority': 1, 'source_command': command})
+        point = {'id': f'WP{i+1}', 'lat': _number(params[4], f'item {i}.lat', -90, 90),
+                 'lon': _number(params[5], f'item {i}.lon', -180, 180),
+                 'alt': alt, 'priority': 1, 'source_command': command, 'source_item_index': i}
+        if command == 22:
+            takeoff_items.append(dict(point, kind='takeoff'))
+        else:
+            targets.append(point)
     if not targets:
-        raise ValueError('plan contains no waypoint/takeoff targets')
+        raise ValueError('plan contains no waypoint targets')
     speed = _number(m.get('hoverSpeed', m.get('cruiseSpeed', 8)), 'plan.speed_mps', 0.001)
-    return {'name': 'Imported QGC plan', 'home': home, 'targets': targets, 'no_fly': [],
+    return {'name': 'Imported QGC plan', 'home': home, 'targets': targets, 'takeoff_items': takeoff_items, 'no_fly': [],
             'cruise_alt_m': max(t['alt'] for t in targets), 'speed_mps': speed,
             'rtl': rtl, 'source_home_amsl_m': home_amsl,
             'source_format': 'QGC Plan', 'limits': {'max_altitude_m': 120}}

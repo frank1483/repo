@@ -60,6 +60,8 @@ Item {
     property var result: null               // 規劃或重規劃結果
     property string selected: ""
     property var undoStack: []              // 每次套用前的航點座標
+    property var applyState: null
+    property var applyEvent: null
     property var run: null
     property var flown: null
     property var alertInfo: null
@@ -107,6 +109,7 @@ Item {
         mission = readMission()
         if (!mission) { status = qsTr("請先在地圖上放至少 2 個航點"); return }
         stage = "plan"; report = null; alertInfo = null; run = null
+        applyState = null; applyEvent = null
         result = Core.planMission(mission, vehicleParams(), currentWind())
         selected = result.pick.choice_id || result.rule_choice
         status = result.candidates.length ? "" : result.pick.reason_zh
@@ -155,6 +158,10 @@ Item {
     function applySelected() {
         const c = cand(selected)
         if (!c || stage !== "plan") return
+        const gate = Core.checkApply(result, readMission(), vehicleParams(), currentWind(), null)
+        if (!gate.ok) { status = gate.reason_zh; return }
+        if (!c.feasible) { status = qsTr("候選不可行，不能套用"); return }
+        if (c.sorties) { status = qsTr("S1 含兩個獨立架次，請分別檢視；目前面板僅支援單趟套用"); return }
         const before = snapshot()
         const byId = {}
         mission.targets.forEach((t, i) => byId[t.id] = before[i])
@@ -179,6 +186,9 @@ Item {
     function simulate() {
         const c = cand(selected)
         if (!c) return
+        const gate = Core.checkApply(result, readMission(), vehicleParams(), currentWind(), null)
+        if (!gate.ok) { status = gate.reason_zh; return }
+        if (!c.feasible || c.sorties) { status = qsTr("請選可行的單趟候選；S1 需分別檢視兩趟"); return }
         flown = c
         const ws = parseFloat(gustSpeed.text) || 9
         run = new Core.MissionRun(vehicleParams(), currentWind(), 1.15, [{ t_s: 300, speed_mps: ws, from_deg: (currentWind().from_deg + 330) % 360 }])
@@ -186,6 +196,7 @@ Item {
         if (st.done) { finishReport([]); return }
         const ev = { type: "wind", speed_mps: ws, from_deg: (currentWind().from_deg + 330) % 360,
                      text_zh: qsTr("風速增強到 %1 m/s").arg(ws) }
+        applyState = st; applyEvent = ev
         const rp = Core.replan(mission, vehicleParams(), currentWind(), st, ev)
         alertInfo = Core.predictiveAlert(vehicleParams(), st, rp)
         stage = "replan"
@@ -196,9 +207,13 @@ Item {
     }
     function continueFlight() {
         const c = cand(selected)
-        if (!c) return
+        if (!c || !applyState || !applyEvent) return
+        const ctx = Core.replanContext(readMission(), vehicleParams(), currentWind(), applyState, applyEvent)
+        const gate = Core.checkApply(result, ctx.mission, ctx.vehicle, ctx.wind, ctx.state)
+        if (!gate.ok) { status = gate.reason_zh; return }
+        if (!c.feasible) { status = qsTr("候選不可行，不能套用"); return }
         result.final_choice = c.id
-        run.fly(c)
+        applyState = run.fly(c)
         finishReport([result])
     }
     function finishReport(replans) {
@@ -273,11 +288,16 @@ Item {
         if (!map || !result || !open) return
         const c = cand(selected)
         if (!c) return
-        const line = Qt.createQmlObject('import QtLocation; MapPolyline { line.width: 4; opacity: 0.9 }', map)
-        line.line.color = stage === "replan" ? cWarn : cPrimary
-        line.path = c.path.map(p => QtPositioning.coordinate(p.lat, p.lon))
-        map.addMapItem(line)
-        _lines = [line]
+        const routes = c.sorties || [c]
+        const lines = []
+        routes.forEach((route, i) => {
+            const line = Qt.createQmlObject('import QtLocation; MapPolyline { line.width: 4; opacity: 0.9 }', map)
+            line.line.color = stage === "replan" || i === 1 ? cWarn : cPrimary
+            line.path = route.path.map(p => QtPositioning.coordinate(p.lat, p.lon))
+            map.addMapItem(line)
+            lines.push(line)
+        })
+        _lines = lines
     }
     onSelectedChanged: drawPreview()
     onOpenChanged: open ? (result ? drawPreview() : makePlan()) : clearPreview()
@@ -409,6 +429,9 @@ Item {
                             Lbl { Layout.fillWidth: true; color: root.cMuted; font.pixelSize: root.fs - 2
                                   text: (row.modelData.order.join("→") || qsTr("直接返航")) + qsTr("　%1 km・%2 分・%3 Wh・落地 %4%")
                                         .arg(row.modelData.dist_km).arg(row.modelData.time_min).arg(row.modelData.energy_wh).arg(row.modelData.end_pct) }
+                            Lbl { visible: !!row.modelData.sorties; Layout.fillWidth: true; color: root.cWarn; font.pixelSize: root.fs - 2
+                                  text: row.modelData.sorties ? row.modelData.sorties.map(s => s.id + ": H→" + s.order.join("→") + "→H；落地 " + s.end_pct + "%").join("\n")
+                                        + qsTr("\n兩趟各用滿電電池；總時間不含地面換電；目前僅供預覽，須分別檢視套用") : "" }
                             Lbl { visible: text !== ""; Layout.fillWidth: true; color: root.cCrit; font.pixelSize: root.fs - 2
                                   text: row.modelData.violations.concat(row.modelData.missing_must.map(x => qsTr("缺必要目標 ") + x)).join("；") }
                         }

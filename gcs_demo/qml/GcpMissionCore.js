@@ -205,6 +205,7 @@ function evaluate(cid, label, how, mission, v, w, path, speed, startPct) {
         energy_wh: rnd(est.energy_wh, 1), end_pct: rnd(est.end_pct, 1), margin_pct: rnd(est.margin_pct, 1),
         feasible: est.feasible && viol.length === 0 && missing.length === 0,
         violations: viol, missing_must: missing, must_rank: mustRank,
+        constraint_deltas: constraintDeltas(mission, v, path, est, missing),
         path: path.map(function (p) { return { id: p.id, lat: p.lat, lon: p.lon, alt: p.alt || 0, kind: p.kind, priority: p.priority } }),
         legs: est.legs.map(function (l) {
             return { from: l.from, to: l.to, dist_m: rnd(l.dist_m, 2), time_s: rnd(l.time_s, 2), energy_wh: rnd(l.energy_wh, 2),
@@ -236,6 +237,17 @@ function evidenceFor(cands, v, w, extra) {
         var why = c.violations.concat(c.missing_must)
         ev.push({ id: "E" + (i + 3), text: c.id + " " + c.label + "：落地剩 " + c.end_pct + "%，" + (c.feasible ? "可行" : "不可行") +
                                        (!c.feasible && why.length ? "（" + why.join("；") + "）" : "") })
+    })
+    cands.forEach(function (c, i) {
+        var entry = ev[i + 2]
+        if (!c.feasible) {
+            entry.value = {candidate_id: c.id, violations: c.constraint_deltas}
+            entry.text += "；約束差額：" + JSON.stringify(c.constraint_deltas)
+        }
+        if (c.sorties) {
+            entry.value = {candidate_id: c.id, sorties: c.sorties.map(function (s) { return {id:s.id, end_pct:s.end_pct, margin_pct:s.margin_pct} })}
+            entry.text += "（兩趟各自返航／滿電出發；落地電量表示兩趟較低值，非累積值）"
+        }
     })
     ;(extra || []).forEach(function (e) { ev.push({ id: "E" + (ev.length + 1), text: e }) })
     return ev
@@ -324,8 +336,12 @@ function planMission(mission, v, w) {
         var sm = orderTargets(h, tm, end, costFn(v, w, v0, "energy"))
         c.push(evaluate("C5", "只做必要目標", "刪除選配目標後重排", mission, v, w, [h].concat(sm, [end]), v0, 100))
     }
+    if (!c.some(function (x) { return x.feasible && x.order.length === tg.length })) {
+        var split = splitSorties(mission, v, w, [tg, sd, se], [v0, bs])
+        if (split) c.push(split)
+    }
     var rc = ruleChoice(c)
-    return { kind: "plan", candidates: c, rule_choice: rc, pick: rulePick(rc), evidence: evidenceFor(c, v, w),
+    return { kind: "plan", mission_version: missionVersion(mission, v, w, null), candidates: c, rule_choice: rc, pick: rulePick(rc), evidence: evidenceFor(c, v, w),
              task_zh: "出發前任務規劃：選一條航線。必要目標都要做到，落地電量要高於保留值。",
              vehicle: v, wind: w }
 }
@@ -336,14 +352,10 @@ function replan(mission, v0in, w, state, event) {
     invalid = stateError(mission, state)
     if (invalid || !event || typeof event !== "object") return boundaryHold("replan", invalid || "事件格式無效")
     if (event.type === "add_target" && !event.target) return boundaryHold("replan", "新增目標格式無效")
-    var m = clone(mission), note = event.text_zh || ""
-    var v = clone(v0in)
-    var ratio = state.observed_ratio !== undefined ? state.observed_ratio : v.calib
-    v.calib = rnd(ratio, 3)
-    if (event.type === "wind") w = wind(event.speed_mps, event.from_deg)
-    else if (event.type === "no_fly") { m.no_fly = (m.no_fly || []).concat([event.zone]) }
-    else if (event.type === "add_target") { m.targets.push(event.target); state = clone(state); state.remaining.push(event.target.id) }
-    else if (event.type === "battery") { state = clone(state); state.battery_pct = event.battery_pct }
+    var note = event.text_zh || "", ratio = state.observed_ratio !== undefined ? state.observed_ratio : v0in.calib
+    var context = replanContext(mission, v0in, w, state, event)
+    var m = context.mission, v = context.vehicle
+    w = context.wind; state = context.state
     invalid = inputError(m, v, w, true) || stateError(m, state)
     if (invalid) return boundaryHold("replan", invalid)
     m.completed = state.completed
@@ -395,7 +407,7 @@ function replan(mission, v0in, w, state, event) {
     c.push(rtl)
     var rc = ruleChoice(c.filter(function (x) { return x.id !== "R1" })) || (rtl.feasible ? "R1" : "")
     var ev = evidenceFor(c, v, w, ["觸發事件：" + note, "目前電量 " + pct + "%", "起飛後實際耗電是預估的 " + Math.round(ratio * 100) + "%，剩餘航線已用此比例修正"])
-    return { kind: "replan", event: event, state: state, candidates: c, rule_choice: rc, pick: rulePick(rc), evidence: ev,
+    return { kind: "replan", mission_version: missionVersion(m, v, w, state), event: event, state: state, candidates: c, rule_choice: rc, pick: rulePick(rc), evidence: ev,
              task_zh: "飛行中重規劃：事件發生後選一條剩餘航線。必要目標盡量完成，但落地電量必須高於保留值；返航也必須可行，全部不可行則 HOLD。",
              vehicle: v, wind: w }
 }
@@ -661,7 +673,7 @@ function buildFacts(run, mission, plan, replans, alerts) {
     if (legs.length) {
         var worst = legs.reduce(function (a, l) { return l.actual_wh / Math.max(l.pred_wh, 1e-6) > a.actual_wh / Math.max(a.pred_wh, 1e-6) ? l : a })
         var worstValue=clone(worst); if (!windKnown) delete worstValue.headwind_mps
-        add("worst_leg", "超耗最多的航段 " + worst.from + "→" + worst.to + "：實際 " + worst.actual_wh + " Wh／預估 " + worst.pred_wh + " Wh" + (windKnown ? "，平均逆風 " + worst.headwind_mps + " m/s" : "；風況未知"), worstValue)
+        add("worst_leg", "超耗最多的航段 " + worst.from + "→" + worst.to + "：實際 " + worst.actual_wh.toFixed(2) + " Wh／預估 " + worst.pred_wh.toFixed(2) + " Wh" + (windKnown ? "，平均逆風 " + worst.headwind_mps + " m/s" : "；風況未知"), worstValue)
     }
     var head = legs.filter(function (l) { return windKnown && l.headwind_mps != null && l.headwind_mps > 2 })
     if (head.length) {
@@ -685,11 +697,11 @@ function buildFacts(run, mission, plan, replans, alerts) {
         add("best_speed", "以本次最大風況（" + wl.speed_mps + " m/s）估算，逆風最省電地速約 " + bs.speed_mps + " m/s（" + bs.wh_per_km + " Wh/km），本次巡航 " + plan.speed_mps + " m/s",
             { speed_mps: bs.speed_mps, wh_per_km: bs.wh_per_km, cruise: plan.speed_mps })
     }
-    if (run.provenance) add("telemetry_source", "CSV 遙測來源：" + run.provenance.energy_source + "；QGC 格式與實機仍須分別驗證", run.provenance)
+    if (run.provenance) add("telemetry_source", "CSV 遙測來源：" + run.provenance.energy_source + "；已用 PX4 SITL 匯出核對欄位，尚未用實機核對", run.provenance)
     var missing=[]; if (quality.missing_wind) missing.push("風速／風向"); if (quality.missing_current) missing.push("電流")
     add("data_quality", "資料品質：" + (missing.length ? "缺少"+missing.join("、") : "所需風況與能耗資料可用") + (estimated ? "；耗電採 SOC 差值估算" : "") + "；取樣間隔（秒）"+JSON.stringify(quality.sample_interval_s), quality)
     var timeline=reportEvents(run,mission,replans,alerts)
-    add("timeline", "事件時間軸（起降為取樣推定，不代表上鎖確認）",timeline)
+    add("timeline", timelineText(timeline),timeline)
     var flightEvents=timeline.filter(function (e) {return ["takeoff","start_in_air","landing"].indexOf(e.kind)>=0})
     var landed=!!flightEvents.length && flightEvents[flightEvents.length-1].kind==="landing"
     add("energy_margin", (landed ? "落地" : "紀錄終點")+"能量餘裕 M = "+(run.pct-v.reserve_pct).toFixed(1)+"%", {margin_pct:run.pct-v.reserve_pct,landing_inferred:landed,basis:"terminal_soc_minus_reserve"})
@@ -778,8 +790,107 @@ function applyReportLlm(rep, text, metadata) {
 
 // node 測試用
 if (typeof module !== "undefined") module.exports = {
+    missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
+    canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     haversineM: haversineM, vehicle: vehicle, wind: wind, routeEstimate: routeEstimate, bestSpeed: bestSpeed,
     planMission: planMission, replan: replan, MissionRun: MissionRun, makeReport: makeReport, predictiveAlert: predictiveAlert,
     pickPrompt: pickPrompt, validatePick: validatePick, reportPrompt: reportPrompt, applyReportLlm: applyReportLlm,
     unsupportedNumbers:unsupportedNumbers, reportEvents:reportEvents, reserveAlertLeads:reserveAlertLeads, sha256Text:sha256Text
+}
+
+// T3 version contract: finite IEEE754 doubles and UTF-8 hex strings/keys.
+function timelineText(events) {
+    var labels={takeoff:"起飛（推定）",start_in_air:"紀錄起點已在空中",landing:"降落（推定）",waypoint:"到達航點",alert:"告警",replan:"重規劃"}
+    var parts=events.slice(0,5).map(function(e){return (e.t_s.toFixed(1)+" 秒 "+(labels[e.kind]||e.kind)+" "+(e.target_id||e.choice_id||"")).trim()})
+    if(events.length>5) parts.push("另 "+(events.length-5)+" 件，詳見結構化時間軸")
+    return "事件時間軸（起降為取樣推定，不代表上鎖確認）："+(parts.length?parts.join("；"):"無可推定事件")
+}
+
+function utf8Hex(text) {
+    var bytes = unescape(encodeURIComponent(text)), out = ""
+    for (var i = 0; i < bytes.length; ++i) out += ("0" + bytes.charCodeAt(i).toString(16)).slice(-2)
+    return out
+}
+function canonicalVersion(value) {
+    if (value === null) return "z"
+    if (value === true) return "t"
+    if (value === false) return "f"
+    if (typeof value === "number") {
+        if (!isFinite(value)) throw new Error("nonfinite mission version input")
+        var buffer = new ArrayBuffer(8), view = new DataView(buffer), hex = ""
+        view.setFloat64(0, value === 0 ? 0 : value, false)
+        for (var i = 0; i < 8; ++i) hex += ("0" + view.getUint8(i).toString(16)).slice(-2)
+        return "n" + hex
+    }
+    if (typeof value === "string") return "s" + utf8Hex(value)
+    if (Array.isArray(value)) return "a[" + value.map(canonicalVersion).join(",") + "]"
+    if (value && typeof value === "object") {
+        var keys = Object.keys(value).sort(function (a,b) { var x=utf8Hex(a),y=utf8Hex(b); return x<y?-1:x>y?1:0 })
+        return "o{" + keys.map(function (k) { return canonicalVersion(k) + ":" + canonicalVersion(value[k]) }).join(",") + "}"
+    }
+    throw new Error("unsupported mission version input")
+}
+function missionVersion(m, v, w, s) {
+    return "t3-v1:" + sha256Text(canonicalVersion({mission:m,vehicle:v,wind:w,state:s === undefined ? null : s}))
+}
+function checkApply(result, m, v, w, s) {
+    try { if (result && result.mission_version === missionVersion(m,v,w,s)) return {ok:true} } catch (e) {}
+    return {ok:false,reason_zh:"任務已變更，請重新規劃"}
+}
+function replanContext(mission, vehicleIn, windIn, stateIn, event) {
+    var m=clone(mission),v=clone(vehicleIn),w=clone(windIn),s=clone(stateIn)
+    v.calib = rnd(s.observed_ratio !== undefined ? s.observed_ratio : v.calib,3)
+    if (event.type === "wind") w=wind(event.speed_mps,event.from_deg)
+    else if (event.type === "no_fly") m.no_fly=(m.no_fly||[]).concat([clone(event.zone)])
+    else if (event.type === "add_target") {m.targets.push(clone(event.target));s.remaining.push(event.target.id)}
+    else if (event.type === "battery") s.battery_pct=event.battery_pct
+    m.completed=s.completed
+    return {mission:m,vehicle:v,wind:w,state:s}
+}
+function constraintDeltas(m,v,path,est,missing) {
+    var out=[],max=(m.limits||{}).max_altitude_m
+    if (max === undefined) max=120
+    if (est.margin_pct<0) out.push({violated:"reserve",short_pct:-est.margin_pct})
+    path.forEach(function (p) {if ((p.alt||0)>max) out.push({violated:"altitude",point_id:p.id,over_m:p.alt-max})})
+    var origin=[m.home.lat,m.home.lon]
+    for (var i=0;i<path.length-1;++i) {
+        var a=toXY(origin,[path[i].lat,path[i].lon]),b=toXY(origin,[path[i+1].lat,path[i+1].lon]),dx=b[0]-a[0],dy=b[1]-a[1]
+        ;(m.no_fly||[]).forEach(function (z) {
+            var c=toXY(origin,[z.lat,z.lon]),d=dx*dx+dy*dy
+            var t=d?Math.max(0,Math.min(1,((c[0]-a[0])*dx+(c[1]-a[1])*dy)/d)):0
+            var short=z.radius_m-Math.hypot(a[0]+t*dx-c[0],a[1]+t*dy-c[1])
+            if (short>0) out.push({violated:"no_fly",zone_id:z.id,from:path[i].id,to:path[i+1].id,short_m:short})
+        })
+    }
+    if (missing.length) out.push({violated:"required_targets",missing_count:missing.length,target_ids:missing.slice()})
+    return out
+}
+function splitSorties(m,v,w,sequences,speeds) {
+    if (m.targets.length<2) return null
+    var best=null,seen={},ids=m.targets.map(function(t){return t.id}).sort().join("\u0000")
+    sequences.forEach(function(seq) {
+        for (var k=1;k<seq.length;++k) {
+            var groups=[seq.slice(0,k),seq.slice(k)],key=JSON.stringify(groups.map(function(g){return g.map(function(t){return t.id})}))
+            if (seen[key]) continue
+            seen[key]=true
+            speeds.filter(function(s,i,a){return a.indexOf(s)===i}).forEach(function(speed) {
+                var sorties=groups.map(function(g,i) {
+                    var sub=clone(m);sub.targets=g;sub.completed=[]
+                    return evaluate("S1-"+(i+1),"分兩趟第 "+(i+1)+" 趟","獨立滿電、返航",sub,v,w,[home(m)].concat(g,[home(m)]),speed,100)
+                })
+                var order=sorties[0].order.concat(sorties[1].order)
+                if (!sorties.every(function(s){return s.feasible}) || order.slice().sort().join("\u0000")!==ids) return
+                var energy=rnd(sorties[0].energy_wh+sorties[1].energy_wh,1)
+                if (best && energy>=best.energy_wh) return
+                var must=m.targets.filter(function(t){return (t.priority||1)===1}).map(function(t){return t.id}),rank=0
+                order.forEach(function(t,i){if(must.indexOf(t)>=0)rank+=i})
+                best={id:"S1",label:"分兩趟完成全部目標",how:"兩個獨立返航架次，中間更換滿電電池",
+                    note:"須分別檢視兩趟；尚無自動跨架次執行器；分割搜尋非窮舉最佳化",order:order,speed_mps:speed,calib:v.calib,
+                    dist_km:rnd(sorties[0].dist_km+sorties[1].dist_km,2),time_min:rnd(sorties[0].time_min+sorties[1].time_min,1),
+                    energy_wh:energy,end_pct:Math.min(sorties[0].end_pct,sorties[1].end_pct),margin_pct:Math.min(sorties[0].margin_pct,sorties[1].margin_pct),
+                    feasible:true,must_rank:rank,violations:[],missing_must:[],constraint_deltas:[],sorties:sorties,requires_battery_swap:true,path:[],legs:[]}
+            })
+        }
+    })
+    return best
 }

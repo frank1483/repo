@@ -9,7 +9,7 @@ import re
 
 from .energy import Vehicle, Wind, best_speed
 from . import llm as llm_mod
-from .report_t3 import quality_for, unsupported_numbers, events_for, alert_leads
+from .report_t3 import quality_for, unsupported_numbers, events_for, alert_leads, timeline_text
 
 REPORT_SCHEMA = {"required": {"summary_zh": "str", "suggestions": "list"}}
 
@@ -51,8 +51,8 @@ def build_facts(run, mission: dict, plan: dict, replans: list, alerts: list) -> 
     worst = max(legs, key=lambda l: l["actual_wh"] / max(l["pred_wh"], 1e-6)) if legs else None
     if worst:
         worst_value = {k: val for k, val in worst.items() if wind_known or k != 'headwind_mps'}
-        add("worst_leg", f"超耗最多的航段 {worst['from']}→{worst['to']}：實際 {worst['actual_wh']} Wh／預估 "
-            f"{worst['pred_wh']} Wh" + (f"，平均逆風 {worst['headwind_mps']} m/s" if wind_known else "；風況未知"), worst_value)
+        add("worst_leg", f"超耗最多的航段 {worst['from']}→{worst['to']}：實際 {worst['actual_wh']:.2f} Wh／預估 "
+            f"{worst['pred_wh']:.2f} Wh" + (f"，平均逆風 {worst['headwind_mps']} m/s" if wind_known else "；風況未知"), worst_value)
     head = [l for l in legs if wind_known and l.get("headwind_mps") is not None and l["headwind_mps"] > 2]
     if head:
         hw_ratio = sum(l["actual_wh"] for l in head) / max(sum(l["pred_wh"] for l in head), 1e-6)
@@ -81,14 +81,14 @@ def build_facts(run, mission: dict, plan: dict, replans: list, alerts: list) -> 
             f"（{bs['wh_per_km']} Wh/km），本次巡航 {plan['speed_mps']} m/s", dict(bs, cruise=plan["speed_mps"]))
     if provenance:
         add("telemetry_source", "CSV 遙測來源：" + provenance["energy_source"]
-            + "；真實 QGC 匯出格式未驗證；預估為取樣軌跡未修正物理模型。"
+            + "；已用 PX4 SITL 匯出核對欄位，尚未用實機核對；預估為取樣軌跡未修正物理模型。"
             + (" 無有效電流，能耗以電量差估算，不用於自動校正。" if estimated else ""), provenance)
     missing = [label for key, label in [('missing_wind', '風速／風向'), ('missing_current', '電流')] if quality[key]]
     add('data_quality', '資料品質：' + ('缺少' + '、'.join(missing) if missing else '所需風況與能耗資料可用')
         + ('；耗電採 SOC 差值估算' if estimated else '')
         + '；取樣間隔（秒）' + json.dumps(quality['sample_interval_s'], ensure_ascii=False), quality)
     timeline = events_for(run, mission, replans, alerts)
-    add('timeline', '事件時間軸（起降為取樣推定，不代表上鎖確認）', timeline)
+    add('timeline', timeline_text(timeline), timeline)
     flight_events = [e for e in timeline if e['kind'] in ('takeoff', 'start_in_air', 'landing')]
     landed = bool(flight_events and flight_events[-1]['kind'] == 'landing')
     margin = run.pct-v.reserve_pct

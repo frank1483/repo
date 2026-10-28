@@ -140,6 +140,7 @@ function drawBase() {
 }
 
 function drawRoute(c, style) {
+  if (c.sorties) { c.sorties.forEach(s => drawRoute(s, style)); return; }
   const pts = c.path.map(p => proj(p).join(",")).join(" ");
   el("polyline", Object.assign({points: pts, fill: "none"}, style), svg.routes);
   c.path.forEach(p => { if (p.kind === "detour") { const [x, y] = proj(p); el("circle", {cx: x, cy: y, r: 4, fill: "#ff8a8a"}, svg.routes); } });
@@ -148,7 +149,8 @@ function drawRoute(c, style) {
 function candTable(cands, pick, onSel, sel) {
   const rows = cands.map(c => `<tr class="cand ${c.id === sel ? "sel" : ""} ${c.feasible ? "" : "bad"}" data-id="${c.id}">
     <td><b>${c.id}</b></td><td>${c.label}${c.id === pick.choice_id ? `<span class="tag ${pick.source === "llm" ? "t-llm" : "t-rule"}">${pick.source === "llm" ? "模型建議" : "規則建議"}</span>` : ""}
-    <div class="muted">${c.order.join("→") || "（直接返航）"}</div></td>
+    <div class="muted">${c.order.join("→") || "（直接返航）"}</div>
+    ${c.sorties ? `<div class="muted">${c.sorties.map(s => `${s.id}: H→${s.order.join("→")}→H；落地 ${s.end_pct}%`).join("<br>")}<br>兩趟各用滿電電池；總時間不含地面換電；目前僅供預覽，須分別檢視套用</div>` : ""}</td>
     <td>${c.dist_km} km<br>${c.time_min} 分</td><td>${c.energy_wh} Wh</td>
     <td>${c.end_pct}%<span class="tag ${c.feasible ? "t-ok" : "t-bad"}">${c.feasible ? "可行" : "不可行"}</span>
     ${c.violations.length || c.missing_must.length ? `<div class="muted">${[...c.violations, ...c.missing_must.map(x => "缺必要目標 " + x)].join("；")}</div>` : ""}</td></tr>`).join("");
@@ -199,7 +201,9 @@ function animate(log, done) {
 async function startFly() {
   $("#bStart").disabled = true; trail = [];
   $("#s2").classList.remove("hide"); $("#flyOut").innerHTML = "飛行中…";
-  const r = await api("api/start", {choice_id: SEL}); window.LOG0 = r.telemetry;
+  const r = await api("api/start", {choice_id: SEL, mission_version: PLAN.mission_version});
+  if (r.ok === false) { $("#flyOut").textContent = r.reason_zh; $("#bStart").disabled = false; return; }
+  window.LOG0 = r.telemetry;
   animate(r.telemetry, () => {
     if (!r.replan) { window.LOG0 = []; $("#flyOut").innerHTML = alertsHtml(r.alerts) + "<div class='muted'>全程未觸發電量預測告警</div>"; renderReport(r); return; }
     REPLAN = r.replan; RSEL = REPLAN.pick.choice_id || REPLAN.rule_choice; renderReplan(r);
@@ -225,7 +229,8 @@ function renderReplan(r) {
 
 async function cont() {
   $("#bCont").disabled = true;
-  const r = await api("api/continue", {choice_id: RSEL});
+  const r = await api("api/continue", {choice_id: RSEL, mission_version: REPLAN.mission_version});
+  if (r.ok === false) { $("#flyOut").textContent = r.reason_zh; return; }
   animate(r.telemetry, () => renderReport(r));
 }
 

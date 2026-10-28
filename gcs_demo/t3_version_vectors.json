@@ -1,0 +1,197 @@
+[
+  {
+    "name": "base",
+    "inputs": {
+      "mission": {
+        "home": {
+          "lat": 24,
+          "lon": 121
+        },
+        "targets": [
+          {
+            "id": "???",
+            "lat": 24.001,
+            "lon": 121.001
+          }
+        ],
+        "name": "??"
+      },
+      "vehicle": {
+        "battery_wh": 90,
+        "reserve_pct": 20,
+        "calib": 1
+      },
+      "wind": {
+        "speed_mps": 0,
+        "from_deg": 270
+      },
+      "state": null
+    },
+    "mission_version": "t3-v1:18fd58e1ddb701132603fc766ca9606e1595c13d60a54bf430ca93bc1c05b627"
+  },
+  {
+    "name": "key_order",
+    "inputs": {
+      "mission": {
+        "name": "??",
+        "targets": [
+          {
+            "id": "???",
+            "lat": 24.001,
+            "lon": 121.001
+          }
+        ],
+        "home": {
+          "lon": 121,
+          "lat": 24
+        }
+      },
+      "vehicle": {
+        "battery_wh": 90,
+        "reserve_pct": 20,
+        "calib": 1
+      },
+      "wind": {
+        "speed_mps": 0,
+        "from_deg": 270
+      },
+      "state": null
+    },
+    "mission_version": "t3-v1:18fd58e1ddb701132603fc766ca9606e1595c13d60a54bf430ca93bc1c05b627"
+  },
+  {
+    "name": "negative_zero",
+    "inputs": {
+      "mission": {
+        "home": {
+          "lat": 24,
+          "lon": 121
+        },
+        "targets": [
+          {
+            "id": "???",
+            "lat": 24.001,
+            "lon": 121.001
+          }
+        ],
+        "name": "??"
+      },
+      "vehicle": {
+        "battery_wh": 90,
+        "reserve_pct": 20,
+        "calib": 1
+      },
+      "wind": {
+        "speed_mps": 0,
+        "from_deg": 270
+      },
+      "state": null
+    },
+    "mission_version": "t3-v1:18fd58e1ddb701132603fc766ca9606e1595c13d60a54bf430ca93bc1c05b627"
+  },
+  {
+    "name": "state_and_bool",
+    "inputs": {
+      "mission": {
+        "home": {
+          "lat": 24,
+          "lon": 121
+        },
+        "targets": [
+          {
+            "id": "???",
+            "lat": 24.001,
+            "lon": 121.001
+          }
+        ],
+        "name": "??"
+      },
+      "vehicle": {
+        "battery_wh": 90,
+        "reserve_pct": 20,
+        "calib": 1
+      },
+      "wind": {
+        "speed_mps": 0,
+        "from_deg": 270
+      },
+      "state": {
+        "battery_pct": 0,
+        "completed": [],
+        "remaining": [
+          "???"
+        ],
+        "ok": true,
+        "empty": null
+      }
+    },
+    "mission_version": "t3-v1:fd16e128c9cc27c454e5470a7dc7c86d786eaf04744ab3b7038b40f0643ca820"
+  },
+  {
+    "name": "array_order",
+    "inputs": {
+      "mission": {
+        "home": {
+          "lat": 24,
+          "lon": 121
+        },
+        "targets": [
+          {
+            "id": "???",
+            "lat": 24.001,
+            "lon": 121.001
+          },
+          {
+            "id": "?",
+            "lat": 24.002,
+            "lon": 121.002
+          }
+        ],
+        "name": "??"
+      },
+      "vehicle": {
+        "battery_wh": 90,
+        "reserve_pct": 20,
+        "calib": 1
+      },
+      "wind": {
+        "speed_mps": 0,
+        "from_deg": 270
+      },
+      "state": null
+    },
+    "mission_version": "t3-v1:ab905c37a75ab550deebec790f0703d7a2a2ae32ad78226f0b70d77891d8a373"
+  },
+  {
+    "name": "unicode_keys",
+    "inputs": {
+      "mission": {
+        "home": {
+          "lat": 24,
+          "lon": 121
+        },
+        "targets": [
+          {
+            "id": "???",
+            "lat": 24.001,
+            "lon": 121.001
+          }
+        ],
+        "name": "??",
+        "𐀀": "astral",
+        "": "bmp"
+      },
+      "vehicle": {
+        "battery_wh": 90,
+        "reserve_pct": 20,
+        "calib": 1
+      },
+      "wind": {
+        "speed_mps": 0,
+        "from_deg": 270
+      },
+      "state": null
+    },
+    "mission_version": "t3-v1:d1f399fcf189275f0981d53d015a60416b5d14f0e11adc9e8da68500dc508934"
+  }
+]

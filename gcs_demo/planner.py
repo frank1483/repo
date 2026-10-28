@@ -12,6 +12,7 @@ import math
 
 from .energy import Vehicle, Wind, route_estimate, haversine_m, best_speed
 from . import llm as llm_mod
+from .planner_t3 import mission_version, check_apply, replan_context, constraint_deltas, split_sorties
 
 
 # ---------- 幾何：禁航區（圓）與繞行 ----------
@@ -144,6 +145,7 @@ def _evaluate(cid, label, how, mission, vehicle, wind, path, speed, start_pct, n
         "energy_wh": round(est["energy_wh"], 1), "end_pct": round(est["end_pct"], 1),
         "margin_pct": round(est["margin_pct"], 1), "feasible": feasible,
         "violations": viol, "missing_must": missing_must, "must_rank": must_rank,
+        "constraint_deltas": constraint_deltas(mission, vehicle, path, est, missing_must, _to_xy),
         "path": [{k: p[k] for k in ("id", "lat", "lon", "alt", "kind", "priority") if k in p} for p in path],
         "legs": [{k: (round(v, 2) if isinstance(v, float) else v) for k, v in leg.items()}
                  for leg in est["legs"]],
@@ -190,6 +192,14 @@ def evidence_for(cands, vehicle, wind, extra=None):
                                           f"{'可行' if c['feasible'] else '不可行'}"
                                           + (f"（{'；'.join(c['violations'] + c['missing_must'])}）"
                                              if not c['feasible'] and (c['violations'] or c['missing_must']) else "")})
+    for entry, candidate in zip(ev[2:], cands):
+        if not candidate["feasible"]:
+            entry["value"] = {"candidate_id": candidate["id"], "violations": candidate["constraint_deltas"]}
+            entry["text"] += "；約束差額：" + str(candidate["constraint_deltas"])
+        if candidate.get("sorties"):
+            entry["value"] = {"candidate_id": candidate["id"], "sorties": [
+                {"id": s["id"], "end_pct": s["end_pct"], "margin_pct": s["margin_pct"]} for s in candidate["sorties"]]}
+            entry["text"] += "（兩趟各自返航／滿電出發；落地電量表示兩趟較低值，非累積值）"
     for e in extra or []:
         ev.append({"id": f"E{len(ev)+1}", "text": e})
     return ev
@@ -227,6 +237,10 @@ def plan_mission(mission: dict, vehicle: Vehicle, wind: Wind, backend=None) -> d
         s_m = order_targets(home_g, tm, end, _cost_fn(vehicle, wind, v0, "energy"))
         cands.append(_evaluate("C5", "只做必要目標", "刪除選配目標後重排", mission, vehicle, wind,
                                [home_g] + s_m + [end], v0, 100.0))
+    if not any(c["feasible"] and len(c["order"]) == len(tg) for c in cands):
+        split = split_sorties(mission, vehicle, wind, [tg, s_dist, s_en], [v0, bs], _evaluate, _home)
+        if split:
+            cands.append(split)
     rc = rule_choice(cands)
     ev = evidence_for(cands, vehicle, wind)
     backend = backend or llm_mod.get_backend()
@@ -237,7 +251,7 @@ def plan_mission(mission: dict, vehicle: Vehicle, wind: Wind, backend=None) -> d
         pick = {"choice_id": "", "source": "rule", "decision": "HOLD",
                 "reason_zh": "所有候選都不可行（電量或限制不符），建議換電池、分兩趟或減少目標。",
                 "evidence_ids": [], "llm": None}
-    return {"kind": "plan", "candidates": cands, "rule_choice": rc, "pick": pick, "evidence": ev,
+    return {"kind": "plan", "mission_version": mission_version(mission, vehicle, wind), "candidates": cands, "rule_choice": rc, "pick": pick, "evidence": ev,
             "vehicle": vehicle.to_dict(), "wind": {"speed_mps": wind.speed_mps, "from_deg": wind.from_deg}}
 
 
@@ -245,22 +259,9 @@ def replan(mission: dict, vehicle: Vehicle, wind: Wind, state: dict, event: dict
     """state：{"lat","lon","alt","battery_pct","completed":[ids],"remaining":[ids]}
     event：{"type": "wind"|"battery"|"no_fly"|"add_target", ...}
     """
-    m = copy.deepcopy(mission)
-    note = event.get("text_zh", "")
-    # 線上學習：用目前為止「實際/預估」耗電比修正剩餘航線的估算
-    vehicle = copy.copy(vehicle)
     ratio = state.get("observed_ratio", vehicle.calib)
-    vehicle.calib = round(ratio, 3)  # observed_ratio = 實際 / 未修正物理模型
-    if event["type"] == "wind":
-        wind = Wind(event["speed_mps"], event["from_deg"])
-    elif event["type"] == "no_fly":
-        m.setdefault("no_fly", []).append(event["zone"])
-    elif event["type"] == "add_target":
-        m["targets"].append(event["target"])
-        state = dict(state, remaining=state["remaining"] + [event["target"]["id"]])
-    elif event["type"] == "battery":
-        state = dict(state, battery_pct=event["battery_pct"])
-    m["completed"] = state["completed"]
+    note = event.get("text_zh", "")
+    m, vehicle, wind, state = replan_context(mission, vehicle, wind, state, event)
     cur = {"id": "現在位置", "lat": state["lat"], "lon": state["lon"],
            "alt": state.get("alt", m.get("cruise_alt_m", 50)), "kind": "current"}
     end = _home(m)
@@ -323,6 +324,6 @@ def replan(mission: dict, vehicle: Vehicle, wind: Wind, state: dict, event: dict
     pick = llm_mod.pick_candidate(
         backend, "飛行中重規劃：事件發生後選一條剩餘航線。必要目標盡量完成，但落地電量必須高於保留值；"
                  "都不行就選立即返航。", [_brief(c) for c in cands], ev, rc)
-    return {"kind": "replan", "event": event, "state": state, "candidates": cands, "rule_choice": rc,
+    return {"kind": "replan", "mission_version": mission_version(m, vehicle, wind, state), "event": event, "state": state, "candidates": cands, "rule_choice": rc,
             "pick": pick, "evidence": ev, "vehicle": vehicle.to_dict(),
             "wind": {"speed_mps": wind.speed_mps, "from_deg": wind.from_deg}}

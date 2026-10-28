@@ -102,6 +102,16 @@ def events_for(run, mission, replans, alerts):
     return sorted(events, key=lambda e: e['t_s'])
 
 
+def timeline_text(events, limit=5):
+    labels = {'takeoff': '起飛（推定）', 'start_in_air': '紀錄起點已在空中',
+              'landing': '降落（推定）', 'waypoint': '到達航點', 'alert': '告警', 'replan': '重規劃'}
+    parts = [f"{e['t_s']:.1f} 秒 {labels.get(e['kind'], e['kind'])}"
+             + (" " + str(e.get('target_id') or e.get('choice_id') or '')) for e in events[:limit]]
+    if len(events) > limit:
+        parts.append(f"另 {len(events)-limit} 件，詳見結構化時間軸")
+    return '事件時間軸（起降為取樣推定，不代表上鎖確認）：' + ('；'.join(p.strip() for p in parts) if parts else '無可推定事件')
+
+
 def alert_leads(run, alerts):
     """Predict threshold crossing using only samples available at each alert.
 

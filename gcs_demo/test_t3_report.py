@@ -116,8 +116,9 @@ class T3ReportTests(unittest.TestCase):
         p = Path(self.tmp.name) / 'm.plan'
         p.write_text(json.dumps(doc), encoding='utf-8')
         m = load_plan(p)
-        self.assertEqual([t['source_command'] for t in m['targets']], [22, 16])
-        self.assertEqual([t['alt'] for t in m['targets']], [5, 7])
+        self.assertEqual([t['source_command'] for t in m['targets']], [16])
+        self.assertEqual([t['alt'] for t in m['targets']], [7])
+        self.assertEqual([t['alt'] for t in m['takeoff_items']], [5])
         self.assertTrue(m['rtl'])
         doc['mission']['items'][0]['command'] = 177
         p.write_text(json.dumps(doc), encoding='utf-8')
