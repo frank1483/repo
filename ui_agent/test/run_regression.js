@@ -48,7 +48,7 @@ function evaluateTurns(r) {
     }
     return {result,ctx,ok,failures};
 }
-let actions=0,locations=0,passed=0;const failures=[],by_category={};
+let actions=0,locations=0,passed=0;const failures=[],by_category={},by_group={};
 for(const r of rows) {
     if(!r.id||seen.has(r.id)||(typeof r.intent!=='string'&&!Array.isArray(r.turns))||!r.ctx||!r.expect||!Array.isArray(r.expect.ids))throw Error('Invalid fixture '+r.id);
     seen.add(r.id);
@@ -61,10 +61,12 @@ for(const r of rows) {
         (r.expect.applied===undefined||final.applied===r.expect.applied);
     if(actionOK)actions++;if(locationOK)locations++;if(actionOK&&locationOK)passed++;
     const bucket=by_category[r.category]||(by_category[r.category]={total:0,passed:0});bucket.total++;if(actionOK&&locationOK)bucket.passed++;
+    const group=by_group[r.group || 'ungrouped']||(by_group[r.group || 'ungrouped']={total:0,passed:0});group.total++;if(actionOK&&locationOK)group.passed++;
     if(!actionOK||!locationOK)failures.push({id:r.id,intent:r.intent,expect:r.expect,
         turn_failures:turns.failures, actual:{decision:decision.decision,ids,final_page:final.page,final_section:final.section,applied:final.applied}});
 }
+for(const group of Object.values(by_group))group.accuracy=group.passed/group.total;
 console.log(JSON.stringify({verification_scope:'rules + simulated shell only; no Qt/HTTP/Settings/device',total:rows.length,passed,
-    action_accuracy:actions/rows.length,final_page_accuracy:locations/rows.length,by_category,failures},null,2));
+    action_accuracy:actions/rows.length,final_page_accuracy:locations/rows.length,by_category,by_group,failures},null,2));
 process.exitCode=failures.length?1:0;
 

@@ -356,12 +356,32 @@ function validLayoutName(name) {
 // ---------------------------------------------------------------- 意圖 → 候選
 // ctx: { page, section, modules: { id: { visible: bool, registered: bool } }, canUndo, canRedo }
 // 回傳 { candidates: [...], evidence: [...], rule: { decision, choice_id, reason_zh } }
+// A bare settings request has no chosen destination, even with a model enabled.
+function genericSettings(intent, ctx) {
+    var raw = norm(intent).replace(/[。！!？?，,]/g, "").replace(/\s+/g, "")
+    if (!/^(?:(?:請|麻煩|幫我|請幫我))?(?:(?:我要|我想|我想要|想要))?(?:(?:去|到|打開|開啟|進入|前往|查看|看|調|調整|更改|修改))?(?:設定|設置)(?:頁|頁面|畫面)?(?:一下|看看|吧|好嗎|可以嗎)?$/.test(raw)) return null
+    var pages = [3,5,7,8], candidates = []
+    for (var i=0; i<pages.length; ++i)
+        candidates.push({id:"NAV_"+pages[i],kind:"nav",page:pages[i],section:-1,label_zh:pageName(pages[i]),score:1})
+    if (pages.indexOf(ctx.page) >= 0)
+        for (i=0; i<SECTIONS.length; ++i) if (SECTIONS[i].page === ctx.page) {
+            var sec=SECTIONS[i]
+            candidates.push({id:"NAV_"+sec.page+"_"+sec.section,kind:"nav",page:sec.page,section:sec.section,
+                             label_zh:pageName(sec.page)+" › "+sec.name,score:1})
+        }
+    return {intent:String(intent),generic_settings:true,candidates:candidates,
+            evidence:[{id:"E1",text:"未指定設定目標；列出主要設定與目前設定頁子頁"}],
+            rule:{decision:"CLARIFY",choice_id:"",reason_zh:"想開啟哪個設定頁？"}}
+}
+
 function analyzeSingle(intent, ctx) {
     ctx = ctx || {}
     var named = namedLayoutIntent(intent, ctx)
     if (named) return named
     var parameter = parameterNavigation(intent, ctx)
     if (parameter) return parameter
+    var generic = genericSettings(intent, ctx)
+    if (generic) return generic
     var raw = norm(intent)
     var text = stripFiller(intent)
     var evidence = [{ id: "E1", text: "目前畫面：" + pageName(ctx.page) }]

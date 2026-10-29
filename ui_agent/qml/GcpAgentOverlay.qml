@@ -140,6 +140,9 @@ Item {
         } else if (model && !model.ok) {
             source = qsTr("規則（模型無效：%1）").arg(model.error)
         }
+        // A generic settings utterance must stay a clarification: a model cannot
+        // invent which setting the user meant. Model errors use the same fallback.
+        if (result.generic_settings) { decision = result.rule; source = qsTr("規則（設定目標待確認）") }
         // 模型被給全目錄但無效時，規則原本就沒有候選 → 保持 HOLD
         const selectedIds = decision.steps ? decision.steps.map(s => s.choice_id) : [decision.choice_id]
         if (decision.decision === "SELECT" && (!selectedIds.length || selectedIds.length > 3 ||
@@ -158,7 +161,8 @@ Item {
             pendingText = result.intent
             const loc = context()
             _choiceGuard = { revision: GcpAgentState.revision, page: loc.page, section: loc.section }
-            choices = result.compound ? [] : result.candidates.filter(c => c.score > 0 || source !== qsTr("規則")).slice(0, 6)
+            const available = result.candidates.filter(c => c.score > 0 || source !== qsTr("規則"))
+            choices = result.compound ? [] : (result.generic_settings ? available : available.slice(0, 6))
             messageText = result.compound ? decision.reason_zh : (decision.reason_zh || qsTr("有多個可能")).replace(/[，。,]?\s*請選一個[：:]?$/, "") + qsTr("，請選一個：")
         } else {
             pendingText = result.pending_text || ""
@@ -659,12 +663,19 @@ Item {
                 wrapMode: Text.Wrap
                 color: root.cText; font.pixelSize: (21 * GcpTheme.font.textScale)
             }
-            Repeater {
+            ListView {
+                id: choicesList
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, 180)
+                visible: count > 0
+                clip: true
+                spacing: 8
+                ScrollBar.vertical: ScrollBar { }
                 model: root.choices
                 delegate: Rectangle {
                     required property var modelData
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 54
+                    width: choicesList.width
+                    height: 54
                     radius: 10
                     color: "#1A22D3EE"
                     border.color: root.cAccent
