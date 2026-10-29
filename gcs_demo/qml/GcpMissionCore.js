@@ -1036,6 +1036,8 @@ if (typeof module !== "undefined") module.exports = {
     evaluateTypedAlertCandidates:evaluateTypedAlertCandidates,
     geographicWindRouteBounds:geographicWindRouteBounds,
     evaluateGeographicAlertCandidates:evaluateGeographicAlertCandidates,
+    geographicEnergyAlertSnapshot:geographicEnergyAlertSnapshot,
+    createGeographicEnergyAlertPredictor:createGeographicEnergyAlertPredictor,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1700,4 +1702,57 @@ function evaluateGeographicAlertCandidates(v,candidates,w,startPct) {
     rows.forEach(function(r){if(r.sampled_energy_feasible&&(!best||r.bounds.low_pct>best.bounds.low_pct))best=r})
     return {scope:"caller_supplied_geographic_event_energy_comparison_only",candidates:rows,best_energy_id:best?best.id:null,ranking:"maximum_sampled_low_pct_first_input_on_tie",
         return_inferred:false,wind_direction_varied:false,common_endpoint_enforced:false,feasible:false,executable:false}
+}
+
+// Additive P1 only: explicit caller-owned geographic candidates; no action.
+function geographicEnergyAlertSnapshot(v,candidates,currentId,w,startPct) {
+    var items=geographicAlertSnapshot(candidates)
+    var comparison=evaluateGeographicAlertCandidates(v,items,w,startPct)
+    if(typeof currentId!=="string"||!items.some(function(x){return x.id===currentId}))throw new Error("current_id must identify one supplied candidate")
+    var current=items.filter(function(x){return x.id===currentId})[0],activeMode=flightMode(v,current.mode)
+    if(activeMode!=="fw")throw new Error("typed geographic alerts require FW mode")
+    items.forEach(function(item){
+        var p=item.entry,keys=["lat","lon","alt","air_heading_deg"]
+        if(!p||typeof p!=="object"||Array.isArray(p)||Object.keys(p).length!==4||!keys.every(function(k){return Object.prototype.hasOwnProperty.call(p,k)}))throw new Error("typed alert entry requires lat, lon, alt, air_heading_deg")
+        routeNumber(p.lat,"entry lat",-75,75);routeNumber(p.lon,"entry lon",-180,180);routeNumber(p.alt,"entry alt",0);routeNumber(p.air_heading_deg,"entry air_heading_deg")
+        if(!item.entry||!current.entry||Object.keys(item.entry).length!==Object.keys(current.entry).length||Object.keys(current.entry).some(function(k){return !Object.prototype.hasOwnProperty.call(item.entry,k)||item.entry[k]!==current.entry[k]}))throw new Error("typed alert alternatives require one identical entry pose")
+        if(flightMode(v,item.mode)!==activeMode)throw new Error("typed alert alternatives require one flight mode")
+    })
+    var row=comparison.candidates.filter(function(x){return x.id===currentId})[0],known=row.status==="ok",bounds=row.bounds||{},nominal=bounds.nominal||{}
+    return geographicAlertSnapshot({scope:"typed_geographic_P1_finite_energy_samples_only",status:known?"ok":"unsupported",current_id:currentId,
+        entry:current.entry,mode:activeMode,start_pct:startPct===undefined?100:startPct,reserve_pct:v.reserve_pct,
+        sampled_energy_risk:known?bounds.low_pct<v.reserve_pct:null,nominal_end_pct:nominal.status==="ok"?nominal.end_pct:null,
+        low_pct:known?bounds.low_pct:null,high_pct:known?bounds.high_pct:null,comparison:comparison,rule_choice:null,
+        return_inferred:false,landing_modeled:false,feasible:false,executable:false})
+}
+
+function typedPredictorInteger(value,name,low,high) {
+    if(!Number.isSafeInteger(value)||value<low||value>high)throw new Error(name+" must be an integer in range")
+    return value
+}
+
+function createGeographicEnergyAlertPredictor(v,raiseTicks,clearTicks) {
+    if(raiseTicks===undefined)raiseTicks=3
+    if(clearTicks===undefined)clearTicks=10
+    typedPredictorInteger(raiseTicks,"raise_ticks",1,10000)
+    typedPredictorInteger(clearTicks,"clear_ticks",1,10000)
+    // Match Python deepcopy: later caller edits cannot alter a live latch.
+    var vehicle=geographicAlertSnapshot(v),lastSequence=-1,active=false,raising=0,clearing=0
+    return {tick:function(sequence,candidates,currentId,w,startPct){
+        typedPredictorInteger(sequence,"sequence",0,9007199254740991)
+        if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
+        var result=geographicEnergyAlertSnapshot(vehicle,candidates,currentId,w,startPct)
+        lastSequence=sequence
+        var known=result.status==="ok",risk=result.sampled_energy_risk
+        if(!known){active=false;raising=0;clearing=0}
+        else if(risk){raising=Math.min(raising+1,raiseTicks);clearing=0;if(raising>=raiseTicks)active=true}
+        else{clearing=Math.min(clearing+1,clearTicks);raising=0;if(clearing>=clearTicks)active=false}
+        var published=known?active:null,severity=!published?5:(result.nominal_end_pct<0?2:4),finding=null
+        if(known)finding={key:"typed_geographic_energy",active:published,severity:severity,title:"Typed geographic route energy samples",
+            value:risk?"sampled reserve risk":"sampled reserve met",
+            evidence:[{id:"E_TYPED_P1",text:"finite energy samples; no landing modeled",value:{current_id:currentId,nominal_end_pct:result.nominal_end_pct,low_pct:result.low_pct,high_pct:result.high_pct,reserve_pct:result.reserve_pct}}],
+            candidates:[],rule_choice:null,lead_s:null}
+        Object.assign(result,{sequence:sequence,active:published,finding:finding,raise_streak:raising,clear_streak:clearing,raise_ticks:raiseTicks,clear_ticks:clearTicks})
+        return geographicAlertSnapshot(result)
+    }}
 }
