@@ -1039,6 +1039,8 @@ if (typeof module !== "undefined") module.exports = {
     geographicEnergyAlertSnapshot:geographicEnergyAlertSnapshot,
     createGeographicEnergyAlertPredictor:createGeographicEnergyAlertPredictor,
     createTypedGeographicAlertFeed:createTypedGeographicAlertFeed,
+    typedWindTrendSnapshot:typedWindTrendSnapshot,
+    createTypedWindTrendPredictor:createTypedWindTrendPredictor,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1811,5 +1813,116 @@ function createTypedGeographicAlertFeed(v,raiseTicks,clearTicks) {
         predictor=next;version=missionVersion;current=currentId;lastSequence=sequence;lastTime=tm.t_s;active=result.active
         severity=result.finding?result.finding.severity:null
         return geographicAlertSnapshot(result)
+    }}
+}
+
+// Independent measured P5; existing P1 feed deliberately remains P1-only.
+function typedWindOptions(options) {
+    var cfg={window_s:180,min_samples:60,min_span_s:30,max_gap_s:30,horizon_s:300,min_slope_mps2:0.002,min_r2:0.6}
+    if(options===undefined||options===null)options={}
+    if(typeof options!=="object"||Array.isArray(options)||Object.keys(options).some(function(k){return !Object.prototype.hasOwnProperty.call(cfg,k)}))
+        throw new Error("unsupported typed wind options")
+    Object.keys(options).forEach(function(k){cfg[k]=options[k]})
+    typedPredictorInteger(cfg.min_samples,"min_samples",2,601)
+    routeNumber(cfg.window_s,"window_s",1e-6,86400)
+    routeNumber(cfg.min_span_s,"min_span_s",1e-6,cfg.window_s)
+    routeNumber(cfg.max_gap_s,"max_gap_s",1e-6,cfg.window_s)
+    routeNumber(cfg.horizon_s,"horizon_s",0,86400)
+    routeNumber(cfg.min_slope_mps2,"min_slope_mps2",0,1000)
+    routeNumber(cfg.min_r2,"min_r2",0,1)
+    return cfg
+}
+
+function typedWindLimit(v) {
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)
+        throw new Error("typed wind requires an explicit FW/hybrid profile")
+    return routeNumber(v.airframe_profile.limits.wind_limit_mps,"wind_limit_mps",0)
+}
+
+function typedWindMeasurement(rec) {
+    if(!rec||typeof rec!=="object"||Array.isArray(rec)||
+       !Object.prototype.hasOwnProperty.call(rec,"t_s")||!Object.prototype.hasOwnProperty.call(rec,"wind_mps"))
+        throw new Error("measured t_s and wind_mps required")
+    return {t_s:routeNumber(rec.t_s,"t_s",0,9007199254740991),wind_mps:routeNumber(rec.wind_mps,"wind_mps",0)}
+}
+
+function typedWindHistory(samples,cfg) {
+    if(!Array.isArray(samples)||samples.length<1||samples.length>601)throw new Error("typed wind requires 1..601 measured samples")
+    var points=samples.map(typedWindMeasurement)
+    for(var i=1;i<points.length;i++)if(points[i].t_s<=points[i-1].t_s)throw new Error("measured time must increase strictly")
+    var end=points[points.length-1].t_s
+    points=points.filter(function(p){return p.t_s>=end-cfg.window_s})
+    var cut=0
+    for(var j=1;j<points.length;j++)if(points[j].t_s-points[j-1].t_s>cfg.max_gap_s)cut=j
+    return points.slice(cut)
+}
+
+function typedWindTrendSnapshot(v,samples,options) {
+    var cfg=typedWindOptions(options),limit=typedWindLimit(v),points=typedWindHistory(samples,cfg),latest=points[points.length-1]
+    var span=latest.t_s-points[0].t_s
+    var result={scope:"typed_P5_measured_speed_trend_only",status:"unknown",reason:"insufficient_samples",risk:null,
+        limit_mps:limit,current_wind_mps:latest.wind_mps,sample_count:points.length,span_s:span,t_s:latest.t_s,
+        trend_mps_per_s:null,fitted_now_mps:null,r2:null,lead_s:null,horizon_s:cfg.horizon_s,
+        direction_predicted:false,probability_interval:false,sensor_validated:false,feasible:false,executable:false}
+    if(latest.wind_mps>=limit){Object.assign(result,{status:"ok",reason:"observed_limit_reached",risk:true,lead_s:0});return geographicAlertSnapshot(result)}
+    if(points.length<cfg.min_samples)return geographicAlertSnapshot(result)
+    if(span<cfg.min_span_s){result.reason="insufficient_span";return geographicAlertSnapshot(result)}
+    var xs=points.map(function(p){return p.t_s-latest.t_s}),ys=points.map(function(p){return p.wind_mps})
+    function sum(a){return a.reduce(function(s,x){return s+x},0)}
+    var mx=sum(xs)/xs.length,my=sum(ys)/ys.length,sxx=0,sxy=0,syy=0
+    for(var i=0;i<points.length;i++){var dx=xs[i]-mx,dy=ys[i]-my;sxx+=dx*dx;sxy+=dx*dy;syy+=dy*dy}
+    var slope=routeNumber(sxy/sxx,"trend slope"),fitted=routeNumber(my-slope*mx,"fitted wind")
+    var r2=syy===0?1:Math.max(0,Math.min(1,sxy*sxy/(sxx*syy)))
+    Object.assign(result,{trend_mps_per_s:slope,fitted_now_mps:fitted,r2:r2})
+    if(syy===0)Object.assign(result,{status:"ok",reason:"constant_wind",risk:false})
+    else if(r2<cfg.min_r2)result.reason="trend_fit_unreliable"
+    else if(slope<=cfg.min_slope_mps2)Object.assign(result,{status:"ok",reason:"trend_not_rising",risk:false})
+    else{
+        var lead=routeNumber(Math.max(0,(limit-fitted)/slope),"lead_s",0),risk=lead<=cfg.horizon_s
+        Object.assign(result,{status:"ok",reason:risk?"crossing_within_horizon":"crossing_beyond_horizon",risk:risk,lead_s:lead})
+    }
+    return geographicAlertSnapshot(result)
+}
+
+function createTypedWindTrendPredictor(v,options,raiseTicks,clearTicks) {
+    typedWindLimit(v)
+    var vehicle=geographicAlertSnapshot(v),cfg=typedWindOptions(options)
+    if(raiseTicks===undefined)raiseTicks=3
+    if(clearTicks===undefined)clearTicks=10
+    typedPredictorInteger(raiseTicks,"raise_ticks",1,10000);typedPredictorInteger(clearTicks,"clear_ticks",1,10000)
+    var lastSequence=-1,lastTime=-1,version=null,history=[],active=null,severity=null,raising=0,clearing=0
+    return {tick:function(sequence,rec,missionVersion){
+        typedPredictorInteger(sequence,"sequence",0,9007199254740991)
+        if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
+        if(typeof missionVersion!=="string"||missionVersion.length<1||missionVersion.length>128||/[^A-Za-z0-9._:-]/.test(missionVersion))
+            throw new Error("mission_version requires 1..128 ASCII version characters")
+        var tm=typedWindMeasurement(rec)
+        if(tm.t_s<=lastTime)throw new Error("t_s must increase strictly")
+        var changed=version!==null&&missionVersion!==version,gap=lastTime>=0&&tm.t_s-lastTime>cfg.max_gap_s,reset=changed||gap
+        var nextHistory=typedWindHistory((reset?[]:history).concat([tm]).slice(-601),cfg)
+        var result=typedWindTrendSnapshot(vehicle,nextHistory,cfg),previous=reset?null:active
+        var nextActive=reset||active===null?false:active,nextRaise=reset?0:raising,nextClear=reset?0:clearing
+        if(result.status!=="ok"){nextActive=null;nextRaise=0;nextClear=0}
+        else if(result.risk){nextRaise=Math.min(nextRaise+1,raiseTicks);nextClear=0;nextActive=nextActive||nextRaise>=raiseTicks}
+        else{nextRaise=0;nextClear=Math.min(nextClear+1,clearTicks);if(nextClear>=clearTicks)nextActive=false}
+        var nextSeverity=nextActive&&tm.wind_mps>=result.limit_mps?2:(nextActive?4:5)
+        var finding={key:"typed_wind_trend",active:nextActive,severity:nextSeverity,title:"Measured wind speed trend",value:result.reason,
+            evidence:[{id:"E_TYPED_P5",text:"conditional finite-window speed trend",value:{current_wind_mps:result.current_wind_mps,
+                limit_mps:result.limit_mps,trend_mps_per_s:result.trend_mps_per_s,r2:result.r2,lead_s:result.lead_s}}],
+            candidates:[],rule_choice:null,lead_s:result.lead_s},events=[]
+        function event(kind){
+            events.push(Object.assign({},finding,{type:kind,t:tm.t_s,status:result.status,sequence:sequence,mission_version:missionVersion,executable:false}))
+            if(kind==="reset")Object.assign(events[events.length-1],{active:null,severity:5,value:"history and latch reset",evidence:[],lead_s:null})
+        }
+        if(reset)event("reset")
+        if(nextActive===null){if(previous!==null||version===null||reset)event("unknown")}
+        else if(nextActive){if(previous!==true)event("raise");else if(nextSeverity<severity)event("update")}
+        else if(previous===true)event("resolve")
+        else if(previous===null)event("known")
+        Object.assign(result,{sequence:sequence,mission_version:missionVersion,active:nextActive,raise_streak:nextRaise,clear_streak:nextClear,
+            finding:finding,events:events,reset_reason:changed?"mission_version_changed":(gap?"telemetry_gap":null)})
+        var detached=geographicAlertSnapshot(result)
+        lastSequence=sequence;lastTime=tm.t_s;version=missionVersion;history=nextHistory;active=nextActive;severity=nextSeverity;raising=nextRaise;clearing=nextClear
+        return detached
     }}
 }
