@@ -53,6 +53,7 @@ def main():
     inputs = []
     pairs = [(HERE.parent / "qml" / name, agent / "qml" / name) for name in (
         "GcpAgentState.qml", "GcpAgentCore.js", "GcpAgentSnapshot.js")]
+    pairs += [(HERE / "OwnedGroupCheck.js", agent / "test" / "OwnedGroupCheck.js")]
     pairs += [(HERE / "harness" / "GcpTheme.qml", module / "GcpTheme.qml"),
               (HERE / "harness" / "AdapterV6.qml", fixtures / "AdapterV6.qml")]
     for source, target in pairs:

@@ -1,6 +1,7 @@
 import QtQuick
 import QGroundControl.GCP
 import "../../qml/GcpAgentSnapshot.js" as Snapshot
+import "../OwnedGroupCheck.js" as Checks
 
 // A real QQuickItem scene. No Overlay/model/network/flight dependency.
 Window {
@@ -85,14 +86,16 @@ Window {
         host.page = 1; host.section = -1
         qtOrder.stackAfter(c, a)
     }
+    property var _checkScope: null
+    function beginOwnedGroup() {
+        if (!_checkScope) throw new Error("State group outside a check scope")
+        return _checkScope.beginGroup()
+    }
     function check(name, fn) {
-        cleanScene()
-        try {
-            fn()
-            rows.push({name: name, ok: true})
-        } catch (e) {
-            rows.push({name: name, ok: false, error: String(e)})
-        }
+        rows.push(Checks.run(name, GcpAgentState, cleanScene, function(scope) {
+            _checkScope = scope
+            try { fn() } finally { _checkScope = null }
+        }))
     }
     function run() {
         if (ran) throw new Error("first-execution harness cannot run twice")
@@ -182,7 +185,7 @@ Window {
             requireValue(GcpAgentState.undoStack.length === 0 && GcpAgentState.redoStack.length === 0,
                          "fresh settings/state required")
             var original = JSON.stringify(GcpAgentState.snapshot())
-            var token = GcpAgentState.beginGroup()
+            var token = beginOwnedGroup()
             GcpAgentState.beginChange("move")
             GcpAgentState.setOverride("miniView", {dx: 15, dy: 10, scale: 1, hidden: false})
             GcpAgentState.beginChange("hide")
@@ -212,7 +215,7 @@ Window {
             GcpAgentState.undo(1)
             var snap = JSON.stringify(GcpAgentState.snapshot())
             var undo = JSON.stringify(GcpAgentState.undoStack), redo = JSON.stringify(GcpAgentState.redoStack)
-            var token = GcpAgentState.beginGroup()
+            var token = beginOwnedGroup()
             GcpAgentState.beginChange("temporary")
             GcpAgentState.setOverride("miniView", {dx: 22, dy: 12, scale: 1, hidden: false})
             GcpAgentState.rollbackGroup(token)
