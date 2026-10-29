@@ -159,7 +159,7 @@ class PredictiveAlertEngine:
             values = [tm.t, *tm.pos, *tm.vel, tm.soc_pct, tm.voltage, tm.current_a,
                       tm.used_wh, tm.cell_count, tm.next_wp, tm.link_pct,
                       tm.wind.speed_mps, tm.wind.from_deg]
-            values += [v for k, v in vars(self.v).items() if k != "vehicle_id"]
+            values += [v for k, v in vars(self.v).items() if k not in ("vehicle_id", "airframe_profile")]  # 機型檔由 load_airframe 驗證
             values += list(vars(self.cfg).values()) + [self.calib, *self.home]
             if not all(self._finite(x) for x in values):
                 return "遙測／機型／設定含非有限數值"
