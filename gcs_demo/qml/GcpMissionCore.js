@@ -1031,6 +1031,7 @@ if (typeof module !== "undefined") module.exports = {
     turnEstimate:turnEstimate, loiterEstimate:loiterEstimate,
     windArcEstimate:windArcEstimate, windLoiterEstimate:windLoiterEstimate,
     windRouteEstimate:windRouteEstimate,
+    geographicWindRouteEstimate:geographicWindRouteEstimate,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1524,4 +1525,42 @@ function windRouteEstimate(v,entry,events,w,startPct,mode) {
             feasible:false,landing_modeled:false,arrival_mode:"fw",exit_local_m:{east_m:east,north_m:north},
             exit_air_heading_deg:heading,exit_ground_heading_deg:last.exit_ground_heading_deg,exit_ground_speed_mps:last.exit_ground_speed_mps,
             legs:legs,scope:"explicit_local_tangent_energy_route_not_executable_route"}
+}
+
+// Bounded approximate geographic adapter. Never a geodesic/flight trajectory.
+function geographicWindRouteEstimate(v,entry,events,w,startPct,mode) {
+    var maxPath=10000,maxLat=75
+    if(!entry||typeof entry!=="object"||Array.isArray(entry)||Object.keys(entry).sort().join(",")!=="air_heading_deg,alt,lat,lon") throw new Error("geographic entry requires only lat, lon, alt, air_heading_deg")
+    routePosition([entry.lat,entry.lon])
+    var lat0=routeNumber(entry.lat,"origin lat",-maxLat,maxLat),lon0=entry.lon
+    var alt=routeNumber(entry.alt,"alt",0),heading=routeNumber(entry.air_heading_deg,"air_heading_deg")
+    if(!Array.isArray(events)||events.length<1||events.length>1000) throw new Error("geographic route requires 1..1000 events")
+    var metres=Math.PI*6371000/180,scale=metres*Math.cos(lat0*Math.PI/180)
+    var allowed={straight:["kind","id","lat","lon","alt","ground_mps"],arc:["kind","id","v_air","angle_deg","clockwise","bank_deg","radius_m"],loiter:["kind","id","v_air","duration_s","clockwise","radius_m"]}
+    var local=[]
+    for(var i=0;i<events.length;i++) {
+        var event=events[i]
+        if(!event||typeof event!=="object"||Array.isArray(event)||typeof event.kind!=="string") throw new Error("geographic event requires a kind")
+        var kind=event.kind
+        if(!Object.prototype.hasOwnProperty.call(allowed,kind)||Object.keys(event).some(function(k){return allowed[kind].indexOf(k)<0})) throw new Error("unsupported geographic event fields")
+        if(Object.prototype.hasOwnProperty.call(event,"id")&&(typeof event.id!=="string"||Array.from(event.id).length<1||Array.from(event.id).length>128)) throw new Error("id requires a nonempty string of at most 128 characters")
+        if(kind==="straight") {
+            routePosition([event.lat,event.lon])
+            if(routeNumber(event.alt,"straight alt",0)!==alt) throw new Error("geographic wind route requires constant altitude")
+            var east=(((event.lon-lon0+180)%360+360)%360-180)*scale,north=(event.lat-lat0)*metres
+            if(Math.hypot(east,north)>maxPath) throw new Error("geographic target exceeds 10 km local frame")
+            var item={kind:kind,east_m:east,north_m:north,ground_mps:event.ground_mps}
+            if(Object.prototype.hasOwnProperty.call(event,"id")) item.id=event.id
+            local.push(item)
+        } else local.push(Object.assign({},event))
+    }
+    var result=windRouteEstimate(v,{east_m:0,north_m:0,air_heading_deg:heading},local,w,startPct,mode)
+    var reach=routeNumber(result.air_dist_m+w.speed_mps*result.time_s,"path budget",0)
+    if(reach>maxPath) throw new Error("geographic route exceeds 10 km cumulative path budget")
+    function geographic(p){return {lat:lat0+p.north_m/metres,lon:(((lon0+p.east_m/scale+180)%360+360)%360)-180,alt:alt}}
+    result.legs=result.legs.map(function(leg){return Object.assign({},leg,{entry_geographic:geographic(leg.entry_local_m),exit_geographic:geographic(leg.exit_local_m)})})
+    result.exit_geographic=geographic(result.exit_local_m)
+    result.projection={kind:"entry_anchored_equirectangular_approximation",origin:{lat:lat0,lon:lon0,alt:alt},earth_radius_m:6371000,max_path_m:maxPath,max_origin_lat_deg:maxLat,path_budget_m:reach}
+    result.scope="geographic_explicit_tangent_energy_approximation_not_executable_route"
+    return result
 }

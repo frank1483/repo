@@ -265,3 +265,9 @@ def wind_route_estimate(vehicle, entry, events, wind, start_pct=100.0, mode=None
     """Explicit local-plane tangent energy route; not an executable mission."""
     from .wind_route import wind_route_estimate as _route
     return _route(vehicle, entry, events, wind, start_pct, mode)
+
+
+def geographic_wind_route_estimate(vehicle, entry, events, wind, start_pct=100.0, mode=None):
+    """Bounded approximate lat/lon bridge for explicit level FW energy events."""
+    from .geographic_wind_route import geographic_wind_route_estimate as _route
+    return _route(vehicle, entry, events, wind, start_pct, mode)
