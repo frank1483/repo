@@ -459,7 +459,7 @@ class PredictiveAlertEngine:
                     {"id": "E1", "text": "目前鏈路品質／離家距離", "value": f"{tm.link_pct:.0f}%／{d_now / 1000:.2f} km"},
                     {"id": "E2", "text": "每遠 1 km 鏈路下降", "value": f"{-b * 1000:.0f}%（R²={r2:.2f}）"},
                     {"id": "E3", "text": "預估最差航點", "value": f"WP{wp + 1}，{max(0, q):.0f}%"},
-                    {"id": "E4", "text": "斷訊門檻", "value": f"{self.cfg.link_min_pct:.0f}%"},
+                    {"id": "E4", "text": "弱鏈路門檻", "value": f"{self.cfg.link_min_pct:.0f}%"},
                 ]
                 f.candidates = [
                     {"id": "C1", "action": "A_CONTINUE_MONITOR", "label": "繼續並確認失聯保護（RTL）已開", "energy_feasible": None, "feasible": True},
