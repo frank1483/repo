@@ -166,7 +166,8 @@ def pick_candidate(backend: LLMBackend, task_zh: str, candidates: list, evidence
 
     回傳 {"choice_id", "source": "llm"|"rule", "reason_zh", "evidence_ids", "llm": 呼叫紀錄}
     """
-    ids = {c["id"] for c in candidates}
+    # 模型只能選可直接套用的候選：不可行或需換電分趟的都不算
+    ids = {c["id"] for c in candidates if c.get("feasible", True) and not c.get("requires_battery_swap")}
     ev_ids = {e["id"] for e in evidence}
     fallback = {"choice_id": rule_choice, "source": "rule", "decision": "SELECT",
                 "reason_zh": "規則選擇：可行候選中能耗最低且涵蓋所有必要目標。",

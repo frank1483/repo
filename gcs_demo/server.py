@@ -13,7 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import scenario as S
 from .energy import Vehicle, Wind
 from .llm import get_backend
-from .planner import plan_mission, replan
+from .planner import plan_mission, replan, check_apply
+from .planner_t3 import replan_context
 from .report import make_report
 from .sim import MissionRun
 from .alert_bridge import AlertFeed, battery_raise
@@ -37,6 +38,8 @@ class Session:
         self.run = None
         self.replans = []
         self.alerts = []
+        self.current_state = None
+        self.active_event = None
 
     def vehicle(self):
         return Vehicle(calib=self.calib)
@@ -82,35 +85,61 @@ def handle(path, body):
                 s.calib = float(body["calib"])
             s.plan = plan_mission(s.mission, s.vehicle(), s.wind)
             s.run, s.replans, s.alerts = None, [], []
+            s.current_state, s.active_event = None, None
             return s.plan
         if path == "/api/start":
-            s.chosen = _find(s.plan["candidates"], body["choice_id"])
+            if not s.plan or body.get("mission_version") != s.plan.get("mission_version"):
+                return {"ok": False, "reason_zh": "任務已變更，請重新規劃"}
+            gate = check_apply(s.plan, s.mission, s.vehicle(), s.wind, s.current_state)
+            if not gate["ok"]:
+                return gate
+            chosen = _find(s.plan["candidates"], body["choice_id"])
+            if not chosen["feasible"]:
+                return {"ok": False, "reason_zh": "候選不可行，不能套用"}
+            if chosen.get("sorties"):
+                return {"ok": False, "reason_zh": "S1 含兩個獨立架次，請分別檢視與套用；目前執行器僅支援單趟"}
+            s.chosen = chosen
             s.run = MissionRun(s.vehicle(), s.wind, S.TRUE_CALIB, S.WIND_EVENTS)
             s.replans, s.alerts = [], []
             feed = AlertFeed(s.mission["home"], s.chosen["path"], s.vehicle())
             # 飛到告警引擎發出「電量不足以飛完／即將到最晚返航點」的預測告警為止
             state = s.run.fly(s.chosen, on_tick=lambda rec, i: battery_raise(feed.tick(rec, i)) is not None)
             s.alerts = [_alert_view(e, s.chosen) for e in feed.events if e["type"] != "resolve"]
+            s.current_state = state
             out = {"state": state, "telemetry": s.run.log, "alerts": s.alerts}
             if state["done"]:
-                out.update({"report": make_report(s.run, s.mission, s.chosen, [], s.alerts),
+                out.update({"report": make_report(s.run, s.mission, s.chosen, [], s.alerts,
+                                                  versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")}),
                             "planned_curve": _curve(s.chosen)})
                 return out
             trig = battery_raise(feed.events) or {}
             w = s.run._wind_now()
             event = {"type": "wind", "speed_mps": w.speed_mps, "from_deg": w.from_deg,
                      "text_zh": f"預測告警「{trig.get('title', '電量')}：{trig.get('value', '')}」"}
+            s.active_event = event
             r = replan(s.mission, s.vehicle(), s.wind, state, event)
             s.replans.append(r)
             out.update({"alert": _alert_view(trig, s.chosen) if trig else None, "replan": r})
             return out
         if path == "/api/continue":
+            if not s.replans or s.current_state is None or s.active_event is None:
+                return {"ok": False, "reason_zh": "沒有可套用的重規劃"}
             r = s.replans[-1]
+            if body.get("mission_version") != r.get("mission_version"):
+                return {"ok": False, "reason_zh": "任務已變更，請重新規劃"}
+            context = replan_context(s.mission, s.vehicle(), s.wind, s.current_state, s.active_event)
+            gate = check_apply(r, *context)
+            if not gate["ok"]:
+                return gate
             cand = _find(r["candidates"], body["choice_id"])
+            if not cand["feasible"]:
+                return {"ok": False, "reason_zh": "候選不可行，不能套用"}
             r["final_choice"] = body["choice_id"]
             n0 = len(s.run.log)
             state = s.run.fly(cand)
-            rep = make_report(s.run, s.mission, s.chosen, s.replans, s.alerts)
+            s.current_state = state
+            rep = make_report(s.run, s.mission, s.chosen, s.replans, s.alerts,
+                              versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")})
             return {"state": state, "telemetry": s.run.log[n0:], "report": rep,
                     "planned_curve": _curve(s.chosen)}
         if path == "/api/apply_calib":

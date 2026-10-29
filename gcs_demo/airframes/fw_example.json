@@ -1,0 +1,36 @@
+{
+  "id": "fw_example",
+  "type": "fixed_wing",
+  "schema": 0,
+  "mass_kg": 4,
+  "battery": {
+    "wh": 90,
+    "usable_frac": 0.9,
+    "cell_count": 4,
+    "cell_empty_v": 3.55,
+    "cell_r_ohm": 0.004
+  },
+  "limits": {
+    "reserve_pct": 20,
+    "wind_limit_mps": 12,
+    "min_airspeed_mps": 0,
+    "max_airspeed_mps": 35,
+    "cruise_mps": 16
+  },
+  "uncertainty": {
+    "power_pct": 10,
+    "capacity_pct": 5,
+    "wind_mps": 2
+  },
+  "power": {
+    "wing_area_m2": 0.5,
+    "cd0": 0.025,
+    "k_induced": 0.07,
+    "eta_prop": 0.7,
+    "p_avionics_w": 10,
+    "v_stall_mps": 7,
+    "min_turn_radius_m": 40
+  },
+  "calib": 1,
+  "source": "placeholder"
+}
