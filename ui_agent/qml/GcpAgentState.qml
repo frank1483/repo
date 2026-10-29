@@ -3,6 +3,7 @@ import QtQuick
 import QtQml
 import QtCore
 import "GcpAgentCore.js" as Core
+import "GcpAgentSnapshot.js" as AgentSnapshot
 import QGroundControl.GCP
 
 // UI agent 的共用狀態：可調整模組的登記、版面覆寫值、復原／重做堆疊。
@@ -179,6 +180,12 @@ QtObject {
         return out
     }
 
+    // Read only. Host supplies the common viewport after Qt has settled its layout.
+    function verificationSnapshot(viewport) {
+        const loc = shell && shell.agentLocation ? shell.agentLocation() : { page: -1, section: -1 }
+        return AgentSnapshot.capture(viewport, _modules, Core.MODULES, loc, overrideOf)
+    }
+
     // 模組在容器座標中的原始位置（不含 agent 變換）
     function baseBox(id) {
         const m = _modules[id]
@@ -288,17 +295,35 @@ QtObject {
     }
 
     property bool _groupActive: false
+    property var _activeGroupCheckpoint: null
     function beginGroup() {
         if (_groupActive) throw new Error("nested change group")
+        const checkpoint = { snap: snapshot(), undo: undoStack.slice(), redo: redoStack.slice() }
+        _activeGroupCheckpoint = checkpoint
         _groupActive = true
-        return { snap: snapshot(), undo: undoStack.slice(), redo: redoStack.slice() }
+        return checkpoint
     }
-    function commitGroup() { _groupActive = false }
+    function commitGroup(checkpoint, label, kind) {
+        // No-argument legacy calls keep their existing per-action undo behavior.
+        // The bounded loop passes the original token and creates exactly one entry.
+        if (checkpoint !== undefined) {
+            if (!_groupActive || checkpoint !== _activeGroupCheckpoint || !label)
+                throw new Error("invalid atomic group commit")
+            undoStack = checkpoint.undo.concat([{label: String(label), kind: kind || "layout", snap: checkpoint.snap}])
+            redoStack = []
+            revision++
+        }
+        _groupActive = false
+        _activeGroupCheckpoint = null
+    }
     function rollbackGroup(checkpoint) {
+        if (!_groupActive || !checkpoint || checkpoint !== _activeGroupCheckpoint)
+            throw new Error("invalid group rollback")
         _restore(checkpoint.snap)
         undoStack = checkpoint.undo.slice()
         redoStack = checkpoint.redo.slice()
         _groupActive = false
+        _activeGroupCheckpoint = null
         revision++
     }
     function undoHint() {
