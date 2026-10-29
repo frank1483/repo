@@ -1641,7 +1641,7 @@ function geographicAlertSnapshot(value) {
 }
 
 function geographicWindRouteBounds(v,entry,events,w,startPct,mode) {
-    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(v.type)<0)throw new Error("geographic bounds require FW/hybrid profile")
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)throw new Error("geographic bounds require FW/hybrid profile")
     var active=flightMode(v,mode)
     if(active!=="fw")throw new Error("geographic bounds support only explicit FW flight")
     routeWind(w)
@@ -1676,7 +1676,7 @@ function geographicWindRouteBounds(v,entry,events,w,startPct,mode) {
 }
 
 function evaluateGeographicAlertCandidates(v,candidates,w,startPct) {
-    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(v.type)<0)throw new Error("geographic candidates require FW/hybrid profile")
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)throw new Error("geographic candidates require FW/hybrid profile")
     routeWind(w)
     if(startPct===undefined)startPct=100
     routeNumber(startPct,"start_pct",0,100)
