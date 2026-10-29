@@ -111,9 +111,13 @@ def power_w(v: Vehicle, v_air: float, mode=None, bank_deg=0.0,
     return profile_power_w(p, v_air, mode, bank_deg, climb_mps, advance_ratio, v.mass_kg)
 
 
-def leg_estimate(v: Vehicle, a, b, alt_a: float, alt_b: float, ground_mps: float, wind: Wind):
-    """回傳一段航線的距離、時間、能耗 Wh、逆風分量。"""
-    _require_legacy_route(v)
+def leg_estimate(v: Vehicle, a, b, alt_a: float, alt_b: float, ground_mps: float, wind: Wind, mode=None):
+    """Straight leg only; hybrid requires explicit mode, no transition inferred."""
+    if v.type != "multirotor":
+        from .airframe_route import straight_leg
+        return straight_leg(v, a, b, alt_a, alt_b, ground_mps, wind, mode)
+    if mode not in (None, "mc"):
+        raise ValueError("mode is incompatible with airframe type")
     dist = haversine_m(a, b)
     if dist < 0.5:
         t = 0.0
@@ -164,9 +168,13 @@ def route_estimate(v: Vehicle, points: list, ground_mps: float, wind: Wind,
             "margin_pct": pct - v.reserve_pct, "feasible": pct >= v.reserve_pct, "legs": legs}
 
 
-def best_speed(v: Vehicle, wind: Wind, heading_deg: float = 0.0, lo=4.0, hi=None):
-    """單位距離能耗最低的地速（給報告建議用）。"""
-    _require_legacy_route(v)
+def best_speed(v: Vehicle, wind: Wind, heading_deg: float = 0.0, lo=4.0, hi=None, mode=None):
+    """Straight-flight optimum; new FW/hybrid search uses the airspeed envelope."""
+    if v.type != "multirotor":
+        from .airframe_route import typed_best_speed
+        return typed_best_speed(v, wind, heading_deg, lo, hi, mode)
+    if mode not in (None, "mc"):
+        raise ValueError("mode is incompatible with airframe type")
     hi = hi or v.max_mps
     a = (0.0, 0.0)
     b = (0.001 * math.cos(math.radians(heading_deg)), 0.001 * math.sin(math.radians(heading_deg)))
@@ -191,8 +199,19 @@ def estimate_route_energy(route: list, vehicle: Vehicle, wind: Wind, ground_mps:
                           hover_s_per_wp=0.0)
 
 
-def rtl_energy(pos: dict, home: dict, vehicle: Vehicle, wind: Wind, ground_mps: float = None) -> dict:
-    """從任意點直飛回 home 並下降落地的能耗。"""
+def rtl_energy(pos: dict, home: dict, vehicle: Vehicle, wind: Wind, ground_mps: float = None, mode=None) -> dict:
+    """RTL energy only. FW arrival remains airborne; hybrid defaults to fw."""
+    if vehicle.type != "multirotor":
+        from .airframe_route import typed_rtl
+        return typed_rtl(pos, home, vehicle, wind, ground_mps, mode)
+    if mode not in (None, "mc"):
+        raise ValueError("mode is incompatible with airframe type")
     p = dict(pos, id="here")
     h = dict(home, id="home", alt=0)
     return estimate_route_energy([p, h], vehicle, wind, ground_mps)
+
+
+def transition_estimate(vehicle: Vehicle, from_mode, to_mode):
+    """Standalone allowance; not a mode tracker or cmd3000 route executor."""
+    from .airframe_route import transition_estimate as _transition
+    return _transition(vehicle, from_mode, to_mode)

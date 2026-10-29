@@ -118,8 +118,7 @@ test('new model numeric inputs are strict', () => {
 test('pending route integration cannot produce a flight estimate', () => {
     for (const v of [fw,vt]) {
         assert.throws(()=>C.routeEstimate(v,[],16,C.wind()),/T5b/);
-        assert.throws(()=>C.legEstimate(v,[0,0],[.001,0],10,0,16,C.wind()),/T5b/);
-        assert.throws(()=>C.bestSpeed(v,C.wind()),/T5b/);
+        // T5b1: straight-leg/RTL/search now have their own NEW tests.
     }
 });
 

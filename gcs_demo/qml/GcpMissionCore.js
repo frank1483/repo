@@ -273,8 +273,9 @@ function powerW(v, vAir, mode, bankDeg, climbMps, advanceRatio) {
     return profilePowerW(p, vAir, mode, bankDeg, climbMps, advanceRatio, v.mass_kg)
 }
 
-function legEstimate(v, a, b, altA, altB, groundMps, w) {
-    requireLegacyRoute(v)
+function legEstimate(v, a, b, altA, altB, groundMps, w, mode) {
+    if (airframeType(v) !== "multirotor") return airframeLegEstimate(v,a,b,altA,altB,groundMps,w,mode)
+    flightMode(v,mode)
     var dist = haversineM(a, b), t = 0, vAir = 0, head = 0
     if (dist >= 0.5) {
         var brg = bearingRad(a, b)
@@ -313,11 +314,14 @@ function routeEstimate(v, points, groundMps, w, startPct, hoverS) {
              margin_pct: pct - v.reserve_pct, feasible: pct >= v.reserve_pct, legs: legs }
 }
 
-function bestSpeed(v, w, headingDeg) {
-    requireLegacyRoute(v)
+function bestSpeed(v, w, headingDeg, lo, hi, mode) {
+    if (airframeType(v) !== "multirotor") return airframeBestSpeed(v,w,headingDeg,lo,hi,mode)
+    flightMode(v,mode)
+    if (lo === undefined) lo = 4
+    if (hi === undefined || hi === null) hi = v.max_mps
     var a = [0, 0], b = [0.001 * Math.cos(rad(headingDeg || 0)), 0.001 * Math.sin(rad(headingDeg || 0))]
     var best = null
-    for (var s = 4.0; s <= v.max_mps + 1e-9; s += 0.5) {
+    for (var s = lo; s <= hi + 1e-9; s += 0.5) {
         var e = legEstimate(v, a, b, 0, 0, s, w)
         var perKm = e.energy_wh / Math.max(e.dist_m, 1) * 1000
         if (best === null || perKm < best[1]) best = [rnd(s, 1), perKm]
@@ -1022,6 +1026,7 @@ function applyReportLlm(rep, text, metadata) {
 
 // node 測試用
 if (typeof module !== "undefined") module.exports = {
+    transitionEstimate:transitionEstimate, rtlEnergy:rtlEnergy, estimateRouteEnergy:estimateRouteEnergy,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1128,4 +1133,122 @@ function splitSorties(m,v,w,sequences,speeds) {
         }
     })
     return best
+}
+
+// T5b1 straight-flight only. Complete typed route/cmd3000/turn integration stays gated.
+function routeNumber(x, name, low, high) {
+    if (low === undefined) low = -1e100
+    if (high === undefined) high = 1e100
+    if (typeof x !== "number" || !isFinite(x) || x < low || x > high) throw new Error(name + ": finite number in range required")
+    return x
+}
+function flightMode(v, mode, defaultMode) {
+    var expected = airframeType(v) === "fixed_wing" ? "fw" : "mc"
+    if (airframeType(v) === "vtol_hybrid") {
+        if (mode === undefined || mode === null) mode = defaultMode
+        if (mode !== "mc" && mode !== "fw") throw new Error("hybrid straight leg requires explicit mode='mc' or 'fw'")
+        return mode
+    }
+    if (mode !== undefined && mode !== null && mode !== expected) throw new Error("mode is incompatible with airframe type")
+    return expected
+}
+function routePosition(p) {
+    if (!Array.isArray(p) || p.length !== 2) throw new Error("position: [lat, lon] required")
+    routeNumber(p[0], "lat", -90, 90); routeNumber(p[1], "lon", -180, 180)
+}
+function routeWind(w) {
+    routeNumber(w.speed_mps, "wind.speed_mps", 0); routeNumber(w.from_deg, "wind.from_deg")
+    return windVector(w)
+}
+function airframeLegEstimate(v, a, b, altA, altB, groundMps, w, mode) {
+    mode = flightMode(v, mode)
+    routePosition(a); routePosition(b)
+    routeNumber(altA,"alt_a"); routeNumber(altB,"alt_b"); routeNumber(groundMps,"ground_mps",1e-9)
+    var windV = routeWind(w), we = windV[0], wn = windV[1]
+    var dist = haversineM(a,b), dh = altB-altA, air, head, duration
+    if (mode === "fw" && dist < 0.5) throw new Error("fixed-wing near-zero horizontal leg: loiter/takeoff/landing not modeled")
+    if (dist >= 0.5) {
+        var brg = bearingRad(a,b)
+        air = Math.hypot(groundMps*Math.sin(brg)-we,groundMps*Math.cos(brg)-wn)
+        head = -(we*Math.sin(brg)+wn*Math.cos(brg)); duration = dist/groundMps
+    } else { air=w.speed_mps; head=0; duration=0 }
+    var wh, watts
+    if (mode === "fw") {
+        watts=powerW(v,air,"fw",0,Math.max(0,dh)/duration)
+        wh=watts*duration/3600*v.calib
+    } else {
+        if (air > v.max_mps) throw new Error("v_air: outside mc airspeed envelope")
+        watts=powerW(v,air,"mc")
+        var verticalS=dh>0?Math.max(0,dh)/3:Math.max(0,-dh)/2
+        if (w.speed_mps > v.max_mps) throw new Error("wind exceeds mc airspeed envelope during vertical flight")
+        var joules=watts*duration+powerW(v,w.speed_mps,"mc")*verticalS
+        var eta=airframeType(v)==="vtol_hybrid"?v.airframe_profile.power.mc.eta:v.eta
+        joules+=v.mass_kg*G*Math.max(0,dh)/eta; duration+=verticalS
+        wh=joules/3600*v.calib
+    }
+    return {dist_m:dist,time_s:duration,energy_wh:wh,v_air:air,headwind_mps:head,mode:mode,scope:"straight_leg_only"}
+}
+function transitionEstimate(v, fromMode, toMode) {
+    if (airframeType(v)!=="vtol_hybrid") throw new Error("transition requires vtol_hybrid")
+    if (["mc","fw"].indexOf(fromMode)<0 || ["mc","fw"].indexOf(toMode)<0) throw new Error("transition modes must be mc or fw")
+    var t=v.airframe_profile.transition, changed=fromMode!==toMode, prefix="to_"+toMode
+    return {from_mode:fromMode,to_mode:toMode,energy_wh:changed?t[prefix+"_wh"]*v.calib:0,
+            time_s:changed?t[prefix+"_s"]:0,dist_m:changed&&toMode==="fw"?t.to_fw_dist_m:0,
+            scope:"transition_allowance_only"}
+}
+function airframeRtlEnergy(pos, home, v, w, groundMps, mode) {
+    mode=flightMode(v,mode,"fw")
+    var a=[pos.lat,pos.lon], b=[home.lat,home.lon]
+    routePosition(a); routePosition(b)
+    var alt=routeNumber(pos.alt===undefined?0:pos.alt,"rtl.alt",0)
+    if (routeNumber(home.alt===undefined?0:home.alt,"home.alt")!==0) throw new Error("RTL expects altitude relative to home ground; home.alt must be zero")
+    var speed=groundMps===undefined||groundMps===null?v.cruise_mps:groundMps
+    routeNumber(speed,"ground_mps",1e-9); routeWind(w)
+    var legs=[]
+    if (airframeType(v)==="fixed_wing") legs.push(airframeLegEstimate(v,a,b,alt,alt,speed,w,"fw"))
+    else if (mode==="fw") {
+        if (haversineM(a,b)>=0.5) legs.push(airframeLegEstimate(v,a,b,alt,alt,speed,w,"fw"))
+        legs.push(transitionEstimate(v,"fw","mc"))
+        legs.push(airframeLegEstimate(v,b,b,alt,0,speed,w,"mc"))
+    } else legs.push(airframeLegEstimate(v,a,b,alt,0,speed,w,"mc"))
+    var wh=0,ts=0,dm=0
+    legs.forEach(function(x){wh+=x.energy_wh;ts+=x.time_s;dm+=x.dist_m})
+    var cap=routeNumber(v.battery_wh*v.usable_frac,"usable capacity",1e-9)
+    return {dist_m:dm,time_s:ts,energy_wh:wh,used_pct:wh/cap*100,legs:legs,
+            arrival_mode:airframeType(v)==="fixed_wing"?"fw":"mc",landing_modeled:airframeType(v)!=="fixed_wing",
+            scope:"rtl_energy_only_not_executable_route"}
+}
+function airframeBestSpeed(v,w,headingDeg,lo,hi,mode) {
+    mode=flightMode(v,mode,"fw")
+    if (headingDeg===undefined) headingDeg=0
+    if (lo===undefined) lo=4
+    routeNumber(headingDeg,"heading_deg");routeNumber(lo,"lo",0)
+    var range=mode==="fw"?speedRange(v):[0,v.max_mps]
+    var upper=hi===undefined||hi===null?range[1]:Math.min(range[1],routeNumber(hi,"hi",0))
+    var lower=Math.max(range[0],lo),wv=routeWind(w),theta=rad(headingDeg)
+    var tail=wv[0]*Math.sin(theta)+wv[1]*Math.cos(theta),cross=wv[0]*Math.cos(theta)-wv[1]*Math.sin(theta)
+    var best=null,count=Math.max(0,Math.floor((upper-lower)/.5+1e-9)+1)
+    for (var k=0;k<count;k++) {
+        var air=lower+k*.5
+        if (air<=Math.abs(cross)) continue
+        var ground=tail+Math.sqrt(Math.max(0,air*air-cross*cross))
+        if (ground<=1e-9) continue
+        var perKm=powerW(v,air,mode)*v.calib/ground/3.6
+        if (best===null || perKm<best.wh_per_km) best={speed_mps:ground,airspeed_mps:air,wh_per_km:perKm}
+    }
+    if (best===null) throw new Error("no feasible forward airspeed in configured search interval/wind")
+    best.wh_per_km=rnd(best.wh_per_km,2)
+    return best
+}
+
+function estimateRouteEnergy(points,v,w,groundMps,startPct) {
+    if (groundMps===undefined||groundMps===null) groundMps=v.cruise_mps
+    var pts=points.map(function(p,i){var q=clone(p);if(q.id===undefined)q.id="P"+i;return q})
+    return routeEstimate(v,pts,groundMps,w,startPct,0)
+}
+function rtlEnergy(pos,home,v,w,groundMps,mode) {
+    if (airframeType(v)!=="multirotor") return airframeRtlEnergy(pos,home,v,w,groundMps,mode)
+    flightMode(v,mode)
+    var p=clone(pos),h=clone(home);p.id="here";h.id="home";h.alt=0
+    return estimateRouteEnergy([p,h],v,w,groundMps)
 }

@@ -207,9 +207,7 @@ class AirframeT5a(unittest.TestCase):
         for v in (self.fw, self.vt):
             calls = [lambda: route_estimate(v, [], 16, Wind()),
                      lambda: estimate_route_energy(points, v, Wind()),
-                     lambda: leg_estimate(v, (0, 0), (.001, 0), 10, 0, 16, Wind()),
-                     lambda: rtl_energy(points[0], points[1], v, Wind()),
-                     lambda: best_speed(v, Wind(), lo=100)]
+                     ]  # T5b1 opens straight-leg/RTL/search only; full route remains gated.
             for call in calls:
                 with self.subTest(kind=v.type), self.assertRaises(NotImplementedError):
                     call()
