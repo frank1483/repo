@@ -1038,6 +1038,7 @@ if (typeof module !== "undefined") module.exports = {
     evaluateGeographicAlertCandidates:evaluateGeographicAlertCandidates,
     geographicEnergyAlertSnapshot:geographicEnergyAlertSnapshot,
     createGeographicEnergyAlertPredictor:createGeographicEnergyAlertPredictor,
+    createTypedGeographicAlertFeed:createTypedGeographicAlertFeed,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1753,6 +1754,62 @@ function createGeographicEnergyAlertPredictor(v,raiseTicks,clearTicks) {
             evidence:[{id:"E_TYPED_P1",text:"finite energy samples; no landing modeled",value:{current_id:currentId,nominal_end_pct:result.nominal_end_pct,low_pct:result.low_pct,high_pct:result.high_pct,reserve_pct:result.reserve_pct}}],
             candidates:[],rule_choice:null,lead_s:null}
         Object.assign(result,{sequence:sequence,active:published,finding:finding,raise_streak:raising,clear_streak:clearing,raise_ticks:raiseTicks,clear_ticks:clearTicks})
+        return geographicAlertSnapshot(result)
+    }}
+}
+
+// Explicit P1 feed. No legacy ENU fallback or external explanation call.
+function createTypedGeographicAlertFeed(v,raiseTicks,clearTicks) {
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)
+        throw new Error("typed feed requires an explicit FW/hybrid profile")
+    if(raiseTicks===undefined)raiseTicks=3
+    if(clearTicks===undefined)clearTicks=10
+    typedPredictorInteger(raiseTicks,"raise_ticks",1,10000)
+    typedPredictorInteger(clearTicks,"clear_ticks",1,10000)
+    var vehicle=geographicAlertSnapshot(v),predictor=null,version=null,current=null,lastSequence=-1,lastTime=-1,active=null,severity=null
+    return {tick:function(sequence,rec,candidates,currentId,missionVersion){
+        typedPredictorInteger(sequence,"sequence",0,9007199254740991)
+        if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
+        if(typeof missionVersion!=="string"||missionVersion.length<1||missionVersion.length>128||/[^A-Za-z0-9._:-]/.test(missionVersion))
+            throw new Error("mission_version requires 1..128 ASCII version characters")
+        if(!rec||typeof rec!=="object"||Array.isArray(rec))throw new Error("typed feed requires measured geographic telemetry")
+        var required=["t_s","lat","lon","alt","air_heading_deg","battery_pct","wind_mps","wind_from"],tm={}
+        required.forEach(function(k){
+            if(!Object.prototype.hasOwnProperty.call(rec,k))throw new Error("typed feed missing measured telemetry field")
+            tm[k]=routeNumber(rec[k],k)
+        })
+        routeNumber(tm.t_s,"t_s",0)
+        if(tm.t_s<=lastTime)throw new Error("t_s must increase strictly")
+        routeNumber(tm.lat,"lat",-75,75);routeNumber(tm.lon,"lon",-180,180)
+        routeNumber(tm.alt,"alt",0);routeNumber(tm.battery_pct,"battery_pct",0,100);routeNumber(tm.wind_mps,"wind_mps",0)
+        var items=geographicAlertSnapshot(candidates),pose={lat:tm.lat,lon:tm.lon,alt:tm.alt,air_heading_deg:tm.air_heading_deg}
+        if(!Array.isArray(items)||items.length<1||items.length>16)throw new Error("typed feed requires 1..16 explicit alternatives")
+        items.forEach(function(c){
+            if(!c||typeof c!=="object"||!c.entry||Object.keys(c.entry).length!==4||
+                !Object.keys(pose).every(function(k){return Object.prototype.hasOwnProperty.call(c.entry,k)&&c.entry[k]===pose[k]}))
+                throw new Error("every candidate entry must equal measured geographic pose")
+        })
+        var changed=version!==null&&missionVersion!==version
+        if(version===missionVersion&&currentId!==current)throw new Error("current_id change requires a new mission_version")
+        var next=(!predictor||changed)?createGeographicEnergyAlertPredictor(vehicle,raiseTicks,clearTicks):predictor
+        var result=next.tick(sequence,items,currentId,wind(tm.wind_mps,tm.wind_from),tm.battery_pct)
+        var previous=changed?null:active,events=[]
+        function event(kind,finding){
+            var f=finding||{key:"typed_geographic_energy",active:null,severity:5,title:"Typed geographic energy status",
+                value:"unassessed energy status",evidence:[],candidates:[],rule_choice:null,lead_s:null}
+            events.push(Object.assign({},f,{t:tm.t_s,type:kind,status:result.status,sequence:sequence,mission_version:missionVersion,executable:false}))
+        }
+        if(changed)event("reset")
+        if(result.active===null){if(previous!==null||version===null||changed)event("unknown")}
+        else if(result.active){
+            if(previous!==true)event("raise",result.finding)
+            else if(result.finding.severity<severity)event("update",result.finding)
+        }else if(previous===true)event("resolve",result.finding)
+        else if(previous===null)event("known",result.finding)
+        Object.assign(result,{mission_version:missionVersion,t_s:tm.t_s,events:events,
+            unassessed_predictors:["P2","P3","P4","P5"],caller_scope:"explicit_geographic_P1_feed_only"})
+        predictor=next;version=missionVersion;current=currentId;lastSequence=sequence;lastTime=tm.t_s;active=result.active
+        severity=result.finding?result.finding.severity:null
         return geographicAlertSnapshot(result)
     }}
 }

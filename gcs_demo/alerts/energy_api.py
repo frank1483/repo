@@ -93,3 +93,6 @@ def geographic_energy_alert_snapshot(vehicle, candidates, current_id, wind, star
 
 # New explicit predictor class. This does not enable the legacy MC engine for FW.
 from .typed_geographic import GeographicEnergyAlertPredictor  # noqa: E402,F401
+
+# Opt-in measured geographic P1 caller; no legacy ENU/model fallback.
+from .typed_feed import TypedGeographicAlertFeed  # noqa: E402,F401

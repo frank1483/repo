@@ -16,7 +16,22 @@ _M = math.pi * 6371000.0 / 180.0
 
 
 class AlertFeed:
-    def __init__(self, home: dict, path: list, vehicle, explain_fn=explain):
+    def __init__(self, home: dict, path: list, vehicle, explain_fn=explain,
+                 typed_geographic=False, typed_raise_ticks=3, typed_clear_ticks=10):
+        if not isinstance(typed_geographic, bool):
+            raise ValueError("typed_geographic must be boolean")
+        self._typed_feed = None
+        self.latest = None
+        if typed_geographic:
+            if home is not None or path is not None:
+                raise ValueError("typed feed requires home=None and path=None; explicit geographic candidates required")
+            from .alerts.typed_feed import TypedGeographicAlertFeed
+            self._typed_feed = TypedGeographicAlertFeed(vehicle, typed_raise_ticks, typed_clear_ticks)
+            self.vehicle = vehicle
+            self.engine = None
+            self.explain_fn = None
+            self.events = []
+            return
         self.home = (home["lat"], home["lon"])
         energy_api.REF_LAT, energy_api.REF_LON = self.home      # 讓引擎的經緯度換算以 home 為原點
         self.vehicle = vehicle
@@ -35,9 +50,24 @@ class AlertFeed:
         return [self.enu(p["lat"], p["lon"], p.get("alt", 0)) for p in path[1:-1]]
 
     def set_path(self, path):
+        if self._typed_feed is not None:
+            raise ValueError("typed feed requires a versioned request at tick; set_path is legacy ENU only")
         self.engine.set_route(self._route(path))
 
-    def tick(self, rec: dict, next_idx: int) -> list:
+    def tick(self, rec: dict, next_idx: int, typed_request=None) -> list:
+        if self._typed_feed is not None:
+            if next_idx is not None:
+                raise ValueError("typed feed requires next_idx=None; use explicit candidate events")
+            if not isinstance(typed_request, dict) or set(typed_request) != {"sequence", "candidates", "current_id", "mission_version"}:
+                raise ValueError("typed_request requires sequence, candidates, current_id, mission_version")
+            result = self._typed_feed.tick(rec=rec, **typed_request)
+            import copy
+            self.latest = copy.deepcopy(result)
+            new = result["events"]
+            self.events.extend(copy.deepcopy(new))
+            return new
+        if typed_request is not None:
+            raise ValueError("typed_request requires explicit typed_geographic=True")
         soc = max(0.0, rec["battery_pct"]) / 100.0
         volt = CELLS * (3.5 + 0.7 * soc)
         current = rec["power_w"] / volt
