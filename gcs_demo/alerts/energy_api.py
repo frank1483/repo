@@ -74,3 +74,22 @@ def typed_alert_speeds(vehicle, requested, mode=None, bank_deg=0.0):
 def evaluate_typed_alert_candidates(vehicle, candidates, wind, start_pct=100.0):
     """Caller supplies normalized lat/lon mission events, never ENU tuples."""
     return _e.evaluate_typed_alert_candidates(vehicle, candidates, wind, start_pct)
+
+
+def geographic_wind_route_bounds(vehicle, entry, events, wind, start_pct=100.0, mode=None):
+    """Explicit geographic input; no legacy ENU conversion or live tick."""
+    return _e.geographic_wind_route_bounds(vehicle, entry, events, wind, start_pct, mode)
+
+
+def evaluate_geographic_alert_candidates(vehicle, candidates, wind, start_pct=100.0):
+    """Additive typed caller; candidate entry/events are already geographic."""
+    return _e.evaluate_geographic_alert_candidates(vehicle, candidates, wind, start_pct)
+
+
+def geographic_energy_alert_snapshot(vehicle, candidates, current_id, wind, start_pct=100.0):
+    """Additive FW geographic P1 entry; old ENU predictors remain separate."""
+    return _e.geographic_energy_alert_snapshot(vehicle, candidates, current_id, wind, start_pct)
+
+
+# New explicit predictor class. This does not enable the legacy MC engine for FW.
+from .typed_geographic import GeographicEnergyAlertPredictor  # noqa: E402,F401

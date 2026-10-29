@@ -283,3 +283,21 @@ def evaluate_typed_alert_candidates(vehicle, candidates, wind, start_pct=100.0):
     """Compare caller-supplied typed missions; does not authorize application."""
     from .typed_alerts import evaluate_typed_alert_candidates as _candidates
     return _candidates(vehicle, candidates, wind, start_pct)
+
+
+def geographic_wind_route_bounds(vehicle, entry, events, wind, start_pct=100.0, mode=None):
+    """Finite explicit geographic event replays; never a safe flight bound."""
+    from .geographic_alerts import geographic_wind_route_bounds as _bounds
+    return _bounds(vehicle, entry, events, wind, start_pct, mode)
+
+
+def evaluate_geographic_alert_candidates(vehicle, candidates, wind, start_pct=100.0):
+    """Compare caller-owned geographic event alternatives, never infer RTL."""
+    from .geographic_alerts import evaluate_geographic_alert_candidates as _candidates
+    return _candidates(vehicle, candidates, wind, start_pct)
+
+
+def geographic_energy_alert_snapshot(vehicle, candidates, current_id, wind, start_pct=100.0):
+    """Typed P1 energy samples only; no return/landing/action inference."""
+    from .alerts.typed_geographic import geographic_energy_alert_snapshot as _snapshot
+    return _snapshot(vehicle, candidates, current_id, wind, start_pct)
