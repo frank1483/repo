@@ -126,9 +126,19 @@ def wait(ms=400):
         time.sleep(0.01)
 
 
-def say(text, ms=500):
+CARDS = []  # v6：模型／多步動作先顯示確認卡，測試代按「對」並記下卡片文字
+
+
+def say(text, ms=500, confirm=True):
     QMetaObject.invokeMethod(agent, "submit", Q_ARG("QVariant", text))
     wait(ms)
+    pending = agent.property("_confirmation")
+    if hasattr(pending, "toVariant"):
+        pending = pending.toVariant()
+    if confirm and pending:
+        CARDS.append((text, agent.property("confirmationSummary") or ""))
+        QMetaObject.invokeMethod(agent, "confirmIntent")
+        wait(ms)
 
 
 def prop(obj, name):
@@ -274,6 +284,7 @@ wait(2200)
 check("取消 → 不套用、可再輸入", page() == 0 and not agent.property("busy") and "取消" in msg(), (page(), msg()))
 shot("v3_02_model_paths")
 
+check("v6：模型／多步動作都先出現確認卡", len(CARDS) > 0, str(CARDS[:3]))
 server.shutdown()
 ok = sum(1 for r in results if r[1])
 print("\n%d/%d 通過" % (ok, len(results)))

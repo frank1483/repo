@@ -46,6 +46,7 @@ Item {
     property real _t0: 0
     property var _cancelModel: null
     property int _modelGeneration: 0
+    property var _confirmation: null   // Detached plan; no execution until explicit Yes.
     property var _choiceGuard: null
     readonly property bool canSaveLayout: !busy && GcpAgentState.hasUnsavedChanges
     property var changeLog: []         // Session log includes undone actions; never written to Settings.
@@ -66,6 +67,7 @@ Item {
 
     onOpenChanged: {
         if (!open) {
+            clearConfirmation()
             pendingText = ""
             choices = []
             _pending = null
@@ -87,6 +89,7 @@ Item {
     }
 
     function cancelWaiting() {
+        clearConfirmation()
         pendingText = ""
         _modelGeneration++
         if (_transaction) failSteps(qsTr("已取消，已還原整組"))
@@ -103,6 +106,7 @@ Item {
         text = String(text || "").trim()
         if (/^(取消|算了|cancel)[。！!]?$/i.test(text)) { cancelWaiting(); return }
         if (!text || busy) return
+        clearConfirmation()
         choices = []
         messageText = ""
         const ctx = context()
@@ -162,7 +166,15 @@ Item {
         decisionLogged(entry)
 
         if (decision.decision === "SELECT") {
-            executeSteps(selectedIds.map(id => Core.candidateById(result, id)), source)
+            const steps = selectedIds.map(id => Core.candidateById(result, id))
+            requestExecution(steps, source, {
+                modelSelected: decision === model,
+                goal: result.goal_intent === true,
+                ruleUnique: result.rule.decision === "SELECT" && !result.compound && steps.length === 1 &&
+                    result.rule.choice_id === steps[0].id &&
+                    result.candidates.filter(c => c.score >= 0.75).length === 1,
+                intent: result.intent
+            })
         } else if (decision.decision === "CLARIFY") {
             pendingText = result.intent
             const loc = context()
@@ -174,6 +186,74 @@ Item {
             pendingText = result.pending_text || ""
             messageText = decision.reason_zh || qsTr("我沒辦法處理這個要求。可以試試「切到告警中心」或「把風速計移到左上角」。")
         }
+    }
+
+    // The future goal planner must call this gate with goal:true after building its plan.
+    // Item6 is deliberately not implemented by this item4 patch.
+    function clearConfirmation() {
+        _confirmation = null
+    }
+
+    function requestExecution(steps, source, policy) {
+        if (busy || _transaction) return
+        clearConfirmation()
+        choices = []
+        if (!Array.isArray(steps) || !steps.length || steps.length > 3 ||
+            steps.some(c => !c || ["nav", "layout", "text_scale", "layout_load", "layout_default",
+                "layout_save_current", "layout_save", "undo", "redo", "reset_all"].indexOf(c.kind) < 0)) {
+            messageText = qsTr("沒有可確認的介面動作，請改說")
+            return
+        }
+        policy = policy || {}
+        const requireCard = policy.modelSelected === true || policy.goal === true || steps.length > 1 ||
+            (steps[0].kind !== "nav" && policy.ruleUnique !== true && policy.userSelected !== true)
+        // Detach from model/rule candidates so they cannot mutate a plan after it is shown.
+        const plan = JSON.parse(JSON.stringify(steps))
+        if (!requireCard) { executeSteps(plan, source); return }
+        const loc = context()
+        _confirmation = { steps: plan, source: source, intent: policy.intent || "",
+            guard: { revision: GcpAgentState.revision, page: loc.page, section: loc.section } }
+        pendingText = ""
+        messageText = ""
+        decisionLogged({ phase: "confirmation_required", intent: _confirmation.intent,
+            steps: plan.map(c => c.id), model_selected: policy.modelSelected === true,
+            goal: policy.goal === true, executed: false })
+    }
+
+    function confirmationSummary() {
+        if (!_confirmation) return ""
+        const marks = ["①", "②", "③"]
+        return qsTr("我理解你要：") + "\n" + _confirmation.steps.map((c, i) =>
+            marks[i] + " " + c.label_zh).join("\n") + "\n" + qsTr("對嗎？")
+    }
+
+    function confirmIntent() {
+        if (busy || _transaction || !_confirmation) return
+        const pending = _confirmation
+        clearConfirmation() // Consume before dispatch: repeated clicks cannot apply it twice.
+        if (!sameContext(pending.guard)) {
+            pendingText = ""
+            _pending = null
+            choices = []
+            messageText = qsTr("畫面已改變，請再說一次")
+            return
+        }
+        _pending = null
+        decisionLogged({ phase: "confirmation_accepted", intent: pending.intent,
+            steps: pending.steps.map(c => c.id), source: pending.source })
+        executeSteps(pending.steps, pending.source)
+    }
+
+    function rejectIntent() {
+        if (!_confirmation || busy) return
+        const intent = _confirmation.intent
+        clearConfirmation()
+        pendingText = ""
+        choices = []
+        _pending = null
+        messageText = qsTr("請改說你想做什麼，尚未套用任何動作")
+        decisionLogged({ phase: "confirmation_rejected", intent: intent, executed: false })
+        input.forceActiveFocus()
     }
 
     function callModel(result, ctx, done) {
@@ -262,11 +342,13 @@ Item {
             messageText = qsTr("畫面已改變，請再說一次")
             return
         }
-        execute(c, qsTr("使用者選擇"))
+        requestExecution([c], qsTr("使用者選擇"), { userSelected: true,
+            goal: _pending && _pending.goal_intent === true, intent: _pending ? _pending.intent : "" })
     }
 
     function execute(c, source) {
         if (busy || _transaction) return
+        if (root._confirmation) root.clearConfirmation()
         choices = []
         if (!c) return
         if (c.kind === "layout_save_current") {
@@ -332,6 +414,7 @@ Item {
             messageText = qsTr("這些動作必須分開操作")
             return
         }
+        if (root._confirmation) root.clearConfirmation()
         choices = []
         const label = steps.map(c => c.label_zh).join("、")
         const checkpoint = GcpAgentState.beginGroup()
@@ -720,6 +803,53 @@ Item {
                 text: root.messageText
                 wrapMode: Text.Wrap
                 color: root.cText; font.pixelSize: (21 * GcpTheme.font.textScale)
+            }
+            Rectangle {
+                objectName: "agentConfirmationCard"
+                Layout.fillWidth: true
+                Layout.preferredHeight: confirmationContent.implicitHeight + 24
+                visible: root._confirmation !== null
+                radius: 10
+                color: "#1A22D3EE"
+                border.color: root.cAccent
+                ColumnLayout {
+                    id: confirmationContent
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+                    ScrollView {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(confirmationLabel.implicitHeight, 160)
+                        clip: true
+                        contentWidth: availableWidth
+                        Text {
+                            id: confirmationLabel
+                            objectName: "agentConfirmationText"
+                            width: parent.width
+                            text: root.confirmationSummary()
+                            wrapMode: Text.Wrap
+                            color: root.cText
+                            font.pixelSize: (20 * GcpTheme.font.textScale)
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Button {
+                            objectName: "agentConfirmYes"
+                            text: qsTr("對")
+                            enabled: root._confirmation !== null && !root.busy
+                            Layout.fillWidth: true
+                            onClicked: root.confirmIntent()
+                        }
+                        Button {
+                            objectName: "agentConfirmNo"
+                            text: qsTr("不是")
+                            enabled: root._confirmation !== null && !root.busy
+                            Layout.fillWidth: true
+                            onClicked: root.rejectIntent()
+                        }
+                    }
+                }
             }
             ListView {
                 id: choicesList
