@@ -1034,6 +1034,8 @@ if (typeof module !== "undefined") module.exports = {
     geographicWindRouteEstimate:geographicWindRouteEstimate,
     typedAlertSpeeds:typedAlertSpeeds,
     evaluateTypedAlertCandidates:evaluateTypedAlertCandidates,
+    geographicWindRouteBounds:geographicWindRouteBounds,
+    evaluateGeographicAlertCandidates:evaluateGeographicAlertCandidates,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1621,4 +1623,81 @@ function evaluateTypedAlertCandidates(v,candidates,w,startPct) {
     rows.forEach(function(row){if(row.sampled_energy_feasible&&(!best||row.bounds.low_pct>best.bounds.low_pct))best=row})
     return {scope:"caller_supplied_normalized_mission_energy_comparison_only",candidates:rows,best_energy_id:best?best.id:null,
         ranking:"maximum_sampled_low_pct_first_input_on_tie",return_inferred:false,wind_direction_varied:false,feasible:false,executable:false}
+}
+
+// Finite JSON only. Reject values JSON.stringify would silently discard/change.
+function geographicAlertSnapshot(value) {
+    function check(x,stack) {
+        if(x===null||typeof x==="string"||typeof x==="boolean")return
+        if(typeof x==="number") {if(!Number.isFinite(x))throw new Error("geographic alert input must be finite JSON data");return}
+        if(typeof x!=="object"||stack.indexOf(x)>=0)throw new Error("geographic alert input must be finite JSON data")
+        stack.push(x)
+        if(Array.isArray(x)) {for(var i=0;i<x.length;i++){if(!Object.prototype.hasOwnProperty.call(x,i))throw new Error("sparse JSON array unsupported");check(x[i],stack)}}
+        else {if(Object.prototype.toString.call(x)!=="[object Object]")throw new Error("JSON object required");Object.keys(x).forEach(function(k){check(x[k],stack)})}
+        stack.pop()
+    }
+    check(value,[])
+    return JSON.parse(JSON.stringify(value))
+}
+
+function geographicWindRouteBounds(v,entry,events,w,startPct,mode) {
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(v.type)<0)throw new Error("geographic bounds require FW/hybrid profile")
+    var active=flightMode(v,mode)
+    if(active!=="fw")throw new Error("geographic bounds support only explicit FW flight")
+    routeWind(w)
+    if(startPct===undefined)startPct=100
+    routeNumber(startPct,"start_pct",0,100)
+    var usable=routeNumber(v.battery_wh*v.usable_frac,"usable capacity",1e-9),reserve=routeNumber(v.reserve_pct,"reserve_pct",0,100)
+    var request=geographicAlertSnapshot({entry:entry,events:events}),u=v.airframe_profile.uncertainty
+    var power=routeNumber(u.power_pct,"uncertainty.power_pct",0,100)/100,capacity=routeNumber(u.capacity_pct,"uncertainty.capacity_pct",0,100)/100
+    var delta=routeNumber(u.wind_mps,"uncertainty.wind_mps",0)
+    if(capacity>=1)throw new Error("capacity uncertainty must leave positive usable Wh")
+    var tuples=[[w.speed_mps,1,1]]
+    ;[Math.max(0,w.speed_mps-delta),w.speed_mps,w.speed_mps+delta].forEach(function(speed){
+        ;[1-power,1+power].forEach(function(pm){[1-capacity,1+capacity].forEach(function(cm){
+            if(!tuples.some(function(t){return t[0]===speed&&t[1]===pm&&t[2]===cm}))tuples.push([speed,pm,cm])
+        })})
+    })
+    var rows=tuples.map(function(t,i){
+        var row={id:"G"+i,wind:{speed_mps:t[0],from_deg:w.from_deg},power_multiplier:t[1],capacity_multiplier:t[2]}
+        try {
+            var e=geographicWindRouteEstimate(v,request.entry,request.events,wind(t[0],w.from_deg),startPct,active)
+            var wh=routeNumber(routeNumber(e.energy_wh,"base energy_wh",0)*t[1],"scaled energy_wh",0)
+            var cap=routeNumber(usable*t[2],"scenario capacity",1e-9),end=routeNumber(startPct-wh/cap*100,"end_pct")
+            Object.assign(row,{status:"ok",base_estimate:e,base_energy_wh:e.energy_wh,energy_wh:wh,capacity_wh:cap,end_pct:end,margin_pct:end-reserve,energy_feasible:end>=reserve,landing_modeled:false})
+        }catch(err){row.status="unsupported";row.reason=String(err.message||err)}
+        return row
+    })
+    var available=rows.every(function(r){return r.status==="ok"}),low=null,high=null
+    if(available){low=rows[0];high=rows[0];rows.forEach(function(r){if(r.end_pct<low.end_pct)low=r;if(r.end_pct>high.end_pct)high=r})}
+    return geographicAlertSnapshot({available:available,scenarios:rows,nominal:rows[0],low_pct:available?low.end_pct:null,high_pct:available?high.end_pct:null,
+        conservative:low,optimistic:high,scope:"finite_geographic_event_scenarios_not_robust_or_probability_interval",wind_direction_varied:false,
+        return_inferred:false,common_endpoint_enforced:false,geometry_replayed:true,landing_modeled:false,feasible:false,executable:false})
+}
+
+function evaluateGeographicAlertCandidates(v,candidates,w,startPct) {
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(v.type)<0)throw new Error("geographic candidates require FW/hybrid profile")
+    routeWind(w)
+    if(startPct===undefined)startPct=100
+    routeNumber(startPct,"start_pct",0,100)
+    if(!Array.isArray(candidates)||candidates.length<1||candidates.length>16)throw new Error("geographic candidates require 1..16 alternatives")
+    var items=geographicAlertSnapshot(candidates),seen=[]
+    items.forEach(function(item){
+        if(!item||typeof item!=="object"||Array.isArray(item)||!["id","entry","events"].every(function(k){return Object.prototype.hasOwnProperty.call(item,k)}))throw new Error("geographic candidate requires id, entry, events")
+        if(Object.keys(item).some(function(k){return ["id","entry","events","mode"].indexOf(k)<0}))throw new Error("unsupported geographic candidate fields")
+        if(typeof item.id!=="string"||Array.from(item.id).length<1||Array.from(item.id).length>128||seen.indexOf(item.id)>=0)throw new Error("candidate id must be unique, nonempty, at most 128 characters")
+        seen.push(item.id)
+    })
+    var rows=items.map(function(item){
+        var row={id:item.id,feasible:false,return_inferred:false,sampled_energy_feasible:false}
+        try {
+            var interval=geographicWindRouteBounds(v,item.entry,item.events,w,startPct,item.mode),supported=interval.available
+            Object.assign(row,{status:supported?"ok":"unsupported",bounds:interval,sampled_energy_feasible:!!(supported&&interval.low_pct>=v.reserve_pct)})
+            if(!supported)row.reason="one or more full geographic event scenarios unsupported"
+        }catch(err){row.status="unsupported";row.reason=String(err.message||err)}
+        return row
+    }),best=null
+    rows.forEach(function(r){if(r.sampled_energy_feasible&&(!best||r.bounds.low_pct>best.bounds.low_pct))best=r})
+    return {scope:"caller_supplied_geographic_event_energy_comparison_only",candidates:rows,best_energy_id:best?best.id:null,ranking:"maximum_sampled_low_pct_first_input_on_tie",
+        return_inferred:false,wind_direction_varied:false,common_endpoint_enforced:false,feasible:false,executable:false}
 }
