@@ -1032,6 +1032,8 @@ if (typeof module !== "undefined") module.exports = {
     windArcEstimate:windArcEstimate, windLoiterEstimate:windLoiterEstimate,
     windRouteEstimate:windRouteEstimate,
     geographicWindRouteEstimate:geographicWindRouteEstimate,
+    typedAlertSpeeds:typedAlertSpeeds,
+    evaluateTypedAlertCandidates:evaluateTypedAlertCandidates,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1563,4 +1565,60 @@ function geographicWindRouteEstimate(v,entry,events,w,startPct,mode) {
     result.projection={kind:"entry_anchored_equirectangular_approximation",origin:{lat:lat0,lon:lon0,alt:alt},earth_radius_m:6371000,max_path_m:maxPath,max_origin_lat_deg:maxLat,path_budget_m:reach}
     result.scope="geographic_explicit_tangent_energy_approximation_not_executable_route"
     return result
+}
+
+// Explicit typed mission alternatives; never an automatic live alert action.
+function typedAlertSpeeds(v,requested,mode,bankDeg) {
+    if(!v.airframe_profile)throw new Error("typed alerts require an explicit airframe profile")
+    if(bankDeg===undefined)bankDeg=0
+    var active=flightMode(v,mode),low,high
+    routeNumber(bankDeg,"bank_deg",-89.999999,89.999999)
+    if(active==="mc") {
+        if(bankDeg!==0)throw new Error("MC airspeed options do not model bank")
+        low=v.airframe_profile.limits.min_airspeed_mps;high=v.airframe_profile.limits.max_airspeed_mps
+    } else {var envelope=speedRange(v,bankDeg);low=envelope[0];high=envelope[1]}
+    routeNumber(low,"minimum airspeed",0);routeNumber(high,"maximum airspeed",low)
+    if(!Array.isArray(requested)||requested.length<1||requested.length>101)throw new Error("requested airspeeds require 1..101 values")
+    var values=[]
+    requested.forEach(function(x){routeNumber(x,"requested airspeed",0);if(values.indexOf(x)<0)values.push(x)})
+    values.sort(function(a,b){return a-b})
+    return {basis:"airspeed_mps_not_ground_speed",mode:active,minimum_mps:low,maximum_mps:high,
+        accepted_mps:values.filter(function(x){return x>=low&&x<=high}),rejected_mps:values.filter(function(x){return x<low||x>high})}
+}
+
+function evaluateTypedAlertCandidates(v,candidates,w,startPct) {
+    if(startPct===undefined)startPct=100
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)throw new Error("typed candidate evaluator requires FW/hybrid profile")
+    routeWind(w);routeNumber(startPct,"start_pct",0,100)
+    if(!Array.isArray(candidates)||candidates.length<1||candidates.length>16)throw new Error("typed candidates require 1..16 alternatives")
+    var items=boundsSnapshot(candidates),seen=[]
+    items.forEach(function(item){
+        if(!item||typeof item!=="object"||Array.isArray(item)||!["id","points","ground_mps"].every(function(k){return Object.prototype.hasOwnProperty.call(item,k)}))throw new Error("candidate requires id, points, ground_mps")
+        if(Object.keys(item).some(function(k){return ["id","points","ground_mps","mode","hover_s_per_wp"].indexOf(k)<0}))throw new Error("unsupported typed candidate fields")
+        if(typeof item.id!=="string"||Array.from(item.id).length<1||Array.from(item.id).length>128||seen.indexOf(item.id)>=0)throw new Error("candidate id must be unique, nonempty, at most 128 characters")
+        seen.push(item.id)
+    })
+    var rows=items.map(function(item){
+        var row={id:item.id,feasible:false,return_inferred:false}
+        try {
+            var active=flightMode(v,item.mode)
+            if(!Array.isArray(item.points)||item.points.length<2||item.points.length>1000)throw new Error("candidate points require 2..1000 events")
+            item.points.forEach(function(p){if(!p||typeof p!=="object"||Array.isArray(p)||(!Object.prototype.hasOwnProperty.call(p,"cmd")&&(!Object.prototype.hasOwnProperty.call(p,"lat")||!Object.prototype.hasOwnProperty.call(p,"lon"))))throw new Error("candidate movement event requires lat/lon")})
+            var estimate=estimateForBounds(v,item.points,item.ground_mps,w,startPct,item.hover_s_per_wp===undefined?0:item.hover_s_per_wp,active)
+            var interval=bounds(estimate,v),supported=interval.available
+            row.status=supported?"ok":"unsupported";row.estimate=estimate;row.bounds=interval
+            row.sampled_energy_feasible=!!(supported&&interval.low_pct>=v.reserve_pct)
+            if(!supported)row.reason="one or more full-route scenarios unsupported"
+        } catch(error) {
+            // Only domain errors use Error in the current energy core. Preserve
+            // unexpected native errors instead of hiding programming defects.
+            if(error.constructor!==Error)throw error
+            row.status="unsupported";row.reason=error.message;row.sampled_energy_feasible=false
+        }
+        return row
+    })
+    var best=null
+    rows.forEach(function(row){if(row.sampled_energy_feasible&&(!best||row.bounds.low_pct>best.bounds.low_pct))best=row})
+    return {scope:"caller_supplied_normalized_mission_energy_comparison_only",candidates:rows,best_energy_id:best?best.id:null,
+        ranking:"maximum_sampled_low_pct_first_input_on_tie",return_inferred:false,wind_direction_varied:false,feasible:false,executable:false}
 }

@@ -271,3 +271,15 @@ def geographic_wind_route_estimate(vehicle, entry, events, wind, start_pct=100.0
     """Bounded approximate lat/lon bridge for explicit level FW energy events."""
     from .geographic_wind_route import geographic_wind_route_estimate as _route
     return _route(vehicle, entry, events, wind, start_pct, mode)
+
+
+def typed_alert_speeds(vehicle, requested, mode=None, bank_deg=0.0):
+    """Explicit profile airspeed options; not ground speeds or live commands."""
+    from .typed_alerts import typed_alert_speeds as _speeds
+    return _speeds(vehicle, requested, mode, bank_deg)
+
+
+def evaluate_typed_alert_candidates(vehicle, candidates, wind, start_pct=100.0):
+    """Compare caller-supplied typed missions; does not authorize application."""
+    from .typed_alerts import evaluate_typed_alert_candidates as _candidates
+    return _candidates(vehicle, candidates, wind, start_pct)
