@@ -141,9 +141,13 @@ def leg_estimate(v: Vehicle, a, b, alt_a: float, alt_b: float, ground_mps: float
 
 
 def route_estimate(v: Vehicle, points: list, ground_mps: float, wind: Wind,
-                   start_pct: float = 100.0, hover_s_per_wp: float = 5.0):
+                   start_pct: float = 100.0, hover_s_per_wp: float = 5.0, mode=None):
     """points：[{id, lat, lon, alt}]，第一個是起點。回傳整條航線估算與每段明細。"""
-    _require_legacy_route(v)
+    if v.type != "multirotor":
+        from .airframe_mission import typed_route
+        return typed_route(v, points, ground_mps, wind, start_pct, hover_s_per_wp, mode)
+    if mode not in (None, "mc"):
+        raise ValueError("mode is incompatible with airframe type")
     legs = []
     total_wh = 0.0
     total_t = 0.0
@@ -192,11 +196,11 @@ def best_speed(v: Vehicle, wind: Wind, heading_deg: float = 0.0, lo=4.0, hi=None
 # ---- 給智慧告警串的共用入口（單位 Wh、m、s；風向＝風吹來的方向，度） ----
 
 def estimate_route_energy(route: list, vehicle: Vehicle, wind: Wind, ground_mps: float = None,
-                          start_pct: float = 100.0) -> dict:
+                          start_pct: float = 100.0, mode=None) -> dict:
     """route：[{id?, lat, lon, alt}]。回傳總和與每段 {from,to,dist_m,time_s,energy_wh,pct_after}。"""
     pts = [dict(p, id=p.get("id", f"P{i}")) for i, p in enumerate(route)]
     return route_estimate(vehicle, pts, ground_mps or vehicle.cruise_mps, wind, start_pct,
-                          hover_s_per_wp=0.0)
+                          hover_s_per_wp=0.0, mode=mode)
 
 
 def rtl_energy(pos: dict, home: dict, vehicle: Vehicle, wind: Wind, ground_mps: float = None, mode=None) -> dict:
@@ -215,3 +219,14 @@ def transition_estimate(vehicle: Vehicle, from_mode, to_mode):
     """Standalone allowance; not a mode tracker or cmd3000 route executor."""
     from .airframe_route import transition_estimate as _transition
     return _transition(vehicle, from_mode, to_mode)
+
+
+def turn_estimate(vehicle, v_air, angle_deg, wind, bank_deg=None, radius_m=None):
+    """Calm-air coordinated additive arc; no flown geometry."""
+    from .airframe_mission import turn_estimate as _turn
+    return _turn(vehicle, v_air, angle_deg, wind, bank_deg, radius_m)
+
+
+def loiter_estimate(vehicle, v_air, duration_s, wind, radius_m=None, mode=None):
+    from .airframe_mission import loiter_estimate as _loiter
+    return _loiter(vehicle, v_air, duration_s, wind, radius_m, mode)

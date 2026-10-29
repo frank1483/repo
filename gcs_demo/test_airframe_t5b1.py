@@ -152,9 +152,9 @@ class AirframeT5b1(unittest.TestCase):
 
     def test_complete_typed_route_remains_gated(self):
         points = [self.a, self.h]
-        for v in (self.fw, self.vt):
-            with self.assertRaises(NotImplementedError):
-                estimate_route_energy(points, v, Wind())
+        self.assertFalse(estimate_route_energy(points, self.fw, Wind())["landing_modeled"])
+        with self.assertRaises(ValueError):
+            estimate_route_energy(points, self.vt, Wind())
 
 
 if __name__ == "__main__":

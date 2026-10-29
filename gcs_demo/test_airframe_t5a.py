@@ -206,10 +206,9 @@ class AirframeT5a(unittest.TestCase):
                   {"id": "b", "lat": .001, "lon": 0, "alt": 0}]
         for v in (self.fw, self.vt):
             calls = [lambda: route_estimate(v, [], 16, Wind()),
-                     lambda: estimate_route_energy(points, v, Wind()),
-                     ]  # T5b1 opens straight-leg/RTL/search only; full route remains gated.
+                     ]  # T5b2a validates malformed routes; new route tests live separately.
             for call in calls:
-                with self.subTest(kind=v.type), self.assertRaises(NotImplementedError):
+                with self.subTest(kind=v.type), self.assertRaises(ValueError):
                     call()
 
 

@@ -294,8 +294,9 @@ function legEstimate(v, a, b, altA, altB, groundMps, w, mode) {
     return { dist_m: dist, time_s: t, energy_wh: eJ / 3600.0 * v.calib, v_air: vAir, headwind_mps: head }
 }
 
-function routeEstimate(v, points, groundMps, w, startPct, hoverS) {
-    requireLegacyRoute(v)
+function routeEstimate(v, points, groundMps, w, startPct, hoverS, mode) {
+    if (airframeType(v) !== "multirotor") return airframeRouteEstimate(v,points,groundMps,w,startPct,hoverS,mode)
+    flightMode(v,mode)
     if (startPct === undefined) startPct = 100.0
     if (hoverS === undefined) hoverS = 5.0
     var legs = [], wh = 0, ts = 0, dm = 0, cap = v.battery_wh * v.usable_frac, pct = startPct
@@ -1027,6 +1028,7 @@ function applyReportLlm(rep, text, metadata) {
 // node 測試用
 if (typeof module !== "undefined") module.exports = {
     transitionEstimate:transitionEstimate, rtlEnergy:rtlEnergy, estimateRouteEnergy:estimateRouteEnergy,
+    turnEstimate:turnEstimate, loiterEstimate:loiterEstimate,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1241,14 +1243,112 @@ function airframeBestSpeed(v,w,headingDeg,lo,hi,mode) {
     return best
 }
 
-function estimateRouteEnergy(points,v,w,groundMps,startPct) {
+function estimateRouteEnergy(points,v,w,groundMps,startPct,mode) {
     if (groundMps===undefined||groundMps===null) groundMps=v.cruise_mps
     var pts=points.map(function(p,i){var q=clone(p);if(q.id===undefined)q.id="P"+i;return q})
-    return routeEstimate(v,pts,groundMps,w,startPct,0)
+    return routeEstimate(v,pts,groundMps,w,startPct,0,mode)
 }
 function rtlEnergy(pos,home,v,w,groundMps,mode) {
     if (airframeType(v)!=="multirotor") return airframeRtlEnergy(pos,home,v,w,groundMps,mode)
     flightMode(v,mode)
     var p=clone(pos),h=clone(home);p.id="here";h.id="home";h.alt=0
     return estimateRouteEnergy([p,h],v,w,groundMps)
+}
+
+// T5b2a: normalized local energy events, never raw MAVLink or a flown path.
+function turnEstimate(v, vAir, angleDeg, w, bankDeg, radiusM) {
+    routeNumber(angleDeg,"angle_deg",0,360); routeWind(w)
+    if(w.speed_mps!==0) throw new Error("FW arc requires calm wind; ground-track turn model pending")
+    var g=turnGeometry(v,vAir,bankDeg,radiusM)
+    if(g.radius_m===null && angleDeg!==0) throw new Error("nonzero turn requires nonzero bank")
+    var distance=(g.radius_m||0)*rad(angleDeg), seconds=distance/routeNumber(vAir,"v_air",1e-9)
+    g.angle_deg=angleDeg;g.dist_m=distance;g.time_s=seconds
+    g.energy_wh=powerW(v,vAir,"fw",g.bank_deg)*seconds/3600*v.calib
+    g.mode="fw";g.scope="additive_air_relative_arc_allowance"
+    return g
+}
+function loiterEstimate(v,vAir,durationS,w,radiusM,mode) {
+    mode=flightMode(v,mode)
+    routeNumber(durationS,"duration_s",0,86400);routeNumber(vAir,"v_air",1e-9);routeWind(w)
+    if(mode==="mc") {
+        if(radiusM!==undefined && radiusM!==null) throw new Error("MC hold does not accept an orbit radius")
+        if(w.speed_mps>v.max_mps) throw new Error("wind exceeds mc airspeed envelope during hold")
+        return {dist_m:0,time_s:durationS,energy_wh:powerW(v,w.speed_mps,"mc")*durationS/3600*v.calib,mode:"mc",scope:"stationary_mc_hold"}
+    }
+    if(w.speed_mps!==0) throw new Error("FW loiter requires calm wind; ground-track orbit model pending")
+    var g=turnGeometry(v,vAir,undefined,radiusM)
+    g.dist_m=vAir*durationS;g.time_s=durationS
+    g.energy_wh=powerW(v,vAir,"fw",g.bank_deg)*durationS/3600*v.calib
+    g.mode="fw";g.scope="air_relative_loiter_allowance"
+    return g
+}
+function airframeRouteEstimate(v,points,groundMps,w,startPct,hoverS,mode) {
+    if(airframeType(v)==="multirotor") throw new Error("typed_route is reserved for FW/hybrid; legacy MC route unchanged")
+    if(!Array.isArray(points)||points.length<2||points.length>1000) throw new Error("route requires 2..1000 normalized events")
+    if(startPct===undefined)startPct=100
+    if(hoverS===undefined)hoverS=5
+    routeNumber(groundMps,"ground_mps",1e-9);routeNumber(startPct,"start_pct",0,100)
+    routeNumber(hoverS,"hover_s_per_wp",0,86400);routeWind(w)
+    var cap=routeNumber(v.battery_wh*v.usable_frac,"usable capacity",1e-9)
+    var has=function(o,k){return Object.prototype.hasOwnProperty.call(o,k)}
+    var get=function(o,k,d){return has(o,k)?o[k]:d}
+    var pose=function(p){if(!p||typeof p!=="object"||Array.isArray(p))throw new Error("point must be an object");routePosition([p.lat,p.lon]);routeNumber(get(p,"alt",0),"alt",0)}
+    var first=points[0];pose(first)
+    if(has(first,"cmd")||first.kind==="landing"||first.kind==="loiter")throw new Error("first event must be a pose, not a command/landing/loiter")
+    if(mode!==undefined&&mode!==null&&get(first,"mode",mode)!==mode)throw new Error("initial mode contradicts first.mode")
+    var initial=mode===undefined||mode===null?first.mode:mode
+    if((initial===undefined||initial===null)&&first.kind==="takeoff")initial="mc"
+    var active=flightMode(v,initial)
+    if(first.kind==="takeoff"&&(airframeType(v)!=="vtol_hybrid"||active!=="mc"||get(first,"alt",0)!==0))throw new Error("takeoff start requires hybrid mc on ground")
+    var current=clone(first);current.id=get(first,"id","P0")
+    var legs=[],heading=null,landed=false,afterFwLoiter=false,pct=startPct
+    var add=function(part,eventId){pct-=part.energy_wh/cap*100;part.from=current.id;part.to=eventId;part.pct_after=pct;legs.push(part)}
+    var addTransition=function(t,eventId){t.transition_allowance_dist_m=t.dist_m;t.dist_m=0;add(t,eventId)}
+    for(var i=1;i<points.length;i++) {
+        var raw=points[i]
+        if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new Error("event must be an object")
+        var eventId=get(raw,"id","P"+i)
+        if(landed)throw new Error("events after landing are unsupported")
+        if(has(raw,"cmd")) {
+            if(raw.cmd!==3000||airframeType(v)!=="vtol_hybrid")throw new Error("only normalized hybrid cmd3000 is supported")
+            Object.keys(raw).forEach(function(k){if(["id","cmd","to_mode","lat","lon","alt"].indexOf(k)<0)throw new Error("unsupported cmd3000 fields; normalize before estimating")})
+            ;["lat","lon","alt"].forEach(function(k){if(has(raw,k)){routeNumber(raw[k],k);if(raw[k]!==get(current,k,0))throw new Error("cmd3000 cannot change pose")}})
+            var t=transitionEstimate(v,active,raw.to_mode),changed=active!==t.to_mode
+            addTransition(t,eventId);active=t.to_mode;if(changed){heading=null;afterFwLoiter=false}
+            continue
+        }
+        pose(raw)
+        var kind=get(raw,"kind","waypoint")
+        if(["waypoint","target","home","takeoff","landing","loiter"].indexOf(kind)<0)throw new Error("unsupported normalized point kind")
+        if(kind==="takeoff"||kind==="landing") {
+            if(airframeType(v)!=="vtol_hybrid")throw new Error("FW takeoff/landing geometry is not modeled")
+            if(kind==="takeoff"&&(get(current,"alt",0)!==0||get(raw,"alt",0)<=0))throw new Error("takeoff must leave ground for positive altitude")
+            if(kind==="landing"&&(get(raw,"alt",0)!==0||get(current,"alt",0)<=0))throw new Error("landing must descend to relative ground altitude zero")
+            if(active!=="mc"){addTransition(transitionEstimate(v,active,"mc"),eventId);active="mc";heading=null;afterFwLoiter=false}
+        }
+        if(get(raw,"mode",active)!==active)throw new Error("mode changes require cmd3000 or a takeoff/landing event")
+        var a=[current.lat,current.lon],b=[raw.lat,raw.lon],distance=haversineM(a,b)
+        var outbound=distance>=.5?bearingRad(a,b):null
+        if(active==="fw"&&afterFwLoiter&&outbound!==null)throw new Error("FW departure after loiter requires an exit-heading model")
+        if(active==="fw"&&heading!==null&&outbound!==null) {
+            var angle=Math.abs((( (outbound-heading)*180/Math.PI+180)%360+360)%360-180)
+            if(angle>1e-9)add(turnEstimate(v,groundMps,angle,w),current.id)
+        }
+        var dwell=get(raw,"loiter_s",kind==="target"?hoverS:0)
+        routeNumber(dwell,"loiter_s",0,86400)
+        if(kind==="loiter"&&dwell<=0)throw new Error("loiter event requires positive loiter_s")
+        var samePoseHold=active==="fw"&&distance<.5&&get(raw,"alt",0)===get(current,"alt",0)&&dwell>0
+        if(!samePoseHold)add(airframeLegEstimate(v,a,b,get(current,"alt",0),get(raw,"alt",0),groundMps,w,active),eventId)
+        if(dwell>0)add(loiterEstimate(v,groundMps,dwell,w,raw.radius_m,active),eventId)
+        else if(has(raw,"radius_m"))throw new Error("radius_m requires a positive loiter duration")
+        heading=active==="fw"&&dwell===0?outbound:null
+        afterFwLoiter=active==="fw"&&dwell>0
+        current=clone(raw);current.id=eventId;landed=kind==="landing"
+    }
+    var wh=0,ts=0,dm=0,td=0
+    legs.forEach(function(x){wh+=x.energy_wh;ts+=x.time_s;dm+=x.dist_m;td+=x.transition_allowance_dist_m||0})
+    var energyOk=pct>=v.reserve_pct
+    return {dist_m:dm,time_s:ts,energy_wh:wh,end_pct:pct,used_pct:startPct-pct,margin_pct:pct-v.reserve_pct,
+            feasible:energyOk&&landed,energy_feasible:energyOk,arrival_mode:active,landing_modeled:landed,
+            transition_allowance_dist_m:td,scope:"normalized_route_energy_only_not_executable_route",legs:legs}
 }

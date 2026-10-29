@@ -36,7 +36,7 @@ test('invalid values reject',()=>{for(const s of [0,-1,true,NaN])assert.throws((
 test('legacy MC unchanged synthetic',()=>{const pts=[{...a,id:'a'},{...h,id:'h'}];for(const w of [C.wind(),C.wind(3,80)]){
     assert.deepStrictEqual(plain(C.rtlEnergy(a,h,mc,w)),plain(C.rtlEnergy(a,h,C.vehicle(),w)));
     assert.deepStrictEqual(plain(C.routeEstimate(mc,pts,8,w)),plain(C.routeEstimate(C.vehicle(),pts,8,w)))}});
-test('full typed route stays gated',()=>{for(const v of [fw,vt])assert.throws(()=>C.estimateRouteEnergy([a,h],v,C.wind()),/T5b/)});
+test('incomplete typed route stays gated',()=>{assert.equal(C.estimateRouteEnergy([a,h],fw,C.wind()).landing_modeled,false);assert.throws(()=>C.estimateRouteEnergy([a,h],vt,C.wind()))});
 // Optional evidence produced by NEW Python vector emitter, not a model response.
 const at=process.argv.indexOf('--python-vectors');
 if(at>=0){const rows=JSON.parse(fs.readFileSync(process.argv[at+1],'utf8').replace(/^\uFEFF/,''));
