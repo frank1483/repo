@@ -1029,6 +1029,7 @@ function applyReportLlm(rep, text, metadata) {
 if (typeof module !== "undefined") module.exports = {
     estimateForBounds:estimateForBounds, bounds:bounds, transitionEstimate:transitionEstimate, rtlEnergy:rtlEnergy, estimateRouteEnergy:estimateRouteEnergy,
     turnEstimate:turnEstimate, loiterEstimate:loiterEstimate,
+    windArcEstimate:windArcEstimate, windLoiterEstimate:windLoiterEstimate,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1431,4 +1432,41 @@ function bounds(estimate,v) {
     if(ok){low=rows[0];high=rows[0];rows.forEach(function(r){if(r.end_pct<low.end_pct)low=r;if(r.end_pct>high.end_pct)high=r})}
     return {available:ok,scope:"finite_full_route_scenarios_not_robust_or_probability_interval",wind_direction_varied:false,return_inferred:false,
         low_pct:ok?low.end_pct:null,high_pct:ok?high.end_pct:null,conservative:low,optimistic:high,nominal:rows[0],scenarios:rows}
+}
+
+// Explicit FW air-relative allowances in steady uniform wind, not ground orbits.
+function windArcResult(v,vAir,durationS,w,entryHeadingDeg,clockwise,g) {
+    routeNumber(entryHeadingDeg,"entry_heading_deg")
+    if(typeof clockwise!=="boolean") throw new Error("clockwise: boolean required")
+    var wv=routeWind(w),radius=g.radius_m
+    if(radius===null) throw new Error("wind arc/loiter requires a nonzero bank")
+    var bank=Math.abs(g.bank_deg)*(clockwise?1:-1),omega=vAir/radius*(clockwise?1:-1)
+    var entry=((entryHeadingDeg%360)+360)%360,sweep=omega*durationS,theta=rad(entry)
+    var end=theta+sweep%(2*Math.PI)
+    var ae=vAir/omega*(Math.cos(theta)-Math.cos(end)),an=vAir/omega*(Math.sin(end)-Math.sin(theta))
+    var de=wv[0]*durationS,dn=wv[1]*durationS
+    var ee=vAir*Math.sin(end)+wv[0],en=vAir*Math.cos(end)+wv[1],speed=Math.sqrt(ee*ee+en*en)
+    g.bank_deg=bank;g.time_s=durationS;g.air_dist_m=vAir*durationS
+    g.energy_wh=powerW(v,vAir,"fw",bank)*durationS/3600*v.calib
+    g.entry_air_heading_deg=entry;g.exit_air_heading_deg=((end*180/Math.PI)%360+360)%360
+    g.signed_sweep_deg=sweep*180/Math.PI;g.clockwise=clockwise
+    g.air_displacement_m={east:ae,north:an};g.wind_drift_m={east:de,north:dn}
+    g.ground_displacement_m={east:ae+de,north:an+dn}
+    g.exit_ground_speed_mps=speed
+    g.exit_ground_heading_deg=speed>1e-9?((Math.atan2(ee,en)*180/Math.PI)%360+360)%360:null
+    g.mode="fw";g.ground_fixed_orbit=false
+    g.scope="uniform_wind_air_relative_allowance_not_executable_route"
+    return g
+}
+function windArcEstimate(v,vAir,angleDeg,w,entryHeadingDeg,clockwise,bankDeg,radiusM) {
+    if(clockwise===undefined) clockwise=true
+    routeNumber(vAir,"v_air",1e-9);routeNumber(angleDeg,"angle_deg",0,360)
+    var g=turnGeometry(v,vAir,bankDeg,radiusM)
+    if(g.radius_m===null) throw new Error("wind arc/loiter requires a nonzero bank")
+    return windArcResult(v,vAir,g.radius_m*rad(angleDeg)/vAir,w,entryHeadingDeg,clockwise,g)
+}
+function windLoiterEstimate(v,vAir,durationS,w,entryHeadingDeg,clockwise,radiusM) {
+    if(clockwise===undefined) clockwise=true
+    routeNumber(vAir,"v_air",1e-9);routeNumber(durationS,"duration_s",0,86400)
+    return windArcResult(v,vAir,durationS,w,entryHeadingDeg,clockwise,turnGeometry(v,vAir,undefined,radiusM))
 }

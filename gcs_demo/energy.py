@@ -243,3 +243,19 @@ def bounds(estimate, vehicle):
     """Finite scenario extrema and evidence, or unavailable on any unsupported scenario."""
     from .airframe_bounds import bounds as _bounds
     return _bounds(estimate, vehicle)
+
+
+def wind_arc_estimate(vehicle, v_air, angle_deg, wind, entry_heading_deg,
+                      clockwise=True, bank_deg=None, radius_m=None):
+    """Explicit FW air-relative allowance, not a ground-fixed/executable arc."""
+    from .wind_arc import wind_arc_estimate as _arc
+    return _arc(vehicle, v_air, angle_deg, wind, entry_heading_deg,
+                clockwise, bank_deg, radius_m)
+
+
+def wind_loiter_estimate(vehicle, v_air, duration_s, wind, entry_heading_deg,
+                         clockwise=True, radius_m=None):
+    """Explicit FW air-relative orbit; does not update normalized route pose."""
+    from .wind_arc import wind_loiter_estimate as _loiter
+    return _loiter(vehicle, v_air, duration_s, wind, entry_heading_deg,
+                   clockwise, radius_m)
