@@ -22,11 +22,29 @@ def to_latlon(p):
     return lat, lon
 
 
-def default_vehicle() -> Vehicle:
-    """demo 機型：6 kg 測繪多旋翼、6S 22Ah（488 Wh）。電量% 以標稱容量計。"""
+def default_vehicle(path_or_id=None) -> Vehicle:
+    """Load an explicit shared profile, or keep the legacy 6 kg / 488 Wh demo.
+
+    Profile I/O and validation errors propagate; never substitute demo values.
+    No default aircraft is selected silently for an existing demo caller.
+    """
+    if path_or_id is not None:
+        return _e.load_airframe(path_or_id)
     return Vehicle(vehicle_id="UAV-01", mass_kg=6.0, battery_wh=488.0, usable_frac=1.0,
                    p_hover_w=800.0, cda_m2=0.15, eta=0.7, cruise_mps=12.0, max_mps=16.0,
                    reserve_pct=20.0)
+
+
+def profile_limits(v: Vehicle) -> dict:
+    """Only these two alert thresholds belong to the shared airframe profile.
+
+    Other alert policy and battery-voltage estimator settings stay in Config.
+    Returned scalars are a snapshot; this does not mutate the loaded profile.
+    """
+    if v.airframe_profile is None:
+        return {}
+    limits = v.airframe_profile["limits"]
+    return {key: limits[key] for key in ("reserve_pct", "wind_limit_mps")}
 
 
 def air_power_w(v: Vehicle, v_air: float) -> float:

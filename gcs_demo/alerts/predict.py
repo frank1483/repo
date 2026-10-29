@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-from .energy_api import Vehicle, Wind, air_power_w, leg_energy, rtl_energy, with_calib
+from .energy_api import (Vehicle, Wind, air_power_w, leg_energy, rtl_energy,
+                         with_calib, profile_limits)
 
 # GcpAlertManager 用的 MAV_SEVERITY
 SEV_CRITICAL, SEV_WARNING, SEV_NOTICE = 2, 4, 5
@@ -84,13 +85,18 @@ class Finding:
 class PredictiveAlertEngine:
     def __init__(self, route, home, vehicle: Vehicle, config: Config | None = None, priorities=None):
         """priorities：每個航點的優先級（1 必要、2 選配），None 表示全部一樣重要。"""
+        # Tuple routes do not encode modes, FW turns or a landing approach.
+        # Do not issue MC-only landing/slowdown advice for other airframes.
+        if vehicle.type != "multirotor":
+            raise NotImplementedError(
+                f"{vehicle.type}: typed alert routes/candidates are not supported yet")
         self.route = [tuple(p) for p in route]
         self.route_idx = list(range(len(self.route)))   # 目前航線每點對應原航線的索引
         self.total_wps = len(self.route)       # 完成度一律對原始航線算
         self.prio = list(priorities) if priorities else None
         self.home = tuple(home)
         self.v = vehicle
-        self.cfg = config or Config()
+        self.cfg = replace(config or Config(), **profile_limits(vehicle))
         self.calib = vehicle.calib
         self._cell_hist = deque(maxlen=600)    # (used_wh, 補償後單芯電壓)
         self._link_hist = deque(maxlen=900)    # (離家距離, 品質)
