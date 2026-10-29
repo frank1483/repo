@@ -259,3 +259,9 @@ def wind_loiter_estimate(vehicle, v_air, duration_s, wind, entry_heading_deg,
     from .wind_arc import wind_loiter_estimate as _loiter
     return _loiter(vehicle, v_air, duration_s, wind, entry_heading_deg,
                    clockwise, radius_m)
+
+
+def wind_route_estimate(vehicle, entry, events, wind, start_pct=100.0, mode=None):
+    """Explicit local-plane tangent energy route; not an executable mission."""
+    from .wind_route import wind_route_estimate as _route
+    return _route(vehicle, entry, events, wind, start_pct, mode)

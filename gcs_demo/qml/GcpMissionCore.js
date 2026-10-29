@@ -1030,6 +1030,7 @@ if (typeof module !== "undefined") module.exports = {
     estimateForBounds:estimateForBounds, bounds:bounds, transitionEstimate:transitionEstimate, rtlEnergy:rtlEnergy, estimateRouteEnergy:estimateRouteEnergy,
     turnEstimate:turnEstimate, loiterEstimate:loiterEstimate,
     windArcEstimate:windArcEstimate, windLoiterEstimate:windLoiterEstimate,
+    windRouteEstimate:windRouteEstimate,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
     loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
@@ -1469,4 +1470,58 @@ function windLoiterEstimate(v,vAir,durationS,w,entryHeadingDeg,clockwise,radiusM
     if(clockwise===undefined) clockwise=true
     routeNumber(vAir,"v_air",1e-9);routeNumber(durationS,"duration_s",0,86400)
     return windArcResult(v,vAir,durationS,w,entryHeadingDeg,clockwise,turnGeometry(v,vAir,undefined,radiusM))
+}
+
+// Explicit flat local-frame tangent joins. Never an automatic waypoint fillet.
+function windRouteEstimate(v,entry,events,w,startPct,mode) {
+    if(startPct===undefined) startPct=100
+    if(flightMode(v,mode)!=="fw") throw new Error("wind route requires FW mode")
+    if(!entry||typeof entry!=="object"||Array.isArray(entry)||Object.keys(entry).sort().join(",")!=="air_heading_deg,east_m,north_m") throw new Error("entry requires only east_m, north_m, air_heading_deg")
+    if(!Array.isArray(events)||events.length<1||events.length>1000) throw new Error("wind route requires 1..1000 events")
+    var east=routeNumber(entry.east_m,"east_m"),north=routeNumber(entry.north_m,"north_m")
+    var heading=((routeNumber(entry.air_heading_deg,"air_heading_deg")%360)+360)%360
+    routeNumber(startPct,"start_pct",0,100)
+    var windV=routeWind(w),we=windV[0],wn=windV[1],capacity=routeNumber(v.battery_wh*v.usable_frac,"usable capacity",1e-9)
+    var previousAir=null,legs=[],energy=0,seconds=0,airDistance=0,straightDistance=0
+    var allowed={straight:["kind","id","east_m","north_m","ground_mps"],arc:["kind","id","v_air","angle_deg","clockwise","bank_deg","radius_m"],loiter:["kind","id","v_air","duration_s","clockwise","radius_m"]}
+    for(var index=0;index<events.length;index++) {
+        var event=events[index]
+        if(!event||typeof event!=="object"||Array.isArray(event)||typeof event.kind!=="string") throw new Error("event requires a kind")
+        var kind=event.kind
+        if(!Object.prototype.hasOwnProperty.call(allowed,kind)||Object.keys(event).some(function(k){return allowed[kind].indexOf(k)<0})) throw new Error("unsupported wind-route event fields")
+        var start={east_m:east,north_m:north},air,part
+        if(kind==="straight") {
+            var te=routeNumber(event.east_m,"east_m"),tn=routeNumber(event.north_m,"north_m"),speed=routeNumber(event.ground_mps,"ground_mps",1e-9)
+            var de=te-east,dn=tn-north,distance=routeNumber(Math.hypot(de,dn),"straight distance",1e-6)
+            var ae=speed*de/distance-we,an=speed*dn/distance-wn
+            air=routeNumber(Math.hypot(ae,an),"v_air",1e-9)
+            var required=((Math.atan2(ae,an)*180/Math.PI)%360+360)%360
+            if(Math.abs(((required-heading+540)%360)-180)>1e-6) throw new Error("straight target is not tangent to entry air heading")
+            var duration=distance/speed
+            part={time_s:duration,energy_wh:powerW(v,air,"fw")*duration/3600*v.calib,
+                  air_dist_m:air*duration,straight_dist_m:distance,exit_air_heading_deg:required,
+                  exit_ground_heading_deg:((Math.atan2(de,dn)*180/Math.PI)%360+360)%360,
+                  exit_ground_speed_mps:speed,ground_displacement_m:{east:de,north:dn}}
+        } else {
+            air=routeNumber(event.v_air,"v_air",1e-9)
+            if(typeof event.clockwise!=="boolean") throw new Error("clockwise: boolean required")
+            if(kind==="arc") part=windArcEstimate(v,air,event.angle_deg,w,heading,event.clockwise,event.bank_deg,event.radius_m)
+            else part=windLoiterEstimate(v,air,event.duration_s,w,heading,event.clockwise,event.radius_m)
+            part.straight_dist_m=0
+        }
+        if(previousAir!==null&&Math.abs(air-previousAir)>1e-6) throw new Error("airspeed discontinuity: acceleration is not modeled")
+        previousAir=air
+        east=routeNumber(east+part.ground_displacement_m.east,"exit east_m");north=routeNumber(north+part.ground_displacement_m.north,"exit north_m")
+        heading=part.exit_air_heading_deg
+        energy=routeNumber(energy+part.energy_wh,"route energy",0);seconds=routeNumber(seconds+part.time_s,"route time",0)
+        airDistance=routeNumber(airDistance+part.air_dist_m,"air distance",0);straightDistance=routeNumber(straightDistance+part.straight_dist_m,"straight distance",0)
+        part.kind=kind;part.id=event.id===undefined?"E"+index:event.id
+        part.entry_local_m=start;part.exit_local_m={east_m:east,north_m:north};part.pct_after=startPct-energy/capacity*100;legs.push(part)
+    }
+    var endPct=startPct-energy/capacity*100,last=legs[legs.length-1]
+    return {energy_wh:energy,time_s:seconds,air_dist_m:airDistance,straight_dist_m:straightDistance,
+            end_pct:endPct,used_pct:startPct-endPct,margin_pct:endPct-v.reserve_pct,energy_feasible:endPct>=v.reserve_pct,
+            feasible:false,landing_modeled:false,arrival_mode:"fw",exit_local_m:{east_m:east,north_m:north},
+            exit_air_heading_deg:heading,exit_ground_heading_deg:last.exit_ground_heading_deg,exit_ground_speed_mps:last.exit_ground_speed_mps,
+            legs:legs,scope:"explicit_local_tangent_energy_route_not_executable_route"}
 }
