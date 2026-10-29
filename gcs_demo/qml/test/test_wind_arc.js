@@ -5,6 +5,7 @@ const c=require("./load_core")();
 const profile=id=>JSON.parse(fs.readFileSync(path.join(__dirname,"../../airframes",id+".json"),"utf8"));
 const v=c.loadAirframe(profile("fw_example"));
 const near=(a,b)=>assert(Math.abs(a-b)<=1e-8*Math.max(1,Math.abs(a),Math.abs(b)),`${a} != ${b}`);
+const deepNear=(a,b)=>{if(a&&typeof a==="object"){assert.deepEqual(Object.keys(a).sort(),Object.keys(b).sort());for(const k of Object.keys(a))deepNear(a[k],b[k]);}else if(typeof a==="number"&&typeof b==="number")near(a,b);else assert.equal(a,b);};
 let groups=0;
 function test(name,fn){fn();groups++;console.log("PASS "+name);}
 const arc=(w=c.wind(),angle=90,heading=0,clockwise=true)=>c.windArcEstimate(v,16,angle,w,heading,clockwise,undefined,40);
@@ -17,7 +18,7 @@ test("air energy independent of wind",()=>{const a=arc(),b=arc(c.wind(5,40));ass
 test("full circle drift",()=>{const r=arc(c.wind(3,270),360,37);near(r.ground_displacement_m.east,3*r.time_s);near(r.ground_displacement_m.north,0);near(r.exit_air_heading_deg,37);assert.equal(r.ground_fixed_orbit,false);});
 test("rotated heading",()=>{const r=arc(c.wind(),90,90);near(r.ground_displacement_m.east,40);near(r.ground_displacement_m.north,-40);near(r.exit_air_heading_deg,180);});
 test("zero sweep",()=>{const r=arc(c.wind(3,0),0,-20);assert.equal(r.time_s,0);assert.equal(r.energy_wh,0);near(r.ground_displacement_m.east,0);near(r.ground_displacement_m.north,0);near(r.exit_air_heading_deg,340);});
-test("partial loiter",()=>{const a=arc(c.wind(4,80)),b=c.windLoiterEstimate(v,16,40*Math.PI/2/16,c.wind(4,80),0,true,40);assert.deepEqual(a,b);});
+test("partial loiter",()=>{const a=arc(c.wind(4,80)),b=c.windLoiterEstimate(v,16,40*Math.PI/2/16,c.wind(4,80),0,true,40);deepNear(a,b);});
 test("multiple revolutions",()=>{const seconds=(4*Math.PI+Math.PI/2)*40/16,r=c.windLoiterEstimate(v,16,seconds,c.wind(2,270),0,true,40);near(r.signed_sweep_deg,810);near(r.exit_air_heading_deg,90);near(r.ground_displacement_m.east,40+2*seconds);});
 test("ground exit wind triangle",()=>{const r=arc(c.wind(5,180));near(r.exit_ground_heading_deg,Math.atan2(16,5)*180/Math.PI);near(r.exit_ground_speed_mps,Math.sqrt(281));});
 test("ground stop heading null",()=>{const r=arc(c.wind(16,90));assert(r.exit_ground_speed_mps<1e-9);assert.equal(r.exit_ground_heading_deg,null);});

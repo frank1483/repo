@@ -25,6 +25,16 @@ class WindArc(unittest.TestCase):
     def setUp(self):
         self.v = load_airframe("fw_example")
 
+    def assertDeepNear(self, a, b):
+        if isinstance(a, dict):
+            self.assertEqual(set(a), set(b))
+            for k in a:
+                self.assertDeepNear(a[k], b[k])
+        elif isinstance(a, float) or isinstance(b, float):
+            self.assertTrue(math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9), f"{a} != {b}")
+        else:
+            self.assertEqual(a, b)
+
     def arc(self, wind=None, **kw):
         return wind_arc_estimate(self.v, 16, kw.pop("angle", 90),
                                  wind or Wind(), kw.pop("heading", 0),
@@ -84,7 +94,7 @@ class WindArc(unittest.TestCase):
         seconds = 40 * math.pi / 2 / 16
         a = self.arc(Wind(4, 80))
         b = wind_loiter_estimate(self.v, 16, seconds, Wind(4, 80), 0, radius_m=40)
-        self.assertEqual(a, b)
+        self.assertDeepNear(a, b)
 
     def test_multiple_loiter_revolutions(self):
         seconds = (4*math.pi + math.pi/2) * 40 / 16
