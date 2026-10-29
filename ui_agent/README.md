@@ -70,8 +70,31 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ninja -C build-android-arm64-debug 
 | `GCS_LLM_BACKEND` | `openai`（vLLM、llama.cpp server、Ollama 的 /v1）、`ollama`（原生 /api/chat）、`none`（只用規則） |
 | `GCS_LLM_URL` | `http://<server>:8000/v1` |
 | `GCS_LLM_MODEL` | 伺服器上的模型名稱 |
-| `GCS_LLM_TIMEOUT_MS` | 預設 20000 |
+| `GCS_LLM_TIMEOUT_MS` | 預設 60000 ms；有效值取整並限制為 1–120000 ms；無效／非正數用預設 |
 | `GCS_AGENT_LLM_ALWAYS` | `1` = 每次都問模型（預設只在規則不確定時問） |
+
+### v6：既有 Ollama 設定與等待上限
+
+先確認部署端已具備的 Ollama `qwen2.5:3b`；此程式不下載模型、不安裝或啟動服務。網址填實際 SITL Ubuntu 的位址，非 Ollama 的 /v1 或 /api/chat 完整路徑。例如在部署人員已授權啟動的 UI 程序環境設定：
+
+```bash
+GCS_LLM_BACKEND=ollama
+GCS_LLM_URL=http://<實際Ubuntu主機位址>:11434
+GCS_LLM_MODEL=qwen2.5:3b
+GCS_LLM_TIMEOUT_MS=60000
+```
+
+這是設定範例，請以各自的環境變數匯出／啟動方式傳入；本次交付沒有執行上述模型連線。既有面板 backend／網址／模型設定仍優先於環境變數，請先在 ⚙ 核對。模型未設定時保持只用規則。
+
+⚙ 的等待上限以毫秒輸入整數 1–120000，保存於本機 GCP/Agent 的 llmTimeoutMs；留空代表採 GCS_LLM_TIMEOUT_MS，未設定／無效時採 60000。面板顯示實際秒數與來源。無效面板輸入保留原值並提示；等待中設定停用。每次請求鎖定當時網址、模型、後端、金鑰與上限；改設定只影響下一次。
+
+原生 Ollama /api/chat 的 format 固定送當回合候選約束的 JSON schema，stream:false、temperature:0；不退回寬鬆 JSON 格式。GCS_LLM_SCHEMA=0 只控制 OpenAI 相容後端；OpenAI 的 schema HTTP400 可退回一次 json_object，兩次共用同一等待上限。回傳仍須通過候選ID／證據檢核。
+
+逾時中止請求、忽略晚回覆並使用原規則結果；「模型未完成…已改用規則判斷」保留在 AI 面板獨立提示區，後續動作或確認卡不會蓋掉。下一個要求或取消時清除。這不表示規則一定會執行：CLARIFY 仍待選，HOLD 仍不執行。
+
+本批新增 test/test_model_settings_v6.js：假XHR／手動計時器，無網路、無真模型；由 Claude 首次執行。Qt6.8 Settings 保存、捲動與面板實際顯示仍待驗收。第6項五步／五輪迴圈未在本批實作。
+
+官方接口參考：[Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs)、[Qt Settings](https://doc.qt.io/qt-6/qml-qtcore-settings.html)。
 
 ## 測試
 

@@ -25,14 +25,12 @@ Item {
         property string backend: ""
         property string llmUrl: ""
         property string llmModel: ""
+        property int llmTimeoutMs: 0 // 0 inherits environment/default; panel overrides only when positive.
     }
     readonly property string backend: agentSettings.backend || envValue("GCS_LLM_BACKEND", "openai")
     readonly property string modelUrl: agentSettings.llmUrl || envValue("GCS_LLM_URL", "")
     readonly property string modelName: agentSettings.llmModel || envValue("GCS_LLM_MODEL", "")
-    readonly property int modelTimeoutMs: {
-        const n = Number(envValue("GCS_LLM_TIMEOUT_MS", "20000"))
-        return isFinite(n) && n > 0 ? Math.max(1, Math.min(120000, Math.floor(n))) : 20000
-    }
+    readonly property int modelTimeoutMs: resolvedModelTimeoutMs()
     readonly property bool modelAlways: envValue("GCS_AGENT_LLM_ALWAYS", "0") === "1"
     readonly property bool modelEnabled: backend !== "none" && modelUrl !== ""
 
@@ -40,6 +38,7 @@ Item {
     property bool busy: false
     property string statusText: ""
     property string messageText: ""
+    property string modelNotice: "" // Separate from action text so rule fallback remains visible.
     property var choices: []           // CLARIFY 時讓使用者點選的候選
     property string pendingText: "" // No timer: retained until completion/cancel/save/close.
     property var _pending: null        // 目前的分析結果
@@ -50,6 +49,24 @@ Item {
     property var _choiceGuard: null
     readonly property bool canSaveLayout: !busy && GcpAgentState.hasUnsavedChanges
     property var changeLog: []         // Session log includes undone actions; never written to Settings.
+
+    function resolvedModelTimeoutMs() {
+        const saved = Number(agentSettings.llmTimeoutMs)
+        const n = isFinite(saved) && saved > 0 ? saved : Number(envValue("GCS_LLM_TIMEOUT_MS", "60000"))
+        return isFinite(n) && n > 0 ? Math.max(1, Math.min(120000, Math.floor(n))) : 60000
+    }
+
+    function setModelTimeout(text) {
+        if (busy) return false
+        const value = String(text).trim()
+        if (value === "") { agentSettings.llmTimeoutMs = 0; return true }
+        // Panel accepts whole milliseconds; malformed edits never change the prior setting.
+        if (!/^[0-9]+$/.test(value)) return false
+        const n = Number(value)
+        if (!isFinite(n) || n < 1 || n > 120000) return false
+        agentSettings.llmTimeoutMs = n
+        return true
+    }
 
     function recordChange(text) {
         changeLog = [{ label: text, time: new Date().toISOString() }].concat(changeLog).slice(0, 50)
@@ -89,6 +106,7 @@ Item {
     }
 
     function cancelWaiting() {
+        modelNotice = ""
         clearConfirmation()
         pendingText = ""
         _modelGeneration++
@@ -106,6 +124,7 @@ Item {
         text = String(text || "").trim()
         if (/^(取消|算了|cancel)[。！!]?$/i.test(text)) { cancelWaiting(); return }
         if (!text || busy) return
+        modelNotice = ""
         clearConfirmation()
         choices = []
         messageText = ""
@@ -143,6 +162,7 @@ Item {
 
     // model: null（沒問）或 { ok, decision, choice_id, reason_zh, error, latency_ms }
     function finish(result, model) {
+        modelNotice = model && !model.ok ? qsTr("模型未完成（%1），已改用規則判斷。").arg(model.error) : ""
         let decision = result.rule, source = qsTr("規則")
         if (model && model.ok) {
             decision = model
@@ -259,7 +279,11 @@ Item {
     function callModel(result, ctx, done) {
         let xhr = null, finished = false, fallbackSent = false
         const t0 = Date.now(), requestBackend = backend
-        const schemaOn = envValue("GCS_LLM_SCHEMA", "1") === "1"
+        // Snapshot connection settings for the whole request, including any schema retry.
+        const requestUrl = modelUrl.replace(/\/+$/, ""), requestModel = modelName
+        const requestTimeoutMs = modelTimeoutMs, requestKey = envValue("GCS_LLM_API_KEY", "")
+        // Native Ollama always receives the candidate-bound schema. The env switch is OpenAI-only.
+        const schemaOn = requestBackend === "ollama" || envValue("GCS_LLM_SCHEMA", "1") === "1"
         const schema = Core.decisionSchema(result)
         function end(r) {
             if (finished) return
@@ -268,6 +292,9 @@ Item {
             timeoutTimer.onFire = null
             root._cancelModel = null
             r.latency_ms = Date.now() - t0
+            r.timeout_ms = requestTimeoutMs
+            r.request_backend = requestBackend
+            r.request_model = requestModel
             done(r)
         }
         root._cancelModel = function () {
@@ -278,8 +305,13 @@ Item {
             root._cancelModel = null
             if (xhr) xhr.abort()
         }
-        timeoutTimer.onFire = function () { const active = xhr; end({ ok: false, error: qsTr("逾時") }); if(active) active.abort() }
-        timeoutTimer.interval = modelTimeoutMs
+        timeoutTimer.onFire = function () {
+            if (finished) return
+            const active = xhr
+            end({ ok: false, error_code: "TIMEOUT", error: qsTr("等待超過 %1 秒").arg(requestTimeoutMs / 1000) })
+            if (active) active.abort()
+        }
+        timeoutTimer.interval = requestTimeoutMs
         timeoutTimer.restart() // One deadline covers both attempts.
         const messages = [{ role: "system", content: Core.SYSTEM_PROMPT },
                           { role: "user", content: Core.buildUserMessage(result, ctx) }]
@@ -288,12 +320,12 @@ Item {
             xhr = current
             let url, body
             if (requestBackend === "ollama") {
-                url = modelUrl.replace(/\/$/, "") + "/api/chat"
-                body = { model: modelName, messages: messages, stream: false,
-                         format: useSchema ? schema : "json", options: { temperature: 0 } }
+                url = requestUrl + "/api/chat"
+                body = { model: requestModel, messages: messages, stream: false,
+                         format: schema, options: { temperature: 0 } }
             } else {
-                url = modelUrl.replace(/\/$/, "") + "/chat/completions"
-                body = { model: modelName, messages: messages, temperature: 0, max_tokens: 500 }
+                url = requestUrl + "/chat/completions"
+                body = { model: requestModel, messages: messages, temperature: 0, max_tokens: 500 }
                 if (useSchema) body.response_format = { type: "json_schema",
                     json_schema: { name: "gcp_ui_decision", strict: false, schema: schema } }
                 else if (fallbackSent || envValue("GCS_LLM_JSON_MODE", "1") === "1")
@@ -320,8 +352,7 @@ Item {
             try {
                 current.open("POST", url)
                 current.setRequestHeader("Content-Type", "application/json")
-                const key = envValue("GCS_LLM_API_KEY", "")
-                if (key) current.setRequestHeader("Authorization", "Bearer " + key)
+                if (requestKey) current.setRequestHeader("Authorization", "Bearer " + requestKey)
                 current.send(JSON.stringify(body))
             } catch (e) { end({ ok: false, error: qsTr("無法建立模型請求") }); current.abort() }
         }
@@ -709,31 +740,79 @@ Item {
                 color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale)
             }
 
-            // 模型設定（存在本機，重開 App 仍保留）
-            ColumnLayout {
+            // Bounded settings pane: timeout controls must not push the intent input off-screen.
+            ScrollView {
                 id: settingsForm
                 visible: false
+                enabled: !root.busy
                 Layout.fillWidth: true
-                spacing: 8
-                Repeater {
-                    model: [
-                        { key: "backend", label: qsTr("後端（openai／ollama／none）"), value: root.backend },
-                        { key: "llmUrl", label: qsTr("模型網址，例：http://192.168.50.6:8000/v1"), value: root.modelUrl },
-                        { key: "llmModel", label: qsTr("模型名稱"), value: root.modelName }
-                    ]
-                    delegate: TextField {
-                        required property var modelData
+                Layout.preferredHeight: Math.min(settingsContent.implicitHeight, Math.max(140, panel.height * 0.32))
+                contentWidth: availableWidth
+                clip: true
+                property string timeoutError: ""
+                ColumnLayout {
+                    id: settingsContent
+                    width: settingsForm.availableWidth
+                    spacing: 8
+                    Repeater {
+                        model: [
+                            { key: "backend", label: qsTr("後端（openai／ollama／none）"), value: root.backend },
+                            { key: "llmUrl", label: qsTr("模型網址（Ollama：http://Ubuntu位址:11434）"), value: root.modelUrl },
+                            { key: "llmModel", label: qsTr("模型名稱（Ollama：qwen2.5:3b）"), value: root.modelName }
+                        ]
+                        delegate: TextField {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 48
+                            font.pixelSize: (18 * GcpTheme.font.textScale)
+                            color: root.cText
+                            text: modelData.value
+                            placeholderText: modelData.label
+                            placeholderTextColor: root.cSub
+                            background: Rectangle { radius: 8; color: "#33000000"; border.color: root.cLine }
+                            onEditingFinished: agentSettings[modelData.key] = text.trim()
+                        }
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("等待上限（毫秒，1–120000；留空採環境設定）")
+                        color: root.cSub; font.pixelSize: (16 * GcpTheme.font.textScale)
+                        wrapMode: Text.Wrap
+                    }
+                    TextField {
+                        id: timeoutInput
+                        objectName: "agentModelTimeoutInput"
                         Layout.fillWidth: true
                         Layout.preferredHeight: 48
+                        text: agentSettings.llmTimeoutMs > 0 ? String(agentSettings.llmTimeoutMs) : ""
+                        placeholderText: String(root.modelTimeoutMs)
+                        inputMethodHints: Qt.ImhDigitsOnly
                         font.pixelSize: (18 * GcpTheme.font.textScale)
                         color: root.cText
-                        text: modelData.value
-                        placeholderText: modelData.label
                         placeholderTextColor: root.cSub
-                        background: Rectangle { radius: 8; color: "#33000000"; border.color: root.cLine }
-                        onEditingFinished: agentSettings[modelData.key] = text.trim()
+                        background: Rectangle { radius: 8; color: "#33000000"; border.color: settingsForm.timeoutError ? root.cWarn : root.cLine }
+                        onEditingFinished: {
+                            settingsForm.timeoutError = root.setModelTimeout(text) ? "" : qsTr("請填 1–120000 的整數，或留空；原設定保留")
+                            if (settingsForm.timeoutError) text = agentSettings.llmTimeoutMs > 0 ? String(agentSettings.llmTimeoutMs) : ""
+                        }
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: settingsForm.timeoutError || qsTr("目前上限：%1 秒（%2）").arg(root.modelTimeoutMs / 1000).arg(agentSettings.llmTimeoutMs > 0 ? qsTr("面板設定") : qsTr("環境設定／預設"))
+                        color: settingsForm.timeoutError ? root.cWarn : root.cSub
+                        font.pixelSize: (16 * GcpTheme.font.textScale)
+                        wrapMode: Text.Wrap
                     }
                 }
+            }
+
+            Text {
+                objectName: "agentModelNotice"
+                Layout.fillWidth: true
+                visible: root.modelNotice !== ""
+                text: root.modelNotice
+                color: root.cWarn; font.pixelSize: (16 * GcpTheme.font.textScale)
+                wrapMode: Text.Wrap
             }
 
             RowLayout {
