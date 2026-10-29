@@ -230,3 +230,16 @@ def turn_estimate(vehicle, v_air, angle_deg, wind, bank_deg=None, radius_m=None)
 def loiter_estimate(vehicle, v_air, duration_s, wind, radius_m=None, mode=None):
     from .airframe_mission import loiter_estimate as _loiter
     return _loiter(vehicle, v_air, duration_s, wind, radius_m, mode)
+
+
+def estimate_for_bounds(vehicle, points, ground_mps, wind, start_pct=100.0,
+                        hover_s_per_wp=0.0, mode=None):
+    """Detached context for explicit full-route scenario replay; no RTL inferred."""
+    from .airframe_bounds import estimate_for_bounds as _estimate
+    return _estimate(vehicle, points, ground_mps, wind, start_pct, hover_s_per_wp, mode)
+
+
+def bounds(estimate, vehicle):
+    """Finite scenario extrema and evidence, or unavailable on any unsupported scenario."""
+    from .airframe_bounds import bounds as _bounds
+    return _bounds(estimate, vehicle)

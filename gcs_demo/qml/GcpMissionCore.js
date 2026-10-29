@@ -1027,7 +1027,7 @@ function applyReportLlm(rep, text, metadata) {
 
 // node 測試用
 if (typeof module !== "undefined") module.exports = {
-    transitionEstimate:transitionEstimate, rtlEnergy:rtlEnergy, estimateRouteEnergy:estimateRouteEnergy,
+    estimateForBounds:estimateForBounds, bounds:bounds, transitionEstimate:transitionEstimate, rtlEnergy:rtlEnergy, estimateRouteEnergy:estimateRouteEnergy,
     turnEstimate:turnEstimate, loiterEstimate:loiterEstimate,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
@@ -1351,4 +1351,84 @@ function airframeRouteEstimate(v,points,groundMps,w,startPct,hoverS,mode) {
     return {dist_m:dm,time_s:ts,energy_wh:wh,end_pct:pct,used_pct:startPct-pct,margin_pct:pct-v.reserve_pct,
             feasible:energyOk&&landed,energy_feasible:energyOk,arrival_mode:active,landing_modeled:landed,
             transition_allowance_dist_m:td,scope:"normalized_route_energy_only_not_executable_route",legs:legs}
+}
+
+// T5b2b: finite, replayable whole-route scenarios. No return-route inference.
+function boundsSnapshot(x) {
+    function check(v) {
+        if(v===null||typeof v==="string"||typeof v==="boolean")return
+        if(typeof v==="number"){if(!isFinite(v))throw new Error("nonfinite bounds context");return}
+        if(Array.isArray(v)){v.forEach(check);return}
+        if(v&&typeof v==="object"){Object.keys(v).forEach(function(k){check(v[k])});return}
+        throw new Error("bounds context must be JSON data")
+    }
+    check(x);return clone(x)
+}
+function boundsCanonical(x) {
+    if(Array.isArray(x))return "["+x.map(boundsCanonical).join(",")+"]"
+    if(x&&typeof x==="object")return "{"+Object.keys(x).sort().map(function(k){return JSON.stringify(k)+":"+boundsCanonical(x[k])}).join(",")+"}"
+    return JSON.stringify(x)
+}
+function boundsRequest(v,points,groundMps,w,startPct,hoverS,mode) {
+    if(!Array.isArray(points)||points.length<2||points.length>1000)throw new Error("bounds route requires 2..1000 explicit events")
+    points.forEach(function(p){
+        if(!p||typeof p!=="object"||Array.isArray(p))throw new Error("bounds route event must be an object")
+        if(Object.prototype.hasOwnProperty.call(p,"cmd")&&airframeType(v)!=="vtol_hybrid")throw new Error("mode events require a hybrid airframe")
+        if(!Object.prototype.hasOwnProperty.call(p,"cmd")){routePosition([p.lat,p.lon]);routeNumber(p.alt===undefined?0:p.alt,"alt",0)}
+        if(p.loiter_s!==undefined)routeNumber(p.loiter_s,"loiter_s",0,86400)
+    })
+    routeNumber(groundMps,"ground_mps",1e-9);routeNumber(startPct,"start_pct",0,100)
+    routeNumber(hoverS,"hover_s_per_wp",0,86400);routeNumber(v.battery_wh*v.usable_frac,"usable capacity",1e-9)
+    routeNumber(v.reserve_pct,"reserve_pct",0,100)
+    if(mode!==null&&mode!=="mc"&&mode!=="fw")throw new Error("unknown flight mode")
+    routeWind(w)
+    var normalized=boundsSnapshot(points);normalized.forEach(function(p,i){if(p.id===undefined)p.id="P"+i})
+    return boundsSnapshot({schema:1,route:normalized,ground_mps:groundMps,wind:{speed_mps:w.speed_mps,from_deg:w.from_deg},
+        start_pct:startPct,hover_s_per_wp:hoverS,mode:mode,vehicle:v})
+}
+function estimateForBounds(v,points,groundMps,w,startPct,hoverS,mode) {
+    if(startPct===undefined)startPct=100
+    if(hoverS===undefined)hoverS=0
+    if(mode===undefined)mode=null
+    var c=boundsRequest(v,points,groundMps,w,startPct,hoverS,mode)
+    var result=routeEstimate(v,clone(c.route),groundMps,w,startPct,hoverS,mode===null?undefined:mode)
+    result.bounds_context=c;return result
+}
+function bounds(estimate,v) {
+    if(!estimate||!estimate.bounds_context)throw new Error("bounds requires estimateForBounds replay context")
+    var c=boundsSnapshot(estimate.bounds_context)
+    var keys=["schema","route","ground_mps","wind","start_pct","hover_s_per_wp","mode","vehicle"]
+    if(c.schema!==1||Object.keys(c).sort().join(",")!==keys.sort().join(","))throw new Error("unsupported bounds context")
+    if(boundsCanonical(c.vehicle)!==boundsCanonical(boundsSnapshot(v)))throw new Error("bounds context belongs to a different vehicle snapshot")
+    if(!c.wind||Object.keys(c.wind).sort().join(",")!=="from_deg,speed_mps")throw new Error("invalid context wind")
+    boundsRequest(v,c.route,c.ground_mps,c.wind,c.start_pct,c.hover_s_per_wp,c.mode)
+    if(!v.airframe_profile)throw new Error("bounds requires a profile with explicit uncertainty")
+    var u=v.airframe_profile.uncertainty,power=routeNumber(u.power_pct,"uncertainty.power_pct",0,100)/100
+    var capacity=routeNumber(u.capacity_pct,"uncertainty.capacity_pct",0,100)/100,delta=routeNumber(u.wind_mps,"uncertainty.wind_mps",0)
+    if(capacity>=1)throw new Error("capacity uncertainty must leave positive usable Wh")
+    var tuples=[[c.wind.speed_mps,1,1]]
+    ;[Math.max(0,c.wind.speed_mps-delta),c.wind.speed_mps,c.wind.speed_mps+delta].forEach(function(speed){
+        ;[1-power,1+power].forEach(function(pm){[1-capacity,1+capacity].forEach(function(cm){
+            if(!tuples.some(function(t){return t[0]===speed&&t[1]===pm&&t[2]===cm}))tuples.push([speed,pm,cm])
+        })})
+    })
+    var rows=tuples.map(function(t,i){
+        var row={id:"S"+i,wind:{speed_mps:t[0],from_deg:c.wind.from_deg},power_multiplier:t[1],capacity_multiplier:t[2]}
+        try {
+            var e=routeEstimate(v,clone(c.route),c.ground_mps,row.wind,c.start_pct,c.hover_s_per_wp,c.mode===null?undefined:c.mode)
+            var wh=routeNumber(routeNumber(e.energy_wh,"replayed energy_wh",0)*t[1],"scaled energy_wh",0)
+            var cap=routeNumber(v.battery_wh*v.usable_frac*t[2],"scenario capacity",1e-9)
+            var end=routeNumber(c.start_pct-wh/cap*100,"end_pct",-1e100)
+            row.status="ok";row.base_energy_wh=e.energy_wh;row.energy_wh=wh;row.capacity_wh=cap;row.end_pct=end
+            row.margin_pct=end-v.reserve_pct;row.energy_feasible=end>=v.reserve_pct;row.landing_modeled=e.landing_modeled===true;row.legs=e.legs
+        } catch(err) {
+            if(err instanceof ReferenceError||err instanceof TypeError||err instanceof SyntaxError)throw err
+            row.status="unsupported";row.reason=String(err.message||err)
+        }
+        return row
+    })
+    var ok=rows.every(function(r){return r.status==="ok"}),low=null,high=null
+    if(ok){low=rows[0];high=rows[0];rows.forEach(function(r){if(r.end_pct<low.end_pct)low=r;if(r.end_pct>high.end_pct)high=r})}
+    return {available:ok,scope:"finite_full_route_scenarios_not_robust_or_probability_interval",wind_direction_varied:false,return_inferred:false,
+        low_pct:ok?low.end_pct:null,high_pct:ok?high.end_pct:null,conservative:low,optimistic:high,nominal:rows[0],scenarios:rows}
 }
