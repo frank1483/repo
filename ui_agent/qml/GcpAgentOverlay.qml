@@ -47,6 +47,12 @@ Item {
     property var _cancelModel: null
     property int _modelGeneration: 0
     property var _choiceGuard: null
+    readonly property bool canSaveLayout: !busy && GcpAgentState.hasUnsavedChanges
+    property var changeLog: []         // Session log includes undone actions; never written to Settings.
+
+    function recordChange(text) {
+        changeLog = [{ label: text, time: new Date().toISOString() }].concat(changeLog).slice(0, 50)
+    }
 
     readonly property color cBg: "#E6111827"
     readonly property color cPanel: "#F2172033"
@@ -265,10 +271,11 @@ Item {
         if (!c) return
         if (c.kind === "layout_save_current") {
             pendingText = ""
+            if (!canSaveLayout) { messageText = qsTr("沒有未儲存的版面變更"); return }
             try {
                 GcpAgentState.saveCurrentLayout()
                 messageText = qsTr("已儲存版面，重開後會套回這一版")
-                showToast(messageText, false)
+                recordChange(messageText)
             } catch (e) {
                 console.warn("[GcpAgent] Explicit save failed; prior Settings retained: " + e)
                 messageText = qsTr("無法儲存版面，原設定保留，請查看紀錄")
@@ -277,29 +284,37 @@ Item {
         }
         if (c.kind === "layout_save") {
             pendingText = ""
-            try { GcpAgentState.saveLayout(c.name); messageText = qsTr("已儲存：%1").arg(c.name) }
+            try { GcpAgentState.saveLayout(c.name); messageText = qsTr("已儲存：%1").arg(c.name); recordChange(messageText) }
             catch (e) { messageText = qsTr("無法儲存版面，未變更設定") }
             return
         }
         if (c.kind === "undo") {
+            const entry = GcpAgentState.undoStack[GcpAgentState.undoStack.length - 1]
+            const beforeLayout = GcpAgentState.layoutFingerprint()
             const labels = GcpAgentState.undo(c.steps || 1)
             messageText = labels.length ? qsTr("已復原：%1").arg(labels.join("、")) + GcpAgentState.undoHint() : qsTr("目前沒有可復原的變更")
             pendingText = ""
-            showToast(messageText, labels.length ? "redo" : "")
+            if (labels.length) { recordChange(messageText); showHistoryToast("redo", entry, beforeLayout) }
             return
         }
         if (c.kind === "redo") {
+            const entry = GcpAgentState.redoStack[GcpAgentState.redoStack.length - 1]
+            const beforeLayout = GcpAgentState.layoutFingerprint()
             const label = GcpAgentState.redo()
             messageText = label ? qsTr("已重做：%1").arg(label) : qsTr("沒有可重做的變更")
             pendingText = ""
-            showToast(messageText, label ? "undo" : "")
+            if (label) { recordChange(messageText); showHistoryToast("undo", entry, beforeLayout) }
             return
         }
         if (c.kind === "reset_all") {
             pendingText = ""
+            const beforeLayout = GcpAgentState.layoutFingerprint()
             const ok = GcpAgentState.resetAll()
             messageText = ok ? qsTr("已全部復原到 agent 介入前（可再按復原取消）") : qsTr("目前沒有任何變更")
-            showToast(messageText, ok)
+            if (ok) {
+                recordChange(messageText)
+                showToast(beforeLayout !== GcpAgentState.layoutFingerprint() ? "layout" : "navigation", "undo")
+            }
             return
         }
         executeSteps([c], source)
@@ -321,7 +336,8 @@ Item {
         const label = steps.map(c => c.label_zh).join("、")
         const checkpoint = GcpAgentState.beginGroup()
         _transaction = { steps: steps, index: 0, source: source, label: label,
-                         checkpoint: checkpoint, layoutGroup: false }
+                         checkpoint: checkpoint, layoutGroup: false,
+                         beforeLayout: GcpAgentState.layoutFingerprint() }
         _transaction.layoutLabel = steps.filter(c => c.kind !== "nav").map(c => c.label_zh).join("、")
         busy = true
         advanceSteps()
@@ -355,11 +371,14 @@ Item {
         const tx = _transaction
         if (!tx) return
         if (tx.index >= tx.steps.length) {
+            const after = GcpAgentState.snapshot()
+            const layoutChanged = tx.beforeLayout !== GcpAgentState.layoutFingerprint()
+            const navigated = tx.checkpoint.snap.page !== after.page || tx.checkpoint.snap.section !== after.section
             GcpAgentState.commitGroup()
             _transaction = null
             busy = false
             statusText = ""
-            done({ label_zh: tx.label }, tx.source)
+            done({ label_zh: tx.label }, tx.source, layoutChanged, navigated)
             return
         }
         const c = tx.steps[tx.index]
@@ -429,11 +448,14 @@ Item {
         }
     }
 
-    function done(c, source) {
+    function done(c, source, layoutChanged, navigated) {
         pendingText = ""
         messageText = qsTr("已套用：%1（%2）").arg(c.label_zh).arg(source)
+        recordChange(messageText)
         open = false
-        showToast(c.label_zh, true)
+        if (layoutChanged) showToast("layout", "undo")
+        else if (navigated) showToast("navigation", "undo")
+        else dismissToast()
     }
 
     Component.onDestruction: {
@@ -442,18 +464,49 @@ Item {
     }
 
     // ------------------------------------------------------------ 提示列（面板關閉時也能一鍵復原）
-    function showToast(text, withUndo) {
-        toast.text = text
-        toast.action = withUndo === true ? "undo" : typeof withUndo === "string" ? withUndo : ""
+    function dismissToast() {
+        toastTimer.stop()
+        toast.opacity = 0
+    }
+
+    function showHistoryToast(action, entry, beforeLayout) {
+        if ((entry && entry.kind === "layout") || beforeLayout !== GcpAgentState.layoutFingerprint())
+            showToast("layout", action)
+        else if (action === "undo") showToast("navigation", "undo")
+        else dismissToast() // Returning from a navigation does not offer another navigation undo.
+    }
+
+    function showToast(mode, action) {
+        toastTimer.stop()
+        toast.mode = mode
+        toast.action = action
+        const stack = action === "redo" ? GcpAgentState.redoStack : GcpAgentState.undoStack
+        toast.entryKey = stack.length ? JSON.stringify(stack[stack.length - 1]) : ""
+        toast.snapshotKey = JSON.stringify(GcpAgentState.snapshot())
         toast.opacity = 1
-        toastTimer.restart()
+        if (mode === "navigation") toastTimer.restart()
+    }
+
+    function toastActionAvailable() {
+        const stack = toast.action === "redo" ? GcpAgentState.redoStack : GcpAgentState.undoStack
+        return stack.length > 0 && toast.entryKey === JSON.stringify(stack[stack.length - 1]) &&
+               toast.snapshotKey === JSON.stringify(GcpAgentState.snapshot())
+    }
+
+    function performToastAction() {
+        if (busy || !toastActionAvailable()) return
+        execute({ kind: toast.action, steps: 1 }, qsTr("提示列"))
     }
     Timer { id: toastTimer; interval: 7000; onTriggered: toast.opacity = 0 }
 
     Rectangle {
         id: toast
-        property string text: ""
+        objectName: "agentToast"
+        property string mode: ""
         property string action: ""
+        property string entryKey: ""
+        property string snapshotKey: ""
+        readonly property bool actionAvailable: GcpAgentState.revision >= 0 && !root.busy && root.toastActionAvailable()
         z: 3
         opacity: 0
         visible: opacity > 0
@@ -462,7 +515,7 @@ Item {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 120
         width: Math.min(Math.max(0, root.width - 40), toastRow.implicitWidth + 40)
-        height: 64
+        height: Math.max(64, toastRow.implicitHeight + 20)
         radius: 32
         color: root.cBg
         border.color: root.cLine
@@ -474,27 +527,32 @@ Item {
             anchors.leftMargin: 20
             anchors.rightMargin: 20
             spacing: 20
-            Text { Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideRight; text: "✦ " + toast.text; color: root.cText; font.pixelSize: (22 * GcpTheme.font.textScale) }
+            Button {
+                objectName: "agentToastAction"
+                text: toast.mode === "navigation" ? qsTr("返回") : toast.action === "redo" ? qsTr("重做") : qsTr("復原")
+                enabled: toast.actionAvailable
+                font.pixelSize: (20 * GcpTheme.font.textScale)
+                onClicked: root.performToastAction()
+            }
             Button {
                 objectName: "agentToastSaveLayout"
-                text: qsTr("儲存版面")
-                enabled: !root.busy
+                visible: toast.mode === "layout"
+                text: qsTr("儲存")
+                enabled: root.canSaveLayout
                 font.pixelSize: (20 * GcpTheme.font.textScale)
                 onClicked: root.execute({ kind: "layout_save_current" }, qsTr("使用者儲存"))
             }
-            Rectangle {
-                visible: toast.action === "undo" ? GcpAgentState.canUndo : toast.action === "redo" && GcpAgentState.canRedo
-                Layout.preferredWidth: undoText.implicitWidth + 32
-                Layout.preferredHeight: 44
-                radius: 22
-                color: "transparent"
-                border.color: root.cAccent
-                Text { id: undoText; anchors.centerIn: parent; text: toast.action === "redo" ? qsTr("重做") : qsTr("復原"); color: root.cAccent; font.pixelSize: (22 * GcpTheme.font.textScale); font.bold: true }
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: root.execute({ kind: toast.action, steps: 1 }, "")
-                }
-            }
+        }
+        Button {
+            objectName: "agentToastClose"
+            visible: toast.mode === "layout"
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.rightMargin: -8
+            anchors.topMargin: -16
+            text: "✕"
+            Accessible.name: qsTr("關閉提示列")
+            onClicked: root.dismissToast()
         }
     }
 
@@ -702,7 +760,7 @@ Item {
                 objectName: "agentSaveLayout"
                 text: qsTr("儲存版面")
                 font.pixelSize: (20 * GcpTheme.font.textScale)
-                enabled: !root.busy
+                enabled: root.canSaveLayout
                 onClicked: root.execute({ kind: "layout_save_current" }, qsTr("使用者儲存"))
             }
             // 變更紀錄與復原
@@ -712,7 +770,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 190
                 clip: true
-                model: { GcpAgentState.revision; return GcpAgentState.undoStack.slice().reverse() }
+                model: root.changeLog
                 delegate: Text {
                     required property var modelData
                     required property int index
