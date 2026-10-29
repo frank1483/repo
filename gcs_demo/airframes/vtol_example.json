@@ -1,0 +1,50 @@
+{
+  "id": "vtol_example",
+  "type": "vtol_hybrid",
+  "schema": 0,
+  "mass_kg": 4.5,
+  "battery": {
+    "wh": 180,
+    "usable_frac": 0.9,
+    "cell_count": 6,
+    "cell_empty_v": 3.55,
+    "cell_r_ohm": 0.004
+  },
+  "limits": {
+    "reserve_pct": 20,
+    "wind_limit_mps": 12,
+    "min_airspeed_mps": 0,
+    "max_airspeed_mps": 35,
+    "cruise_mps": 16
+  },
+  "uncertainty": {
+    "power_pct": 10,
+    "capacity_pct": 5,
+    "wind_mps": 2
+  },
+  "power": {
+    "mc": {
+      "p_hover_w": 480,
+      "cda_m2": 0.15,
+      "eta": 0.7
+    },
+    "fw": {
+      "wing_area_m2": 0.5,
+      "cd0": 0.025,
+      "k_induced": 0.07,
+      "eta_prop": 0.7,
+      "p_avionics_w": 10,
+      "v_stall_mps": 8,
+      "min_turn_radius_m": 40
+    }
+  },
+  "transition": {
+    "to_fw_wh": 2,
+    "to_fw_s": 8,
+    "to_fw_dist_m": 100,
+    "to_mc_wh": 1.5,
+    "to_mc_s": 6
+  },
+  "calib": 1,
+  "source": "placeholder"
+}

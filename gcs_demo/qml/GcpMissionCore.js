@@ -34,6 +34,223 @@ function vehicle(over) {
     return v
 }
 
+// T5a: pure profile primitives. JSON/file loading belongs to the QML caller.
+function profileNumber(x, name, low, high, positive) {
+    if (typeof x !== "number" || !isFinite(x)) throw new Error(name + ": finite number required")
+    if (low === undefined) low = 0
+    if (x < low || (positive && x <= low) || (high !== undefined && x > high)) throw new Error(name + ": out of range")
+    return x
+}
+function profileObject(x, name) {
+    if (!x || typeof x !== "object" || Array.isArray(x)) throw new Error(name + ": object required")
+    return x
+}
+function profileMerge(defaults, value, name) {
+    profileObject(value, name)
+    var result = clone(defaults)
+    for (var k in value) if (Object.prototype.hasOwnProperty.call(value, k)) result[k] = value[k]
+    return result
+}
+function profileMc(p, prefix) {
+    p = profileMerge({p_hover_w:190, cda_m2:0.12, eta:0.7}, p, prefix)
+    profileNumber(p.p_hover_w, prefix + ".p_hover_w", 0, undefined, true)
+    profileNumber(p.cda_m2, prefix + ".cda_m2")
+    profileNumber(p.eta, prefix + ".eta", 0, 1, true)
+    return p
+}
+function profileFw(p, prefix) {
+    profileObject(p, prefix)
+    var keys = ["wing_area_m2", "cd0", "k_induced", "eta_prop", "p_avionics_w", "v_stall_mps", "min_turn_radius_m"]
+    keys.forEach(function(k) {
+        profileNumber(p[k], prefix + "." + k, 0, k === "eta_prop" ? 1 : undefined, k !== "p_avionics_w")
+    })
+    return p
+}
+function profileLoadFactor(bankDeg) {
+    profileNumber(bankDeg, "bank_deg", -90, 90)
+    if (Math.abs(bankDeg) >= 90) throw new Error("bank_deg: absolute bank must be less than 90 degrees")
+    return 1 / Math.cos(rad(bankDeg))
+}
+function profileSpeedRange(p, bankDeg) {
+    if (bankDeg === undefined) bankDeg = 0
+    var lo = p.limits.min_airspeed_mps
+    if (p.type !== "multirotor") {
+        var f = p.type === "fixed_wing" ? p.power : p.power.fw
+        lo = Math.max(lo, 1.2 * f.v_stall_mps * Math.sqrt(profileLoadFactor(bankDeg)))
+    }
+    return [lo, p.limits.max_airspeed_mps]
+}
+function validateAirframeProfile(value) {
+    profileObject(value, "profile")
+    // Copy without JSON round-tripping until validation: JSON turns NaN/Infinity
+    // into null and would lose unknown provenance fields. Only JSON data accepted.
+    function copy(x) {
+        if (x === null || typeof x === "string" || typeof x === "boolean") return x
+        if (typeof x === "number") {
+            if (!isFinite(x)) throw new Error("profile: nonfinite JSON number")
+            return x
+        }
+        if (Array.isArray(x)) return x.map(copy)
+        profileObject(x, "profile value")
+        var o = {}
+        Object.keys(x).forEach(function(k) {
+            if (k === "__proto__" || k === "constructor" || k === "prototype") throw new Error("profile: reserved key")
+            o[k] = copy(x[k])
+        })
+        return o
+    }
+    var p = copy(value)
+    if (p.id === undefined) p.id = "UAV-01"
+    if (typeof p.id !== "string" || !p.id.trim()) throw new Error("id: nonempty string required")
+    if (p.type === undefined) p.type = "multirotor"
+    if (["multirotor", "fixed_wing", "vtol_hybrid"].indexOf(p.type) < 0) throw new Error("type: unsupported airframe")
+    if (p.schema === undefined) p.schema = 0
+    if (p.schema !== 0) throw new Error("schema: only version 0 is supported")
+    if (p.mass_kg === undefined) p.mass_kg = 2
+    if (p.calib === undefined) p.calib = 1
+    if (p.source === undefined) p.source = "assumed"
+    if (typeof p.source !== "string" || !p.source.trim()) throw new Error("source: nonempty string required")
+    profileNumber(p.mass_kg, "mass_kg", 0, undefined, true)
+    profileNumber(p.calib, "calib", 0, undefined, true)
+    p.battery = profileMerge({wh:90, usable_frac:0.9, cell_count:4, cell_empty_v:3.55, cell_r_ohm:0.004}, p.battery === undefined ? {} : p.battery, "battery")
+    p.limits = profileMerge({reserve_pct:20, wind_limit_mps:12, min_airspeed_mps:0, max_airspeed_mps:15, cruise_mps:8}, p.limits === undefined ? {} : p.limits, "limits")
+    p.uncertainty = profileMerge({power_pct:10, capacity_pct:5, wind_mps:2}, p.uncertainty === undefined ? {} : p.uncertainty, "uncertainty")
+    var b = p.battery, l = p.limits, u = p.uncertainty
+    profileNumber(b.wh, "battery.wh", 0, undefined, true)
+    profileNumber(b.usable_frac, "battery.usable_frac", 0, 1, true)
+    profileNumber(b.cell_count, "battery.cell_count", 0, undefined, true)
+    if (Math.floor(b.cell_count) !== b.cell_count) throw new Error("battery.cell_count: integer required")
+    profileNumber(b.cell_empty_v, "battery.cell_empty_v", 0, undefined, true)
+    profileNumber(b.cell_r_ohm, "battery.cell_r_ohm")
+    Object.keys({reserve_pct:0, wind_limit_mps:0, min_airspeed_mps:0, max_airspeed_mps:0, cruise_mps:0}).forEach(function(k) {
+        profileNumber(l[k], "limits." + k, 0, k === "reserve_pct" ? 100 : undefined, k === "max_airspeed_mps" || k === "cruise_mps")
+    })
+    Object.keys({power_pct:0, capacity_pct:0, wind_mps:0}).forEach(function(k) {
+        profileNumber(u[k], "uncertainty." + k, 0, k === "wind_mps" ? undefined : 100)
+    })
+    if (u.capacity_pct >= 100) throw new Error("uncertainty.capacity_pct: must leave positive capacity")
+    var pw = p.power === undefined ? {} : p.power
+    if (p.type === "multirotor") p.power = profileMc(pw, "power")
+    else if (p.type === "fixed_wing") p.power = profileFw(pw, "power")
+    else {
+        profileObject(pw, "power")
+        pw.mc = profileMc(pw.mc === undefined ? {} : pw.mc, "power.mc")
+        pw.fw = profileFw(pw.fw === undefined ? {} : pw.fw, "power.fw")
+        p.power = pw
+        p.transition = profileObject(p.transition === undefined ? {} : p.transition, "transition")
+        ;["to_fw_wh", "to_fw_s", "to_fw_dist_m", "to_mc_wh", "to_mc_s"].forEach(function(k) {
+            profileNumber(p.transition[k], "transition." + k)
+        })
+    }
+    var prop = p.prop_model
+    if (prop !== undefined && prop !== null) {
+        if (typeof prop === "string") {
+            if (!prop.trim()) throw new Error("prop_model: nonempty identifier required")
+        } else {
+            profileObject(prop, "prop_model")
+            if (typeof prop.id !== "string" || !prop.id.trim()) throw new Error("prop_model.id: nonempty string required")
+            if ((prop.rpm !== undefined) !== (prop.diameter_m !== undefined)) throw new Error("prop_model: rpm and diameter_m must appear together")
+            ;["rpm", "diameter_m"].forEach(function(k) {
+                if (prop[k] !== undefined) profileNumber(prop[k], "prop_model." + k, 0, undefined, true)
+            })
+        }
+    }
+    if (p.eta_table !== undefined) {
+        if (!prop || !Array.isArray(p.eta_table) || p.eta_table.length < 2) throw new Error("eta_table: prop_model and at least two [J, eta] rows required")
+        var previous = -1
+        p.eta_table.forEach(function(row) {
+            if (!Array.isArray(row) || row.length !== 2) throw new Error("eta_table: rows must be [J, eta]")
+            profileNumber(row[0], "eta_table.J")
+            profileNumber(row[1], "eta_table.eta", 0, 1, true)
+            if (row[0] <= previous) throw new Error("eta_table: J must be strictly increasing")
+            previous = row[0]
+        })
+    }
+    var range = profileSpeedRange(p)
+    if (range[0] > range[1] || l.cruise_mps < range[0] || l.cruise_mps > range[1]) throw new Error("limits: cruise and max must satisfy the effective airspeed range")
+    return p
+}
+function loadAirframe(jsonOrObject) {
+    // QML supplies file contents; this core never reads disk or downloads files.
+    var p = validateAirframeProfile(typeof jsonOrObject === "string" ? JSON.parse(jsonOrObject.replace(/^\uFEFF/, "")) : jsonOrObject)
+    var mc = p.type === "multirotor" ? p.power : p.type === "vtol_hybrid" ? p.power.mc : {p_hover_w:0, cda_m2:0, eta:1}
+    return vehicle({vehicle_id:p.id, mass_kg:p.mass_kg, battery_wh:p.battery.wh, usable_frac:p.battery.usable_frac,
+                    p_hover_w:mc.p_hover_w, cda_m2:mc.cda_m2, eta:mc.eta, cruise_mps:p.limits.cruise_mps,
+                    max_mps:p.limits.max_airspeed_mps, reserve_pct:p.limits.reserve_pct, calib:p.calib,
+                    airframe_profile:p})
+}
+function airframeType(v) { return v.airframe_profile ? v.airframe_profile.type : "multirotor" }
+function speedRange(v, bankDeg) {
+    return v.airframe_profile ? profileSpeedRange(v.airframe_profile, bankDeg) : [0, v.max_mps]
+}
+function propEfficiency(p, vAir, fallback, advanceRatio) {
+    var table = p.eta_table
+    if (!table) return fallback
+    var j = advanceRatio, prop = p.prop_model
+    if ((j === undefined || j === null) && prop && typeof prop === "object" && prop.rpm !== undefined) j = vAir / (prop.rpm / 60 * prop.diameter_m)
+    if (j === undefined || j === null) return fallback
+    profileNumber(j, "advance_ratio")
+    if (j <= table[0][0]) return table[0][1]
+    for (var i = 1; i < table.length; i++) {
+        if (j <= table[i][0]) {
+            var a = table[i - 1], b = table[i]
+            return a[1] + (b[1] - a[1]) * (j - a[0]) / (b[0] - a[0])
+        }
+    }
+    return table[table.length - 1][1]
+}
+function profilePowerW(p, vAir, mode, bankDeg, climbMps, advanceRatio, massKg) {
+    if (bankDeg === undefined) bankDeg = 0
+    if (climbMps === undefined) climbMps = 0
+    profileNumber(vAir, "v_air")
+    profileNumber(climbMps, "climb_mps", -1e100)
+    profileLoadFactor(bankDeg)
+    var pw
+    if (p.type === "vtol_hybrid") {
+        if (mode !== "mc" && mode !== "fw") throw new Error("vtol_hybrid power requires explicit mode='mc' or 'fw'")
+        pw = p.power[mode]
+    } else {
+        var active = p.type === "multirotor" ? "mc" : "fw"
+        if (mode !== undefined && mode !== null && mode !== active) throw new Error("mode is incompatible with airframe type")
+        mode = active; pw = p.power
+    }
+    var mass = massKg === undefined ? p.mass_kg : massKg
+    profileNumber(mass, "mass_kg", 0, undefined, true)
+    var climb = mass * G * Math.max(0, climbMps)
+    if (mode === "mc") {
+        if (bankDeg !== 0) throw new Error("multirotor bank compensation is not modeled")
+        return pw.p_hover_w + 0.5 * RHO * pw.cda_m2 * Math.pow(vAir, 3) / pw.eta + climb / pw.eta
+    }
+    var n = profileLoadFactor(bankDeg), range = profileSpeedRange(p, bankDeg)
+    if (vAir < range[0] || vAir > range[1]) throw new Error("v_air: outside fixed-wing airspeed/stall envelope")
+    var eta = propEfficiency(p, vAir, pw.eta_prop, advanceRatio)
+    var drag = 0.5 * RHO * Math.pow(vAir, 3) * pw.wing_area_m2 * pw.cd0 +
+            2 * pw.k_induced * Math.pow(mass * G, 2) * n * n / (RHO * vAir * pw.wing_area_m2)
+    return (drag + climb) / eta + pw.p_avionics_w
+}
+function turnGeometry(v, vAir, bankDeg, radiusM) {
+    if (airframeType(v) === "multirotor") throw new Error("turn geometry is defined only for fixed-wing flight")
+    var p = v.airframe_profile, pw = p.type === "fixed_wing" ? p.power : p.power.fw
+    profileNumber(vAir, "v_air", 0, undefined, true)
+    var hasBank = bankDeg !== undefined && bankDeg !== null, hasRadius = radiusM !== undefined && radiusM !== null
+    if (hasBank && hasRadius) throw new Error("specify bank_deg or radius_m, not both")
+    if (!hasBank) {
+        if (!hasRadius) radiusM = pw.min_turn_radius_m
+        profileNumber(radiusM, "radius_m", 0, undefined, true)
+        bankDeg = Math.atan(vAir * vAir / (G * radiusM)) * 180 / Math.PI
+    }
+    var n = profileLoadFactor(bankDeg)
+    var radius = bankDeg === 0 ? null : vAir * vAir / (G * Math.abs(Math.tan(rad(bankDeg))))
+    if (radius !== null && radius < pw.min_turn_radius_m - 1e-9) throw new Error("turn radius below configured minimum")
+    var range = profileSpeedRange(p, bankDeg)
+    if (vAir < range[0] || vAir > range[1]) throw new Error("turn exceeds bank-adjusted stall/airspeed envelope")
+    return {bank_deg:bankDeg, load_factor:n, radius_m:radius, min_airspeed_mps:range[0]}
+}
+function requireLegacyRoute(v) {
+    if (airframeType(v) !== "multirotor") throw new Error("T5b route/transition/bounds integration pending; fixed-wing/hybrid routes unavailable")
+}
+
+
 // NaN 不能用 || 0 靜默變成無風；僅缺省值使用 0。
 function wind(speed, fromDeg) {
     return { speed_mps: speed === undefined ? 0 : speed, from_deg: fromDeg === undefined ? 0 : fromDeg }
@@ -44,9 +261,20 @@ function windVector(w) {
     return [w.speed_mps * Math.sin(to), w.speed_mps * Math.cos(to)]   // (east, north)
 }
 
-function powerW(v, vAir) { return v.p_hover_w + 0.5 * RHO * v.cda_m2 * Math.pow(vAir, 3) / v.eta }
+function powerW(v, vAir, mode, bankDeg, climbMps, advanceRatio) {
+    if (!v.airframe_profile && (mode === undefined || mode === null) && (bankDeg === undefined || bankDeg === 0) &&
+            (climbMps === undefined || climbMps === 0) && (advanceRatio === undefined || advanceRatio === null))
+        return v.p_hover_w + 0.5 * RHO * v.cda_m2 * Math.pow(vAir, 3) / v.eta
+    var p = v.airframe_profile || {type:"multirotor", power:{}}
+    if (airframeType(v) === "multirotor") {
+        p = profileMerge({}, p, "profile")
+        p.power = profileMerge(p.power, {p_hover_w:v.p_hover_w, cda_m2:v.cda_m2, eta:v.eta}, "power")
+    }
+    return profilePowerW(p, vAir, mode, bankDeg, climbMps, advanceRatio, v.mass_kg)
+}
 
 function legEstimate(v, a, b, altA, altB, groundMps, w) {
+    requireLegacyRoute(v)
     var dist = haversineM(a, b), t = 0, vAir = 0, head = 0
     if (dist >= 0.5) {
         var brg = bearingRad(a, b)
@@ -66,6 +294,7 @@ function legEstimate(v, a, b, altA, altB, groundMps, w) {
 }
 
 function routeEstimate(v, points, groundMps, w, startPct, hoverS) {
+    requireLegacyRoute(v)
     if (startPct === undefined) startPct = 100.0
     if (hoverS === undefined) hoverS = 5.0
     var legs = [], wh = 0, ts = 0, dm = 0, cap = v.battery_wh * v.usable_frac, pct = startPct
@@ -85,6 +314,7 @@ function routeEstimate(v, points, groundMps, w, startPct, hoverS) {
 }
 
 function bestSpeed(v, w, headingDeg) {
+    requireLegacyRoute(v)
     var a = [0, 0], b = [0.001 * Math.cos(rad(headingDeg || 0)), 0.001 * Math.sin(rad(headingDeg || 0))]
     var best = null
     for (var s = 4.0; s <= v.max_mps + 1e-9; s += 0.5) {
@@ -794,6 +1024,9 @@ function applyReportLlm(rep, text, metadata) {
 if (typeof module !== "undefined") module.exports = {
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
     canonicalVersion:canonicalVersion,constraintDeltas:constraintDeltas,splitSorties:splitSorties,ruleChoice:ruleChoice,timelineText:timelineText,
+    loadAirframe:loadAirframe, airframeType:airframeType, speedRange:speedRange, powerW:powerW,
+    turnGeometry:turnGeometry, validateAirframeProfile:validateAirframeProfile, propEfficiency:propEfficiency,
+    legEstimate:legEstimate,
     haversineM: haversineM, vehicle: vehicle, wind: wind, routeEstimate: routeEstimate, bestSpeed: bestSpeed,
     planMission: planMission, replan: replan, MissionRun: MissionRun, makeReport: makeReport, predictiveAlert: predictiveAlert,
     pickPrompt: pickPrompt, validatePick: validatePick, reportPrompt: reportPrompt, applyReportLlm: applyReportLlm,

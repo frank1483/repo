@@ -1,0 +1,32 @@
+{
+  "id": "x500",
+  "type": "multirotor",
+  "schema": 0,
+  "mass_kg": 2,
+  "battery": {
+    "wh": 90,
+    "usable_frac": 0.9,
+    "cell_count": 4,
+    "cell_empty_v": 3.55,
+    "cell_r_ohm": 0.004
+  },
+  "limits": {
+    "reserve_pct": 20,
+    "wind_limit_mps": 12,
+    "min_airspeed_mps": 0,
+    "max_airspeed_mps": 15,
+    "cruise_mps": 8
+  },
+  "uncertainty": {
+    "power_pct": 10,
+    "capacity_pct": 5,
+    "wind_mps": 2
+  },
+  "power": {
+    "p_hover_w": 190,
+    "cda_m2": 0.12,
+    "eta": 0.7
+  },
+  "calib": 1,
+  "source": "assumed"
+}

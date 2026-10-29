@@ -42,8 +42,51 @@ class Vehicle:
     reserve_pct: float = 20.0       # 落地時至少要剩的電量
     calib: float = 1.0              # 歷史任務學到的「實際/預估」係數
 
+    airframe_profile: dict | None = None  # T5a: optional; old positional arguments unchanged
+
+    @property
+    def type(self):
+        return self.airframe_profile["type"] if self.airframe_profile else "multirotor"
+
     def to_dict(self):
-        return asdict(self)
+        result = asdict(self)
+        if self.airframe_profile is None:
+            del result["airframe_profile"]  # preserve legacy version/hash payloads
+        return result
+
+
+# T5a: public helpers, inserted before Wind in energy.py by prepare.cjs.
+def load_airframe(path_or_id) -> Vehicle:
+    """Load local JSON or an id under gcs_demo/airframes; no network access."""
+    from .airframe_profile import read_profile
+    p = read_profile(path_or_id)
+    mc = (p["power"] if p["type"] == "multirotor" else p["power"]["mc"]
+          if p["type"] == "vtol_hybrid" else {"p_hover_w": 0.0, "cda_m2": 0.0, "eta": 1.0})
+    return Vehicle(vehicle_id=p["id"], mass_kg=p["mass_kg"], battery_wh=p["battery"]["wh"],
+                   usable_frac=p["battery"]["usable_frac"], p_hover_w=mc["p_hover_w"],
+                   cda_m2=mc["cda_m2"], eta=mc["eta"], cruise_mps=p["limits"]["cruise_mps"],
+                   max_mps=p["limits"]["max_airspeed_mps"], reserve_pct=p["limits"]["reserve_pct"],
+                   calib=p["calib"], airframe_profile=p)
+
+
+def speed_range(vehicle: Vehicle, bank_deg=0.0):
+    """Airspeed envelope in m/s; not a ground-speed interval in wind."""
+    from .airframe_profile import profile_speed_range
+    if vehicle.airframe_profile is None:
+        return 0.0, vehicle.max_mps
+    return profile_speed_range(vehicle.airframe_profile, bank_deg)
+
+
+def turn_geometry(vehicle: Vehicle, v_air, bank_deg=None, radius_m=None):
+    from .airframe_profile import profile_turn_geometry
+    if vehicle.airframe_profile is None:
+        raise ValueError("turn geometry is defined only for fixed-wing flight")
+    return profile_turn_geometry(vehicle.airframe_profile, v_air, bank_deg, radius_m)
+
+
+def _require_legacy_route(vehicle):
+    if vehicle.type != "multirotor":
+        raise NotImplementedError("T5b route/transition/bounds integration pending; fixed-wing/hybrid routes unavailable")
 
 
 @dataclass
@@ -57,12 +100,20 @@ class Wind:
         return (self.speed_mps * math.sin(to), self.speed_mps * math.cos(to))  # (east, north)
 
 
-def power_w(v: Vehicle, v_air: float) -> float:
-    return v.p_hover_w + 0.5 * RHO * v.cda_m2 * v_air ** 3 / v.eta
+def power_w(v: Vehicle, v_air: float, mode=None, bank_deg=0.0,
+            climb_mps=0.0, advance_ratio=None) -> float:
+    if v.airframe_profile is None and mode is None and bank_deg == 0 and climb_mps == 0 and advance_ratio is None:
+        return v.p_hover_w + 0.5 * RHO * v.cda_m2 * v_air ** 3 / v.eta
+    from .airframe_profile import profile_power_w
+    p = v.airframe_profile or {"type": "multirotor", "power": {}}
+    if v.type == "multirotor":
+        p = {**p, "power": {**p["power"], "p_hover_w": v.p_hover_w, "cda_m2": v.cda_m2, "eta": v.eta}}
+    return profile_power_w(p, v_air, mode, bank_deg, climb_mps, advance_ratio, v.mass_kg)
 
 
 def leg_estimate(v: Vehicle, a, b, alt_a: float, alt_b: float, ground_mps: float, wind: Wind):
     """回傳一段航線的距離、時間、能耗 Wh、逆風分量。"""
+    _require_legacy_route(v)
     dist = haversine_m(a, b)
     if dist < 0.5:
         t = 0.0
@@ -88,6 +139,7 @@ def leg_estimate(v: Vehicle, a, b, alt_a: float, alt_b: float, ground_mps: float
 def route_estimate(v: Vehicle, points: list, ground_mps: float, wind: Wind,
                    start_pct: float = 100.0, hover_s_per_wp: float = 5.0):
     """points：[{id, lat, lon, alt}]，第一個是起點。回傳整條航線估算與每段明細。"""
+    _require_legacy_route(v)
     legs = []
     total_wh = 0.0
     total_t = 0.0
@@ -114,6 +166,7 @@ def route_estimate(v: Vehicle, points: list, ground_mps: float, wind: Wind,
 
 def best_speed(v: Vehicle, wind: Wind, heading_deg: float = 0.0, lo=4.0, hi=None):
     """單位距離能耗最低的地速（給報告建議用）。"""
+    _require_legacy_route(v)
     hi = hi or v.max_mps
     a = (0.0, 0.0)
     b = (0.001 * math.cos(math.radians(heading_deg)), 0.001 * math.sin(math.radians(heading_deg)))
