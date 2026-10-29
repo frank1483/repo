@@ -64,3 +64,13 @@ def rtl_energy(pos, home, v: Vehicle, wind: Wind) -> dict:
 
 def with_calib(v: Vehicle, calib: float) -> Vehicle:
     return replace(v, calib=calib)
+
+
+def typed_alert_speeds(vehicle, requested, mode=None, bank_deg=0.0):
+    """Typed preparation only; legacy ENU alert engine remains unchanged."""
+    return _e.typed_alert_speeds(vehicle, requested, mode, bank_deg)
+
+
+def evaluate_typed_alert_candidates(vehicle, candidates, wind, start_pct=100.0):
+    """Caller supplies normalized lat/lon mission events, never ENU tuples."""
+    return _e.evaluate_typed_alert_candidates(vehicle, candidates, wind, start_pct)

@@ -243,3 +243,43 @@ def bounds(estimate, vehicle):
     """Finite scenario extrema and evidence, or unavailable on any unsupported scenario."""
     from .airframe_bounds import bounds as _bounds
     return _bounds(estimate, vehicle)
+
+
+def wind_arc_estimate(vehicle, v_air, angle_deg, wind, entry_heading_deg,
+                      clockwise=True, bank_deg=None, radius_m=None):
+    """Explicit FW air-relative allowance, not a ground-fixed/executable arc."""
+    from .wind_arc import wind_arc_estimate as _arc
+    return _arc(vehicle, v_air, angle_deg, wind, entry_heading_deg,
+                clockwise, bank_deg, radius_m)
+
+
+def wind_loiter_estimate(vehicle, v_air, duration_s, wind, entry_heading_deg,
+                         clockwise=True, radius_m=None):
+    """Explicit FW air-relative orbit; does not update normalized route pose."""
+    from .wind_arc import wind_loiter_estimate as _loiter
+    return _loiter(vehicle, v_air, duration_s, wind, entry_heading_deg,
+                   clockwise, radius_m)
+
+
+def wind_route_estimate(vehicle, entry, events, wind, start_pct=100.0, mode=None):
+    """Explicit local-plane tangent energy route; not an executable mission."""
+    from .wind_route import wind_route_estimate as _route
+    return _route(vehicle, entry, events, wind, start_pct, mode)
+
+
+def geographic_wind_route_estimate(vehicle, entry, events, wind, start_pct=100.0, mode=None):
+    """Bounded approximate lat/lon bridge for explicit level FW energy events."""
+    from .geographic_wind_route import geographic_wind_route_estimate as _route
+    return _route(vehicle, entry, events, wind, start_pct, mode)
+
+
+def typed_alert_speeds(vehicle, requested, mode=None, bank_deg=0.0):
+    """Explicit profile airspeed options; not ground speeds or live commands."""
+    from .typed_alerts import typed_alert_speeds as _speeds
+    return _speeds(vehicle, requested, mode, bank_deg)
+
+
+def evaluate_typed_alert_candidates(vehicle, candidates, wind, start_pct=100.0):
+    """Compare caller-supplied typed missions; does not authorize application."""
+    from .typed_alerts import evaluate_typed_alert_candidates as _candidates
+    return _candidates(vehicle, candidates, wind, start_pct)
