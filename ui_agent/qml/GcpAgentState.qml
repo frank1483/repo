@@ -4,6 +4,7 @@ import QtQml
 import QtCore
 import "GcpAgentCore.js" as Core
 import "GcpAgentSnapshot.js" as AgentSnapshot
+import "GcpAgentHost.js" as AgentHost
 import QGroundControl.GCP
 
 // UI agent 的共用狀態：可調整模組的登記、版面覆寫值、復原／重做堆疊。
@@ -184,6 +185,19 @@ QtObject {
     function verificationSnapshot(viewport) {
         const loc = shell && shell.agentLocation ? shell.agentLocation() : { page: -1, section: -1 }
         return AgentSnapshot.capture(viewport, _modules, Core.MODULES, loc, overrideOf)
+    }
+
+    // Read only; goal minimums and permissions must come from host policy shown on the card.
+    // Overlay wiring is a separate increment. No default minimum or repair permission.
+    function readableHostInput(viewport, goal, candidates) {
+        const before = revision
+        const loc = shell && shell.agentLocation ? shell.agentLocation() : { page: -1, section: -1 }
+        const input = AgentHost.captureReadable(viewport, _modules, Core.MODULES, loc, overrideOf,
+                                                before, goal, candidates, AgentSnapshot)
+        const after = shell && shell.agentLocation ? shell.agentLocation() : { page: -1, section: -1 }
+        if (revision !== before || loc.page !== after.page || loc.section !== after.section)
+            throw new Error("host changed during readability capture")
+        return input
     }
 
     // 模組在容器座標中的原始位置（不含 agent 變換）
