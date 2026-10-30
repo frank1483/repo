@@ -52,6 +52,10 @@ class FakeModel(BaseHTTPRequestHandler):
         if FakeModel.mode == "steps4":
             out = {"decision": "SELECT", "steps": [{"choice_id": i} for i in ids[:4]], "reason_zh": "四步", "evidence_ids": []}
             return self.reply(200, {"choices": [{"message": {"role": "assistant", "content": json.dumps(out, ensure_ascii=False)}}]})
+        if FakeModel.mode == "steps6":
+            navs = [i for i in ids if i.startswith("NAV_")]
+            out = {"decision": "SELECT", "steps": [{"choice_id": navs[k % len(navs)]} for k in range(6)], "reason_zh": "六步", "evidence_ids": []}
+            return self.reply(200, {"choices": [{"message": {"role": "assistant", "content": json.dumps(out, ensure_ascii=False)}}]})
         if FakeModel.mode == "invalid":
             out = {"decision": "SELECT", "choice_id": "NAV_99", "reason_zh": "亂選", "evidence_ids": []}
         elif "飛行設定" in user["intent"]:
@@ -269,7 +273,11 @@ check("兩個換頁各算一步，復原兩次 → 回首頁", page() == 0, (pag
 
 FakeModel.mode = "steps4"
 say("我想查看飛行設定", 1500)
-check("模型回四步 → 無效、退回規則列候選", page() == 0 and len(prop(agent, "choices")) >= 3, (page(), msg()))
+check("v6：模型回四步（上限 5）→ 確認後四步都執行", page() != 0 and len(CARDS) > 0, (page(), msg()))
+say("首頁", 800)
+FakeModel.mode = "steps6"
+say("我想查看飛行設定", 1500)
+check("v6：模型回六步（超過 5）→ 無效、退回規則列候選", page() == 0 and len(prop(agent, "choices")) >= 3, (page(), msg()))
 
 # F 過期結果與取消
 FakeModel.mode = "slow"

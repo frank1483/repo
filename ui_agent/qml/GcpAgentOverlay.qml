@@ -175,7 +175,7 @@ Item {
         if (result.generic_settings) { decision = result.rule; source = qsTr("規則（設定目標待確認）") }
         // 模型被給全目錄但無效時，規則原本就沒有候選 → 保持 HOLD
         const selectedIds = decision.steps ? decision.steps.map(s => s.choice_id) : [decision.choice_id]
-        if (decision.decision === "SELECT" && (!selectedIds.length || selectedIds.length > 3 ||
+        if (decision.decision === "SELECT" && (!selectedIds.length || selectedIds.length > Core.MAX_PLAN_STEPS ||
             selectedIds.some(id => !Core.candidateById(result, id))))
             decision = { decision: "HOLD", choice_id: "", reason_zh: qsTr("沒有對應的動作") }
 
@@ -218,9 +218,10 @@ Item {
         if (busy || _transaction) return
         clearConfirmation()
         choices = []
-        if (!Array.isArray(steps) || !steps.length || steps.length > 3 ||
+        if (!Array.isArray(steps) || !steps.length || steps.length > Core.MAX_PLAN_STEPS ||
             steps.some(c => !c || ["nav", "layout", "text_scale", "layout_load", "layout_default",
-                "layout_save_current", "layout_save", "undo", "redo", "reset_all"].indexOf(c.kind) < 0)) {
+                "layout_save_current", "layout_save", "undo", "redo", "reset_all"].indexOf(c.kind) < 0) ||
+            (steps.length > 1 && steps.some(c => ["nav", "layout", "text_scale"].indexOf(c.kind) < 0))) {
             messageText = qsTr("沒有可確認的介面動作，請改說")
             return
         }
@@ -242,7 +243,7 @@ Item {
 
     function confirmationSummary() {
         if (!_confirmation) return ""
-        const marks = ["①", "②", "③"]
+        const marks = ["①", "②", "③", "④", "⑤"]
         return qsTr("我理解你要：") + "\n" + _confirmation.steps.map((c, i) =>
             marks[i] + " " + c.label_zh).join("\n") + "\n" + qsTr("對嗎？")
     }
@@ -436,12 +437,14 @@ Item {
     property var _transaction: null
     property var _layoutJob: null
     function executeSteps(steps, source) {
-        if (busy || _transaction || !steps.length || steps.length > 3 || steps.some(c => !c)) return
+        if (busy || _transaction || !Array.isArray(steps) || !steps.length ||
+            steps.length > Core.MAX_PLAN_STEPS || steps.some(c => !c)) return
         if (steps.length === 1 && ["nav", "layout", "text_scale", "layout_load", "layout_default"].indexOf(steps[0].kind) < 0) {
             execute(steps[0], source)
             return
         }
-        if (steps.some(c => ["nav", "layout", "text_scale", "layout_load", "layout_default"].indexOf(c.kind) < 0)) {
+        if (steps.some(c => ["nav", "layout", "text_scale", "layout_load", "layout_default"].indexOf(c.kind) < 0) ||
+            (steps.length > 1 && steps.some(c => ["nav", "layout", "text_scale"].indexOf(c.kind) < 0))) {
             messageText = qsTr("這些動作必須分開操作")
             return
         }

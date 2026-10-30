@@ -3,6 +3,9 @@
 // 流程：使用者意圖 → 規則產生候選動作與證據 → （必要時）模型只挑候選 ID → 驗證 → 由畫面確認／套用。
 // 模型永遠不能產生候選以外的動作；agent 只做換頁與版面調整，不送飛行指令、不改任何參數值。
 
+// Shared bound for Core parsing/schema/validation and the Overlay confirmation/executor.
+var MAX_PLAN_STEPS = 5
+
 // ---------------------------------------------------------------- 畫面目錄
 // page 值對照 GcpMainShell.navigateToPage；section 值對照各頁 selectedSection（飛行日誌為 currentView）
 var PAGES = [
@@ -277,7 +280,7 @@ function analyze(intent, ctx) {
     if (parts.length <= 1) return analyzeSingle(intent, ctx)
     var hold = function (why) { return { intent: String(intent), candidates: [], evidence: [], compound: true,
         rule: { decision: "HOLD", choice_id: "", final: true, reason_zh: why } } }
-    if (parts.length > 3) return hold("一次最多三步，請分開說明")
+    if (parts.length > MAX_PLAN_STEPS) return hold("一次最多五步，請分開說明")
     var candidates = [], evidence = [], seen = {}, steps = [], clauses = [], next = Object.assign({}, ctx || {})
     var all = true
     for (var i = 0; i < parts.length; ++i) {
@@ -668,7 +671,7 @@ function catalogCandidates(ctx) {
 
 // ---------------------------------------------------------------- 模型提示與驗證（共用決策格式）
 var SYSTEM_PROMPT =
-    "你是無人機地面站的介面助理。只能從 candidates 選 ID，不可自創。單步用 choice_id，多步用 steps:[{choice_id:ID}]（最多三步，依序）。不可混用兩種格式。\n" +
+    "你是無人機地面站的介面助理。只能從 candidates 選 ID，不可自創。單步用 choice_id，多步用 steps:[{choice_id:ID}]（最多五步，依序）。不可混用兩種格式。\n" +
     "規則：意圖明確對應某個候選就 SELECT；有兩個以上都說得通、或意圖太模糊就 CLARIFY；" +
     "沒有任何候選符合、或要求控制飛機／修改參數就 HOLD。\n" +
     "只輸出 JSON：{\"decision\":\"SELECT|HOLD|CLARIFY\",\"choice_id\":\"候選id或空字串\"," +
@@ -680,7 +683,7 @@ function decisionSchema(result) {
         properties: {
             decision: { type: "string", enum: ["SELECT", "HOLD", "CLARIFY"] },
             choice_id: { type: "string", enum: [""].concat(ids) },
-            steps: { type: "array", minItems: 1, maxItems: 3, items: { type: "object", additionalProperties: false,
+            steps: { type: "array", minItems: 1, maxItems: MAX_PLAN_STEPS, items: { type: "object", additionalProperties: false,
                 properties: { choice_id: { type: "string", enum: ids } }, required: ["choice_id"] } },
             reason_zh: { type: "string" },
             evidence_ids: { type: "array", items: { type: "string", enum: result.evidence.map(function(e) {return e.id}) } }
@@ -717,11 +720,11 @@ function validateModelDecision(obj, result) {
     var steps = []
     if (d === "SELECT") {
         if (Object.prototype.hasOwnProperty.call(obj, "steps")) {
-            if (choice || !Array.isArray(obj.steps) || obj.steps.length < 1 || obj.steps.length > 3)
-                return { ok: false, error: "steps 必須一至三步，且不可同時填 choice_id" }
+            if (choice || !Array.isArray(obj.steps) || obj.steps.length < 1 || obj.steps.length > MAX_PLAN_STEPS)
+                return { ok: false, error: "steps 必須一至五步，且不可同時填 choice_id" }
             for (var si = 0; si < obj.steps.length; ++si) {
                 var s = obj.steps[si]
-                if (!s || typeof s.choice_id !== "string" || ids.indexOf(s.choice_id) < 0)
+                if (!s || typeof s.choice_id !== "string" || Object.keys(s).length !== 1 || ids.indexOf(s.choice_id) < 0)
                     return { ok: false, error: "步驟 ID 不在候選內" }
                 var action = candidateById(result, s.choice_id)
                 if (obj.steps.length > 1 && action.kind !== "nav" && action.kind !== "layout" && action.kind !== "text_scale")
