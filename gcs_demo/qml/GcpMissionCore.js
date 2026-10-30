@@ -1936,7 +1936,7 @@ function typedLinkIdentity(value,name) {
     return value
 }
 function typedLinkProfile(v) {
-    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(v.type)<0)
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)
         throw new Error("typed link requires an explicit FW/hybrid profile")
 }
 function typedLinkOptions(options) {
