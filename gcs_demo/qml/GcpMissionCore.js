@@ -1039,6 +1039,8 @@ if (typeof module !== "undefined") module.exports = {
     geographicEnergyAlertSnapshot:geographicEnergyAlertSnapshot,
     createGeographicEnergyAlertPredictor:createGeographicEnergyAlertPredictor,
     createTypedGeographicAlertFeed:createTypedGeographicAlertFeed,
+    typedLinkDistanceSnapshot:typedLinkDistanceSnapshot,
+    createTypedLinkDistancePredictor:createTypedLinkDistancePredictor,
     typedWindTrendSnapshot:typedWindTrendSnapshot,
     createTypedWindTrendPredictor:createTypedWindTrendPredictor,
     missionVersion:missionVersion,checkApply:checkApply,replanContext:replanContext,
@@ -1913,6 +1915,138 @@ function createTypedWindTrendPredictor(v,options,raiseTicks,clearTicks) {
         function event(kind){
             events.push(Object.assign({},finding,{type:kind,t:tm.t_s,status:result.status,sequence:sequence,mission_version:missionVersion,executable:false}))
             if(kind==="reset")Object.assign(events[events.length-1],{active:null,severity:5,value:"history and latch reset",evidence:[],lead_s:null})
+        }
+        if(reset)event("reset")
+        if(nextActive===null){if(previous!==null||version===null||reset)event("unknown")}
+        else if(nextActive){if(previous!==true)event("raise");else if(nextSeverity<severity)event("update")}
+        else if(previous===true)event("resolve")
+        else if(previous===null)event("known")
+        Object.assign(result,{sequence:sequence,mission_version:missionVersion,active:nextActive,raise_streak:nextRaise,clear_streak:nextClear,
+            finding:finding,events:events,reset_reason:changed?"mission_version_changed":(gap?"telemetry_gap":null)})
+        var detached=geographicAlertSnapshot(result)
+        lastSequence=sequence;lastTime=tm.t_s;version=missionVersion;history=nextHistory;active=nextActive;severity=nextSeverity;raising=nextRaise;clearing=nextClear
+        return detached
+    }}
+}
+
+// T5b2h1: independent measured P4; explicit distances/probes, no route or action.
+function typedLinkIdentity(value,name) {
+    if(typeof value!=="string"||value.length<1||value.length>128||/[^A-Za-z0-9._:-]/.test(value))
+        throw new Error(name+" requires 1..128 ASCII identity characters")
+    return value
+}
+function typedLinkProfile(v) {
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(v.type)<0)
+        throw new Error("typed link requires an explicit FW/hybrid profile")
+}
+function typedLinkOptions(options) {
+    var cfg={window_s:180,min_samples:60,min_distance_span_m:300,max_gap_s:30,horizon_s:300,
+        min_r2:0.5,link_min_pct:35,max_extrapolation_m:0}
+    if(options===undefined||options===null)options={}
+    profileObject(options,"typed link options")
+    Object.keys(options).forEach(function(k){if(!Object.prototype.hasOwnProperty.call(cfg,k))throw new Error("unsupported typed link options");cfg[k]=options[k]})
+    typedPredictorInteger(cfg.min_samples,"min_samples",2,601)
+    routeNumber(cfg.window_s,"window_s",1e-6,86400);routeNumber(cfg.max_gap_s,"max_gap_s",1e-6,cfg.window_s)
+    routeNumber(cfg.min_distance_span_m,"min_distance_span_m",1e-6,10000)
+    routeNumber(cfg.horizon_s,"horizon_s",0,86400);routeNumber(cfg.min_r2,"min_r2",0,1)
+    routeNumber(cfg.link_min_pct,"link_min_pct",0,100);routeNumber(cfg.max_extrapolation_m,"max_extrapolation_m",0,10000)
+    return cfg
+}
+function typedLinkMeasurement(rec) {
+    profileObject(rec,"measured link telemetry")
+    return {t_s:routeNumber(rec.t_s,"t_s",0,9007199254740991),
+        distance_m:routeNumber(rec.distance_m,"distance_m",0,10000),link_pct:routeNumber(rec.link_pct,"link_pct",0,100)}
+}
+function typedLinkHistory(samples,cfg) {
+    if(!Array.isArray(samples)||samples.length<1||samples.length>601)throw new Error("typed link requires 1..601 measured samples")
+    var pts=samples.map(typedLinkMeasurement),cut=0
+    for(var i=1;i<pts.length;i++)if(pts[i].t_s<=pts[i-1].t_s)throw new Error("measured time must increase strictly")
+    pts=pts.filter(function(p){return p.t_s>=pts[pts.length-1].t_s-cfg.window_s})
+    for(var j=1;j<pts.length;j++)if(pts[j].t_s-pts[j-1].t_s>cfg.max_gap_s)cut=j
+    return pts.slice(cut)
+}
+function typedLinkProbes(probes) {
+    var items=geographicAlertSnapshot(probes)
+    if(!Array.isArray(items)||items.length<1||items.length>1000)throw new Error("typed link requires 1..1000 explicit probes")
+    var seen=[],previous=-1
+    items.forEach(function(p){
+        profileObject(p,"probe")
+        if(Object.keys(p).sort().join(",")!=="distance_m,eta_s,id")throw new Error("probe requires exactly id, distance_m and eta_s")
+        var id=typedLinkIdentity(p.id,"probe id")
+        if(seen.indexOf(id)>=0)throw new Error("probe id must be unique")
+        seen.push(id);routeNumber(p.distance_m,"probe distance_m",0,10000)
+        var eta=routeNumber(p.eta_s,"probe eta_s",0,86400)
+        if(eta<=previous)throw new Error("probe eta_s must increase strictly")
+        previous=eta
+    })
+    return items
+}
+function typedLinkDistanceSnapshot(v,referenceId,samples,probes,options) {
+    typedLinkProfile(v);typedLinkIdentity(referenceId,"reference_id")
+    var cfg=typedLinkOptions(options),pts=typedLinkHistory(samples,cfg),targets=typedLinkProbes(probes),latest=pts[pts.length-1]
+    var distances=pts.map(function(p){return p.distance_m}),lo=Math.min.apply(null,distances),hi=Math.max.apply(null,distances)
+    var result={scope:"typed_P4_caller_referenced_distance_probes_only",reference_id:referenceId,status:"unknown",risk:null,
+        reason:"insufficient_samples",t_s:latest.t_s,current_link_pct:latest.link_pct,link_min_pct:cfg.link_min_pct,
+        sample_count:pts.length,distance_min_m:lo,distance_max_m:hi,distance_span_m:hi-lo,slope_pct_per_m:null,r2:null,
+        first_probe_id:null,lead_s:null,probes:[],distance_reference_verified:false,eta_verified:false,
+        geometry_evaluated:false,landing_modeled:false,probability_interval:false,sensor_validated:false,feasible:false,executable:false}
+    if(latest.link_pct<=cfg.link_min_pct){Object.assign(result,{status:"ok",risk:true,reason:"observed_limit_reached",lead_s:0});return geographicAlertSnapshot(result)}
+    if(pts.length<cfg.min_samples)return geographicAlertSnapshot(result)
+    if(hi-lo<cfg.min_distance_span_m){result.reason="insufficient_distance_span";return geographicAlertSnapshot(result)}
+    var xs=pts.map(function(p){return p.distance_m-latest.distance_m}),ys=pts.map(function(p){return p.link_pct})
+    function sum(a){return a.reduce(function(s,x){return s+x},0)}
+    var mx=sum(xs)/xs.length,my=sum(ys)/ys.length,sxx=0,sxy=0,syy=0
+    for(var i=0;i<pts.length;i++){var dx=xs[i]-mx,dy=ys[i]-my;sxx+=dx*dx;sxy+=dx*dy;syy+=dy*dy}
+    var slope=routeNumber(sxy/sxx,"link slope"),fitted=routeNumber(my-slope*mx,"fitted current link")
+    var r2=syy===0?1:Math.max(0,Math.min(1,sxy*sxy/(sxx*syy)))
+    Object.assign(result,{slope_pct_per_m:slope,r2:r2})
+    if(r2<cfg.min_r2||slope>0){result.reason=r2<cfg.min_r2?"distance_fit_unreliable":"distance_fit_increasing";return geographicAlertSnapshot(result)}
+    targets.forEach(function(p){
+        var row={id:p.id,distance_m:p.distance_m,eta_s:p.eta_s,status:"ok",predicted_link_pct:null,risk:null}
+        if(p.eta_s>cfg.horizon_s)Object.assign(row,{status:"unsupported",reason:"beyond_horizon"})
+        else if(p.distance_m<lo-cfg.max_extrapolation_m||p.distance_m>hi+cfg.max_extrapolation_m)
+            Object.assign(row,{status:"unsupported",reason:"outside_distance_envelope"})
+        else{var q=routeNumber(fitted+slope*(p.distance_m-latest.distance_m),"predicted link");Object.assign(row,{predicted_link_pct:q,risk:q<=cfg.link_min_pct})}
+        result.probes.push(row)
+    })
+    if(result.probes.some(function(p){return p.status!=="ok"}))result.reason="one_or_more_probes_unsupported"
+    else{
+        var first=null
+        for(var j=0;j<result.probes.length;j++)if(result.probes[j].risk){first=result.probes[j];break}
+        Object.assign(result,{status:"ok",risk:first!==null,reason:first?"probe_limit_reached":"probes_above_limit",
+            first_probe_id:first?first.id:null,lead_s:first?first.eta_s:null})
+    }
+    return geographicAlertSnapshot(result)
+}
+function createTypedLinkDistancePredictor(v,referenceId,options,raiseTicks,clearTicks) {
+    typedLinkProfile(v);typedLinkIdentity(referenceId,"reference_id")
+    var vehicle=geographicAlertSnapshot(v),cfg=typedLinkOptions(options)
+    if(raiseTicks===undefined)raiseTicks=3
+    if(clearTicks===undefined)clearTicks=10
+    typedPredictorInteger(raiseTicks,"raise_ticks",1,10000);typedPredictorInteger(clearTicks,"clear_ticks",1,10000)
+    var lastSequence=-1,lastTime=-1,version=null,history=[],active=null,severity=null,raising=0,clearing=0
+    return {tick:function(sequence,rec,probes,missionVersion){
+        typedPredictorInteger(sequence,"sequence",0,9007199254740991)
+        if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
+        typedLinkIdentity(missionVersion,"mission_version")
+        var tm=typedLinkMeasurement(rec)
+        if(tm.t_s<=lastTime)throw new Error("t_s must increase strictly")
+        var changed=version!==null&&missionVersion!==version,gap=lastTime>=0&&tm.t_s-lastTime>cfg.max_gap_s,reset=changed||gap
+        var nextHistory=typedLinkHistory((reset?[]:history).concat([tm]).slice(-601),cfg)
+        var result=typedLinkDistanceSnapshot(vehicle,referenceId,nextHistory,probes,cfg),previous=reset?null:active
+        var nextActive=reset||active===null?false:active,nextRaise=reset?0:raising,nextClear=reset?0:clearing
+        if(result.status!=="ok"){nextActive=null;nextRaise=0;nextClear=0}
+        else if(result.risk){nextRaise=Math.min(nextRaise+1,raiseTicks);nextClear=0;nextActive=nextActive||nextRaise>=raiseTicks}
+        else{nextRaise=0;nextClear=Math.min(nextClear+1,clearTicks);if(nextClear>=clearTicks)nextActive=false}
+        var nextSeverity=nextActive&&tm.link_pct<=result.link_min_pct?2:(nextActive?4:5)
+        var evidence={}
+        ;["reference_id","current_link_pct","link_min_pct","slope_pct_per_m","r2","first_probe_id","lead_s"].forEach(function(k){evidence[k]=result[k]})
+        var finding={key:"typed_link_distance",active:nextActive,severity:nextSeverity,title:"Measured link quality by distance",value:result.reason,
+            evidence:[{id:"E_TYPED_P4",text:"conditional explicit-distance probe fit",value:evidence}],candidates:[],rule_choice:null,lead_s:result.lead_s},events=[]
+        function event(kind){
+            var e=Object.assign({},finding,{type:kind,t:tm.t_s,status:result.status,sequence:sequence,mission_version:missionVersion,executable:false})
+            if(kind==="reset")Object.assign(e,{active:null,severity:5,value:"history and latch reset",evidence:[],lead_s:null})
+            events.push(e)
         }
         if(reset)event("reset")
         if(nextActive===null){if(previous!==null||version===null||reset)event("unknown")}
