@@ -3,6 +3,7 @@
 // No HTTP, model, Qt, Settings, flight commands, or preserved research scripts.
 const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('assert');
 const Core=require('./load_core');
+const ReadableLoop={};vm.createContext(ReadableLoop);vm.runInContext(fs.readFileSync(path.join(__dirname,'../qml/GcpAgentLoop.js'),'utf8').replace(/^\.pragma[^\n]*\n/,''),ReadableLoop);
 const source=fs.readFileSync(path.join(__dirname,'../qml/GcpAgentOverlay.qml'),'utf8');
 function extract(name){const a=source.indexOf('    function '+name+'(');assert(a>=0,name);const line=source.indexOf('\n',a);const end=source.slice(a,line).trimEnd().endsWith('}')?line:source.indexOf('\n    }',line)+6;assert(end>a);return source.slice(a,end).trim();}
 const plain=x=>JSON.parse(JSON.stringify(x));
@@ -10,7 +11,7 @@ const nav=()=>({id:'NAV_1',kind:'nav',page:1,section:-1,label_zh:'切到即時�
 const layout=()=>({id:'LAYOUT_WIND',kind:'layout',module:'wind',region:'top_left',label_zh:'風速計移到左上角',score:1});
 function setup(){
     const calls=[],events=[],loc={page:0,section:-1};let focus=0;
-    const O={Core,GcpAgentState:{revision:0},JSON,Date,Array,console:{log(){}},
+    const O={Core,ReadableLoop,GcpAgentState:{revision:0},JSON,Date,Array,console:{log(){}},
         qsTr:s=>s,busy:false,_transaction:null,_confirmation:null,_pending:null,_choiceGuard:null,
         pendingText:'',choices:[],messageText:'',statusText:'',_modelGeneration:0,_cancelModel:null,
         backend:'none',modelName:'',modelEnabled:false,modelAlways:false,_t0:Date.now(),

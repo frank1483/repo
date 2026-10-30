@@ -7,6 +7,11 @@ import QtCore
 import QGroundControl.GCP
 
 import "GcpAgentCore.js" as Core
+import "GcpAgentHost.js" as ReadableHost
+import "GcpAgentCatalog.js" as ReadableCatalog
+import "GcpAgentLoop.js" as ReadableLoop
+import "GcpAgentVerifier.js" as ReadableVerifier
+import "GcpAgentReadableSession.js" as ReadableSession
 
 // 每個畫面都能叫出的介面助理：右側浮動按鈕 → 輸入意圖 → 規則產生候選（必要時問模型挑）→ 套用 → 可多步復原。
 // 放在 GcpMainShell 最上層（anchors.fill: parent）。只換頁與調整版面，不送飛行指令、不改參數值。
@@ -15,6 +20,12 @@ Item {
 
     // GcpMainShell 傳入：agentLocation()、agentGoTo(page, section)、agentPageName(page)
     property var shell: null
+    // Trusted shell configuration; never populated from model output or environment.
+    // No inferred readable minimums or repair permissions.
+    property var readableViewport: null
+    property var readableGoalPolicy: null
+    property var _readableSession: null
+    property bool _destroying: false
     // 讀環境變數（正式版傳 GcpEnv.value）；預設全部用預設值
     property var envValue: function (name, fallback) { return fallback }
 
@@ -89,6 +100,7 @@ Item {
             choices = []
             _pending = null
             _choiceGuard = null
+            if (_readableSession) _readableSession.cancel()
             if (_cancelModel) cancelWaiting()
         }
     }
@@ -110,6 +122,7 @@ Item {
         clearConfirmation()
         pendingText = ""
         _modelGeneration++
+        const readableCancelled = root._readableSession ? root._readableSession.cancel() : null
         if (_transaction) failSteps(qsTr("已取消，已還原整組"))
         if (_cancelModel) _cancelModel()
         busy = false
@@ -117,7 +130,8 @@ Item {
         choices = []
         _pending = null
         _choiceGuard = null
-        messageText = qsTr("已取消")
+        messageText = readableCancelled && readableCancelled.phase === "rollback_failed" ?
+            qsTr("取消時整組復原未完成，請檢查畫面") : qsTr("已取消")
     }
 
     function submit(text) {
@@ -129,6 +143,13 @@ Item {
         choices = []
         messageText = ""
         const ctx = context()
+        // Intercept the bounded goal before ordinary candidate analysis/model fallback.
+        const readable = ReadableLoop.goalTemplate(text, ctx)
+        if (readable) {
+            if (readable.decision === "SELECT") requestReadableConfirmation(text, readable.candidates)
+            else { pendingText = ""; _pending = null; messageText = readable.reason_zh }
+            return
+        }
         let result = Core.analyzeTurn(text, ctx, pendingText)
         if (!result.pending_intent) pendingText = ""
         _pending = result
@@ -208,8 +229,87 @@ Item {
         }
     }
 
-    // The future goal planner must call this gate with goal:true after building its plan.
-    // Item6 is deliberately not implemented by this item4 patch.
+    // Bounded readability goal uses its own host-only catalog and owned Loop bridge.
+    function captureReadable(candidates) {
+        if (!readableViewport || !readableGoalPolicy) throw new Error("trusted readability host policy unavailable")
+        return GcpAgentState.readableHostInput(readableViewport, readableGoalPolicy, candidates)
+    }
+
+    function requestReadableConfirmation(intent, candidates) {
+        if (busy || _transaction || _readableSession || _destroying) return
+        clearConfirmation()
+        pendingText = ""
+        _pending = null
+        choices = []
+        try {
+            const prepared = ReadableHost.prepareReadable(captureReadable(candidates), Core, ReadableCatalog)
+            _confirmation = { readable: prepared, intent: String(intent), source: qsTr("規則目標"),
+                guard: prepared.spec.guard, steps: [] }
+            messageText = ""
+            decisionLogged({phase: "confirmation_required", goal: true, intent: String(intent), executed: false})
+        } catch (e) {
+            messageText = qsTr("目前無法準備小地圖可讀性確認，尚未套用任何動作")
+            decisionLogged({phase: "readability_prepare_rejected", error: String(e), executed: false})
+        }
+    }
+
+    function startReadable(pending) {
+        // Never route a goal through the legacy executeSteps scale-only path.
+        const prepared = pending.readable
+        const viewport = readableViewport
+        const candidates = JSON.parse(JSON.stringify(prepared.basis.candidates))
+        let session = null
+        session = ReadableSession.create(prepared, {
+            capture: function() {
+                if (root.readableViewport !== viewport) throw new Error("readability viewport replaced")
+                return root.captureReadable(candidates)
+            },
+            revision: function() { return GcpAgentState.revision },
+            begin: function() { return GcpAgentState.beginGroup() },
+            owns: function(t) { return GcpAgentState._groupActive && GcpAgentState._activeGroupCheckpoint === t },
+            commit: function(t, label, kind) { GcpAgentState.commitGroup(t, label, kind) },
+            rollback: function(t) { GcpAgentState.rollbackGroup(t) },
+            checkpoint: function() { return GcpAgentState.snapshot() },
+            restore: function(s) { GcpAgentState._restore(s) },
+            apply: function(id, next) { GcpAgentState.setOverride(id, next) },
+            schedule: function(fn, delay) { readableTick.onFire = fn; readableTick.interval = delay; readableTick.restart(); return fn },
+            cancelSchedule: function(fn) { if (readableTick.onFire === fn) { readableTick.stop(); readableTick.onFire = null } },
+            now: function() { return Date.now() },
+            report: function(e) { if (!root._destroying) root.decisionLogged({phase: "readability_loop", event: e}) },
+            finished: function(s) {
+                if (root._readableSession !== session) return
+                root._readableSession = null
+                root.busy = false
+                root.statusText = ""
+                if (root._destroying) return
+                if (s.phase === "complete") root.done({label_zh: prepared.spec.label}, pending.source, true, false)
+                else {
+                    root.messageText = s.phase === "rollback_failed" ? qsTr("小地圖檢查失敗，整組復原未完成，請檢查畫面") :
+                        qsTr("小地圖檢查未通過，已還原整組；可調整要求後再試")
+                }
+            }
+        }, {core: Core, host: ReadableHost, catalog: ReadableCatalog, loop: ReadableLoop, verifier: ReadableVerifier})
+        _readableSession = session
+        busy = true
+        statusText = qsTr("正在量測並檢查小地圖…")
+        try { session.start(true) }
+        catch (e) {
+            // If start acquired a group, cancel owns only its own token.
+            session.cancel()
+            if (_readableSession === session) _readableSession = null
+            busy = false
+            statusText = ""
+            messageText = qsTr("小地圖確認已失效或目前無法啟動，請重新確認")
+            decisionLogged({phase: "readability_start_rejected", error: String(e), executed: false})
+        }
+    }
+
+    Timer {
+        id: readableTick
+        property var onFire: null
+        repeat: false
+        onTriggered: { const work = onFire; onFire = null; if (work) work() }
+    }
     function clearConfirmation() {
         _confirmation = null
     }
@@ -218,6 +318,11 @@ Item {
         if (busy || _transaction) return
         clearConfirmation()
         choices = []
+        if (Array.isArray(steps) && steps.some(c => c && c.id === "GOAL_MINIVIEW_READABLE")) {
+            if (steps.length === 1) requestReadableConfirmation(policy && policy.intent || "", steps)
+            else messageText = qsTr("小地圖可讀性目標目前須單獨確認，尚未套用任何動作")
+            return
+        }
         if (!Array.isArray(steps) || !steps.length || steps.length > Core.MAX_PLAN_STEPS ||
             steps.some(c => !c || ["nav", "layout", "text_scale", "layout_load", "layout_default",
                 "layout_save_current", "layout_save", "undo", "redo", "reset_all"].indexOf(c.kind) < 0) ||
@@ -243,6 +348,8 @@ Item {
 
     function confirmationSummary() {
         if (!_confirmation) return ""
+        if (_confirmation.readable) return qsTr("我理解你要：") + "\n" + _confirmation.readable.spec.label + "\n" +
+            _confirmation.readable.summary + "\n" + qsTr("本批檢查失敗會整組復原，尚未接模型修補。") + "\n" + qsTr("對嗎？")
         const marks = ["①", "②", "③", "④", "⑤"]
         return qsTr("我理解你要：") + "\n" + _confirmation.steps.map((c, i) =>
             marks[i] + " " + c.label_zh).join("\n") + "\n" + qsTr("對嗎？")
@@ -260,6 +367,17 @@ Item {
             return
         }
         _pending = null
+        if (pending.readable) {
+            try {
+                ReadableHost.assertReadableCurrent(pending.readable, captureReadable(pending.readable.basis.candidates), Core, ReadableCatalog)
+                decisionLogged({phase: "confirmation_accepted", goal: true, intent: pending.intent, executed: false})
+                startReadable(pending)
+            } catch (e) {
+                messageText = qsTr("小地圖尺寸、權限或畫面已改變，請重新確認")
+                decisionLogged({phase: "readability_confirmation_stale", error: String(e), executed: false})
+            }
+            return
+        }
         decisionLogged({ phase: "confirmation_accepted", intent: pending.intent,
             steps: pending.steps.map(c => c.id), source: pending.source })
         executeSteps(pending.steps, pending.source)
@@ -576,6 +694,9 @@ Item {
     }
 
     Component.onDestruction: {
+        _destroying = true
+        if (_readableSession) _readableSession.cancel()
+        readableTick.stop()
         if (_cancelModel) _cancelModel()
         if (_transaction) { layoutRetry.stop(); GcpAgentState.rollbackGroup(_transaction.checkpoint) }
     }
@@ -866,7 +987,7 @@ Item {
             }
             Button {
                 objectName: "agentCancelModel"
-                visible: root._cancelModel !== null || root.pendingText !== ""
+                visible: root._cancelModel !== null || root.pendingText !== "" || root._readableSession !== null
                 text: qsTr("取消")
                 onClicked: root.cancelWaiting()
             }
