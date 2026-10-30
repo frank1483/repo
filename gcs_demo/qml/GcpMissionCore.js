@@ -1039,6 +1039,7 @@ if (typeof module !== "undefined") module.exports = {
     geographicEnergyAlertSnapshot:geographicEnergyAlertSnapshot,
     createGeographicEnergyAlertPredictor:createGeographicEnergyAlertPredictor,
     createTypedGeographicAlertFeed:createTypedGeographicAlertFeed,
+    typedReturnProbeSnapshot:typedReturnProbeSnapshot,
     typedLinkDistanceSnapshot:typedLinkDistanceSnapshot,
     createTypedLinkDistancePredictor:createTypedLinkDistancePredictor,
     typedWindTrendSnapshot:typedWindTrendSnapshot,
@@ -2059,4 +2060,70 @@ function createTypedLinkDistancePredictor(v,referenceId,options,raiseTicks,clear
         lastSequence=sequence;lastTime=tm.t_s;version=missionVersion;history=nextHistory;active=nextActive;severity=nextSeverity;raising=nextRaise;clearing=nextClear
         return detached
     }}
+}
+// Additive P2: explicit ordered outbound-prefix/return samples, no action.
+function typedReturnKeys(obj,keys,name) {
+    if(!obj||typeof obj!=="object"||Array.isArray(obj)||Object.keys(obj).length!==keys.length||!keys.every(function(k){return Object.prototype.hasOwnProperty.call(obj,k)}))throw new Error(name+" requires exactly "+keys.join(", "))
+}
+function typedReturnEqual(a,b) {
+    if(a===b)return true
+    if(!a||!b||typeof a!=="object"||typeof b!=="object"||Array.isArray(a)!==Array.isArray(b))return false
+    var ka=Object.keys(a),kb=Object.keys(b)
+    return ka.length===kb.length&&ka.every(function(k){return Object.prototype.hasOwnProperty.call(b,k)&&typedReturnEqual(a[k],b[k])})
+}
+function typedReturnRequest(entry,target,probes) {
+    var request=geographicAlertSnapshot({entry:entry,target:target,probes:probes})
+    entry=request.entry;target=request.target;probes=request.probes
+    typedReturnKeys(entry,["lat","lon","alt","air_heading_deg"],"entry")
+    typedReturnKeys(target,["lat","lon","alt","tolerance_m"],"recovery target")
+    ;[["entry",entry],["target",target]].forEach(function(pair){routeNumber(pair[1].lat,pair[0]+" lat",-75,75);routeNumber(pair[1].lon,pair[0]+" lon",-180,180);routeNumber(pair[1].alt,pair[0]+" alt",0)})
+    routeNumber(entry.air_heading_deg,"air_heading_deg");routeNumber(target.tolerance_m,"tolerance_m",0,100)
+    if(target.alt!==entry.alt)throw new Error("P2 recovery target must be at the entry flight altitude")
+    if(!Array.isArray(probes)||probes.length<1||probes.length>16)throw new Error("P2 requires 1..16 explicit return probes")
+    var seen=[],previous=[],total=0
+    probes.forEach(function(p){
+        typedReturnKeys(p,["id","outbound_events","return_events"],"probe")
+        if(typeof p.id!=="string"||Array.from(p.id).length<1||Array.from(p.id).length>128||seen.indexOf(p.id)>=0)throw new Error("probe id must be unique, nonempty, at most 128 characters")
+        seen.push(p.id)
+        var out=p.outbound_events,ret=p.return_events
+        if([out,ret].some(function(x){return !Array.isArray(x)||!x.length}))throw new Error("probe requires nonempty outbound and return event lists")
+        if(out.length<=previous.length||!typedReturnEqual(out.slice(0,previous.length),previous))throw new Error("outbound events must strictly extend the previous prefix")
+        if(out.concat(ret).some(function(e){return !e||typeof e!=="object"||Array.isArray(e)||typeof e.kind!=="string"}))throw new Error("probe events require objects with kind")
+        total+=out.length+ret.length;if(total>1000)throw new Error("P2 batch exceeds 1000 total replayed events")
+        previous=out
+    })
+    return request
+}
+function typedReturnEndpointError(pose,target,origin) {
+    var metres=Math.PI*6371000/180,dl=((pose.lon-target.lon+180)%360+360)%360-180
+    return Math.hypot(dl*metres*Math.cos(origin.lat*Math.PI/180),(pose.lat-target.lat)*metres)
+}
+function typedReturnProbeSnapshot(v,entry,target,probes,w,startPct,mode) {
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)throw new Error("typed return probes require an explicit FW/hybrid profile")
+    var active=flightMode(v,mode)
+    if(active!=="fw")throw new Error("typed return probes require explicit FW flight")
+    routeWind(w);if(startPct===undefined)startPct=100;routeNumber(startPct,"start_pct",0,100)
+    var request=typedReturnRequest(entry,target,probes);entry=request.entry;target=request.target
+    var rows=request.probes.map(function(p){
+        var split=p.outbound_events.length,interval=geographicWindRouteBounds(v,entry,p.outbound_events.concat(p.return_events),w,startPct,active)
+        var scenarios=interval.scenarios.map(function(s){
+            var row={id:s.id,status:s.status,endpoint_supported:false,wind:s.wind,power_multiplier:s.power_multiplier,capacity_multiplier:s.capacity_multiplier}
+            if(s.status==="ok"){
+                var e=s.base_estimate,error=typedReturnEndpointError(e.exit_geographic,target,entry)
+                Object.assign(row,{endpoint_supported:error<=target.tolerance_m&&e.exit_geographic.alt===target.alt,endpoint_error_m:error,
+                    exit_geographic:e.exit_geographic,probe_geographic:e.legs[split-1].exit_geographic,
+                    eta_s:e.legs.slice(0,split).reduce(function(sum,leg){return sum+leg.time_s},0),end_pct:s.end_pct})
+            }else row.reason=s.reason
+            return row
+        }),known=interval.available&&scenarios.every(function(s){return s.endpoint_supported}),nominal=scenarios[0]
+        return {id:p.id,status:known?"ok":"unknown",reason:known?"finite_probe_supported":"route_or_recovery_endpoint_unsupported",outbound_event_count:split,
+            sampled_energy_risk:known?interval.low_pct<v.reserve_pct:null,low_pct:known?interval.low_pct:null,high_pct:known?interval.high_pct:null,
+            nominal_eta_s:nominal.eta_s===undefined?null:nominal.eta_s,scenarios:scenarios,bounds:interval}
+    }),known=rows.every(function(r){return r.status==="ok"}),first=null,last=null,reentry=false
+    if(known)rows.forEach(function(r){if(r.sampled_energy_risk){if(first===null)first=r}else if(first===null)last=r;else reentry=true})
+    return geographicAlertSnapshot({scope:"typed_P2_explicit_return_probe_samples_only",status:known?"ok":"unknown",entry:entry,target:target,mode:active,start_pct:startPct,reserve_pct:v.reserve_pct,
+        probes:rows,sampled_energy_risk:known?first!==null:null,first_sampled_infeasible_id:first?first.id:null,
+        first_sampled_infeasible_nominal_eta_s:first?first.nominal_eta_s:null,last_sampled_feasible_prefix_id:last?last.id:null,
+        sampled_feasibility_reentry:known?reentry:null,sampled_endpoint_constraint_met:known,continuous_boundary_known:false,return_inferred:false,
+        recovery_reference_verified:false,landing_modeled:false,wind_direction_varied:false,feasible:false,executable:false,candidates:[],rule_choice:null})
 }
