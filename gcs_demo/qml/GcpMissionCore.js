@@ -1039,6 +1039,7 @@ if (typeof module !== "undefined") module.exports = {
     geographicEnergyAlertSnapshot:geographicEnergyAlertSnapshot,
     createGeographicEnergyAlertPredictor:createGeographicEnergyAlertPredictor,
     createTypedGeographicAlertFeed:createTypedGeographicAlertFeed,
+    createTypedMissionSampleFeed:createTypedMissionSampleFeed,
     typedReturnProbeSnapshot:typedReturnProbeSnapshot,
     typedLinkDistanceSnapshot:typedLinkDistanceSnapshot,
     createTypedLinkDistancePredictor:createTypedLinkDistancePredictor,
@@ -2126,4 +2127,108 @@ function typedReturnProbeSnapshot(v,entry,target,probes,w,startPct,mode) {
         first_sampled_infeasible_nominal_eta_s:first?first.nominal_eta_s:null,last_sampled_feasible_prefix_id:last?last.id:null,
         sampled_feasibility_reentry:known?reentry:null,sampled_endpoint_constraint_met:known,continuous_boundary_known:false,return_inferred:false,
         recovery_reference_verified:false,landing_modeled:false,wind_direction_varied:false,feasible:false,executable:false,candidates:[],rule_choice:null})
+}
+
+// Atomic P1/P2 explicit samples. No continuous return deadline or actions.
+function missionSampleMeasurement(rec) {
+    if(!rec||typeof rec!=="object"||Array.isArray(rec))throw new Error("measured geographic telemetry required")
+    var fields=["t_s","lat","lon","alt","air_heading_deg","battery_pct","wind_mps","wind_from","mode"],tm={}
+    fields.forEach(function(k){if(!Object.prototype.hasOwnProperty.call(rec,k))throw new Error("missing measured telemetry field");tm[k]=rec[k]})
+    tm=geographicAlertSnapshot(tm)
+    fields.slice(0,-1).forEach(function(k){routeNumber(tm[k],k)})
+    routeNumber(tm.t_s,"t_s",0,9007199254740991);routeNumber(tm.lat,"lat",-75,75);routeNumber(tm.lon,"lon",-180,180)
+    routeNumber(tm.alt,"alt",0);routeNumber(tm.battery_pct,"battery_pct",0,100);routeNumber(tm.wind_mps,"wind_mps",0)
+    if(tm.mode!=="fw")throw new Error("measured mode must explicitly be fw")
+    return tm
+}
+function missionSampleRequest(request,pose) {
+    var r=geographicAlertSnapshot(request)
+    typedReturnKeys(r,["mission_version","recovery_reference_id","p1","p2"],"mission sample request")
+    typedLinkIdentity(r.mission_version,"mission_version");typedLinkIdentity(r.recovery_reference_id,"recovery_reference_id")
+    typedReturnKeys(r.p1,["current_id","candidates"],"p1");typedReturnKeys(r.p2,["target","probes","mode"],"p2")
+    if(r.p2.mode!=="fw")throw new Error("p2 mode must match measured fw mode")
+    var items=r.p1.candidates
+    if(!Array.isArray(items)||items.length<1||items.length>16)throw new Error("p1 requires 1..16 explicit alternatives")
+    items.forEach(function(c){
+        if(!c||typeof c!=="object"||Array.isArray(c)||!typedReturnEqual(c.entry,pose))throw new Error("every p1 entry must equal the measured pose")
+        if(c.mode!=="fw")throw new Error("every p1 candidate requires explicit measured fw mode")
+    })
+    var current=items.filter(function(c){return c.id===r.p1.current_id})[0]
+    if(!current||!Array.isArray(current.events)||!current.events.length)throw new Error("current_id must identify a nonempty explicit current route")
+    var probes=r.p2.probes
+    if(!Array.isArray(probes)||probes.length<1||probes.length>16)throw new Error("p2 requires 1..16 explicit return probes")
+    probes.forEach(function(p){
+        var out=p&&typeof p==="object"&&!Array.isArray(p)?p.outbound_events:null
+        if(!Array.isArray(out)||!out.length||out.length>current.events.length||!typedReturnEqual(out,current.events.slice(0,out.length)))
+            throw new Error("every P2 outbound must prefix the current P1 route")
+    })
+    return r
+}
+function missionSampleEmptyLatch(){return {active:null,severity:5,raise:0,clear:0}}
+function missionSampleReduce(code,snapshot,previous,reset,raiseTicks,clearTicks,context) {
+    var old=reset?missionSampleEmptyLatch():previous,known=snapshot.status==="ok",risk=snapshot.sampled_energy_risk
+    var active=old.active,raising=old.raise,clearing=old.clear
+    if(!known){active=null;raising=0;clearing=0}
+    else if(risk){raising=Math.min(raising+1,raiseTicks);clearing=0;active=active===true||raising>=raiseTicks}
+    else{raising=0;clearing=Math.min(clearing+1,clearTicks);active=active===true&&clearing<clearTicks}
+    var severity=active!==true?5:(code==="P1"&&snapshot.nominal_end_pct<0?2:4)
+    var value=risk===true?"sampled_risk":(known?"sampled_reserve_met":"unknown_samples")
+    if(active===true&&risk===false)value="sampled_risk_latched_pending_clear"
+    var keys=code==="P1"?["current_id","nominal_end_pct","low_pct","high_pct","reserve_pct"]:
+        ["first_sampled_infeasible_id","first_sampled_infeasible_nominal_eta_s","last_sampled_feasible_prefix_id","sampled_feasibility_reentry","reserve_pct"],evidence={}
+    if(known)keys.forEach(function(k){evidence[k]=snapshot[k]})
+    var finding={key:"typed_mission_sample_"+code.toLowerCase(),predictor:code,active:active,severity:severity,title:code+" explicit energy samples",
+        value:value,evidence:known?[{id:"E_TYPED_"+code+"_SAMPLES",text:"finite samples; no continuous deadline or landing",value:evidence}]:[],
+        candidates:[],rule_choice:null,lead_s:null,executable:false},events=[]
+    function event(kind){
+        var e=Object.assign({},finding,context,{type:kind,status:known?"ok":"unknown"})
+        if(kind==="reset")Object.assign(e,{active:null,severity:5,value:"latch_reset",evidence:[]})
+        events.push(e)
+    }
+    if(reset)event("reset")
+    if(active===null){if(old.active!==null||context.initial||reset)event("unknown")}
+    else if(active){if(old.active!==true)event("raise");else if(severity<old.severity)event("update")}
+    else if(old.active===true)event("resolve")
+    else if(old.active===null)event("known")
+    return {result:{status:known?"ok":"unknown",sampled_energy_risk:risk,active:active,raise_streak:raising,clear_streak:clearing,
+        raise_ticks:raiseTicks,clear_ticks:clearTicks,finding:finding,snapshot:snapshot},
+        state:{active:active,severity:severity,raise:raising,clear:clearing},events:events}
+}
+function createTypedMissionSampleFeed(v,raiseTicks,clearTicks,maxGapS) {
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)throw new Error("typed mission samples require explicit FW/hybrid profile")
+    if(raiseTicks===undefined)raiseTicks=3
+    if(clearTicks===undefined)clearTicks=10
+    if(maxGapS===undefined)maxGapS=30
+    typedPredictorInteger(raiseTicks,"raise_ticks",1,10000);typedPredictorInteger(clearTicks,"clear_ticks",1,10000);routeNumber(maxGapS,"max_gap_s",1e-6,86400)
+    var vehicle=geographicAlertSnapshot(v),lastSequence=-1,lastTime=-1,lastRequest=null,latches={P1:missionSampleEmptyLatch(),P2:missionSampleEmptyLatch()}
+    return {tick:function(sequence,rec,request){
+        typedPredictorInteger(sequence,"sequence",0,9007199254740991)
+        if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
+        var tm=missionSampleMeasurement(rec)
+        if(tm.t_s<=lastTime)throw new Error("t_s must increase strictly")
+        var pose={lat:tm.lat,lon:tm.lon,alt:tm.alt,air_heading_deg:tm.air_heading_deg},r=missionSampleRequest(request,pose)
+        var initial=lastRequest===null,changed=!initial&&r.mission_version!==lastRequest.mission_version
+        if(!initial&&!changed&&(r.p1.current_id!==lastRequest.p1.current_id||r.recovery_reference_id!==lastRequest.recovery_reference_id||!typedReturnEqual(r.p2.target,lastRequest.p2.target)))
+            throw new Error("current route/recovery identity or target change requires new mission_version")
+        var reasons=changed?["mission_version_changed"]:[]
+        if(lastTime>=0&&tm.t_s-lastTime>maxGapS)reasons.push("telemetry_gap")
+        var w=wind(tm.wind_mps,tm.wind_from)
+        // Evaluate both before reducing/committing either latch.
+        var snapshots={P1:geographicEnergyAlertSnapshot(vehicle,r.p1.candidates,r.p1.current_id,w,tm.battery_pct),
+            P2:typedReturnProbeSnapshot(vehicle,pose,r.p2.target,r.p2.probes,w,tm.battery_pct,r.p2.mode)}
+        var context={sequence:sequence,t:tm.t_s,mission_version:r.mission_version,recovery_reference_id:r.recovery_reference_id,
+            initial:initial,continuous_boundary_known:false,latest_return_deadline_s:null},results={},states={},events=[]
+        ;["P1","P2"].forEach(function(code){
+            var reduced=missionSampleReduce(code,snapshots[code],latches[code],reasons.length>0,raiseTicks,clearTicks,context)
+            results[code]=reduced.result;states[code]=reduced.state;events=events.concat(reduced.events)
+        })
+        var output=geographicAlertSnapshot({caller_scope:"atomic_measured_P1_P2_explicit_samples_only",
+            status:results.P1.status==="ok"&&results.P2.status==="ok"?"ok":"unknown",sequence:sequence,t_s:tm.t_s,mission_version:r.mission_version,
+            recovery_reference_id:r.recovery_reference_id,mode:tm.mode,predictors:results,events:events,reset_reasons:reasons,
+            evaluated_predictors:["P1","P2"],unassessed_predictors:["P3","P4","P5"],continuous_boundary_known:false,latest_return_deadline_s:null,
+            return_now_evaluated:false,recovery_reference_verified:false,telemetry_freshness_verified:false,landing_modeled:false,
+            feasible:false,executable:false,candidates:[],rule_choice:null})
+        lastSequence=sequence;lastTime=tm.t_s;lastRequest=r;latches=states
+        return output
+    }}
 }
