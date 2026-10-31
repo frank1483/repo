@@ -1,0 +1,10 @@
+GcpAgentCatalog.js
+GcpAgentCore.js
+GcpAgentHost.js
+GcpAgentLoop.js
+GcpAgentModule.qml
+GcpAgentOverlay.qml
+GcpAgentReadableSession.js
+GcpAgentSnapshot.js
+GcpAgentState.qml
+GcpAgentVerifier.js

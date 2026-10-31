@@ -1,0 +1,16 @@
+diff --git a/GCS_開發交接與變更紀錄.md b/GCS_開發交接與變更紀錄.md
+--- a/GCS_開發交接與變更紀錄.md
++++ b/GCS_開發交接與變更紀錄.md
+@@ -1,5 +1,12 @@
+ # GCS 開發交接與變更紀錄
+
++### UI agent v6 part7 — 安裝與 shell 接口（Codex 工程草稿）
++
++- 原因／對照：安裝原僅帶四檔；本版納入十份 Agent QML/JS、完整 CMake 清單、shell viewport 與可信 policy 接口。
++- 安裝：在獨立 UI 副本依序暫存五份 patch；保留原 GCP、交接文件及首次失敗，不修改原工作目錄。
++- 限制：policy 預設 null；尺寸與權限待整合端明確提供。僅來源／雜湊／靜態封裝；shell、CMake、Qt 首測由 Claude 另記，未宣稱編譯或板端驗證。
++- 待續：模型修補回饋、文字回歸、舊 harness 條件等待；不改 human_approved／training_release。
++
+ ### 文件整理：2026-10-27 — 交接包 handoff/ 與個人路徑改寫
+
+ - 原因：新增 `handoff/` 交接包（程式碼／板端接線／DEMO 文件、待確認清單、打包腳本）；Hank 對 Q-25 選擇排除 reviews／evidence，其餘個人路徑直接改。
