@@ -1040,6 +1040,7 @@ if (typeof module !== "undefined") module.exports = {
     createGeographicEnergyAlertPredictor:createGeographicEnergyAlertPredictor,
     createTypedGeographicAlertFeed:createTypedGeographicAlertFeed,
     createTypedMissionSampleFeed:createTypedMissionSampleFeed,
+    typedBatteryCapacitySnapshot:typedBatteryCapacitySnapshot,
     typedReturnProbeSnapshot:typedReturnProbeSnapshot,
     typedLinkDistanceSnapshot:typedLinkDistanceSnapshot,
     createTypedLinkDistancePredictor:createTypedLinkDistancePredictor,
@@ -2231,4 +2232,50 @@ function createTypedMissionSampleFeed(v,raiseTicks,clearTicks,maxGapS) {
         lastSequence=sequence;lastTime=tm.t_s;lastRequest=r;latches=states
         return output
     }}
+}
+
+// P3 finite-window hypothesis only; explicit chemistry and discharging session.
+function typedBatteryCapacitySnapshot(v, samples, options) {
+    var defaults={min_samples:90,min_energy_span_fraction:0.08,min_r2:0.8,max_gap_s:30,min_fall_v_per_wh:1e-6,capacity_ratio_limit:0.9,soc_gap_limit_pct:3};
+    function fail(s){throw new Error(s);}
+    function num(x,s,lo,hi){if(typeof x!=="number"||!isFinite(x)||x<lo||x>hi)fail(s);return x;}
+    function integer(x,s,lo,hi){num(x,s,lo,hi);if(Math.floor(x)!==x)fail(s);}
+    function object(x){return x!==null&&typeof x==="object"&&!Array.isArray(x);}
+    function keys(x,required){if(!object(x)||Object.keys(x).sort().join("|")!==required.slice().sort().join("|"))fail("invalid sample keys");}
+    function identity(x){if(typeof x!=="string"||x.length<1||x.length>128||/[^A-Za-z0-9._:-]/.test(x))fail("battery_id");}
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)fail("typed capacity requires FW/hybrid profile");
+    var nominal=num(v.battery_wh,"battery_wh",1e-6,1e9),cfg={},k;
+    if(!object(options)||!Object.prototype.hasOwnProperty.call(options,"cell_r_ohm")||!Object.prototype.hasOwnProperty.call(options,"cell_empty_v"))fail("explicit chemistry required");
+    Object.keys(defaults).forEach(function(key){cfg[key]=defaults[key];});
+    Object.keys(options).forEach(function(key){if(!Object.prototype.hasOwnProperty.call(defaults,key)&&key!=="cell_r_ohm"&&key!=="cell_empty_v")fail("unsupported option");cfg[key]=options[key];});
+    integer(cfg.min_samples,"min_samples",3,601);
+    [["cell_r_ohm",0,1],["cell_empty_v",0.1,10],["min_energy_span_fraction",1e-6,1],["min_r2",0,1],["max_gap_s",1e-6,86400],["min_fall_v_per_wh",1e-12,10],["capacity_ratio_limit",1e-6,1],["soc_gap_limit_pct",0,100]].forEach(function(a){num(cfg[a[0]],a[0],a[1],a[2]);});
+    if(!Array.isArray(samples)||samples.length<1||samples.length>601)fail("1..601 samples required");
+    var fields=["t_s","battery_id","used_wh","voltage","current_a","cell_count","battery_pct"],gap=false,volts=[],i,row;
+    for(i=0;i<samples.length;i++){
+        row=samples[i];keys(row,fields);identity(row.battery_id);integer(row.cell_count,"cell_count",1,100);
+        [["t_s",0,9007199254740991],["used_wh",0,1e9],["voltage",1e-6,1000],["current_a",0,10000],["battery_pct",0,100]].forEach(function(a){num(row[a[0]],a[0],a[1],a[2]);});
+        if(row.battery_id!==samples[0].battery_id||row.cell_count!==samples[0].cell_count)fail("mixed battery/cell identity");
+        if(i){if(row.t_s<=samples[i-1].t_s||row.used_wh<samples[i-1].used_wh)fail("unordered samples");gap=gap||row.t_s-samples[i-1].t_s>cfg.max_gap_s;}
+        volts.push(num(row.voltage/row.cell_count+row.current_a*cfg.cell_r_ohm,"compensated cell voltage",0.1,10));
+    }
+    var latest=samples[samples.length-1],out={predictor:"P3",status:"unknown",reason:"insufficient_samples",risk:null,battery_id:latest.battery_id,cell_count:latest.cell_count,sample_count:samples.length,energy_span_wh:latest.used_wh-samples[0].used_wh,nominal_wh:nominal,compensated_cell_v:volts[volts.length-1],slope_v_per_wh:null,r2:null,estimated_total_wh:null,capacity_ratio:null,estimated_remaining_wh:null,soc_remaining_wh:latest.battery_pct/100*nominal,conservative_remaining_wh:null,soc_overestimate_pct:null,assumptions:cfg,measured_capacity:false,sensor_validated:false,probability_interval:false,energy_correction_applied:false,feasible:false,executable:false,candidates:[],rule_choice:null};
+    if(gap){out.reason="telemetry_gap";return out;}
+    if(samples.length<cfg.min_samples)return out;
+    if(out.energy_span_wh<nominal*cfg.min_energy_span_fraction){out.reason="insufficient_energy_span";return out;}
+    var xs=[],mx=0,my=0,sxx=0,syy=0,sxy=0;
+    for(i=0;i<samples.length;i++){xs.push(samples[i].used_wh-samples[0].used_wh);mx+=xs[i];my+=volts[i];}
+    mx/=samples.length;my/=samples.length;
+    for(i=0;i<samples.length;i++){sxx+=Math.pow(xs[i]-mx,2);syy+=Math.pow(volts[i]-my,2);sxy+=(xs[i]-mx)*(volts[i]-my);}
+    if(sxx<=1e-12||syy<=1e-12){out.reason="degenerate_fit";return out;}
+    var slope=num(sxy/sxx,"capacity slope",-1e100,1e100),r2=Math.max(0,Math.min(1,sxy*sxy/(sxx*syy)));
+    out.slope_v_per_wh=slope;out.r2=r2;
+    if(slope>=-cfg.min_fall_v_per_wh||r2<cfg.min_r2){out.reason="capacity_fit_unreliable";return out;}
+    var total=num(samples[0].used_wh+(cfg.cell_empty_v-(my-slope*mx))/slope,"estimated total Wh",-1e100,1e100);
+    if(total<=latest.used_wh){out.reason="extrapolated_empty_reached";return out;}
+    var remaining=total-latest.used_wh,conservative=Math.min(out.soc_remaining_wh,remaining),gapPct=(out.soc_remaining_wh-conservative)/nominal*100;
+    var risk=total/nominal<cfg.capacity_ratio_limit&&gapPct>cfg.soc_gap_limit_pct;
+    out.status="ok";out.reason=risk?"conditional_capacity_risk":"conditional_capacity_no_risk";out.risk=risk;
+    out.estimated_total_wh=total;out.capacity_ratio=total/nominal;out.estimated_remaining_wh=remaining;out.conservative_remaining_wh=conservative;out.soc_overestimate_pct=gapPct;
+    return out;
 }
