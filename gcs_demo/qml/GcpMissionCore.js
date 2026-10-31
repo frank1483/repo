@@ -1042,6 +1042,7 @@ if (typeof module !== "undefined") module.exports = {
     createTypedMissionSampleFeed:createTypedMissionSampleFeed,
     typedBatteryCapacitySnapshot:typedBatteryCapacitySnapshot,
     createTypedCapacityFeed:createTypedCapacityFeed,
+    createTypedMissionOrchestrator:createTypedMissionOrchestrator,
     typedReturnProbeSnapshot:typedReturnProbeSnapshot,
     typedLinkDistanceSnapshot:typedLinkDistanceSnapshot,
     createTypedLinkDistancePredictor:createTypedLinkDistancePredictor,
@@ -2202,8 +2203,9 @@ function createTypedMissionSampleFeed(v,raiseTicks,clearTicks,maxGapS) {
     if(clearTicks===undefined)clearTicks=10
     if(maxGapS===undefined)maxGapS=30
     typedPredictorInteger(raiseTicks,"raise_ticks",1,10000);typedPredictorInteger(clearTicks,"clear_ticks",1,10000);routeNumber(maxGapS,"max_gap_s",1e-6,86400)
-    var vehicle=geographicAlertSnapshot(v),lastSequence=-1,lastTime=-1,lastRequest=null,latches={P1:missionSampleEmptyLatch(),P2:missionSampleEmptyLatch()}
-    return {tick:function(sequence,rec,request){
+    var vehicle=geographicAlertSnapshot(v)
+    function branch(lastSequence,lastTime,lastRequest,latches){
+    return {fork:function(){return branch(lastSequence,lastTime,geographicAlertSnapshot(lastRequest),geographicAlertSnapshot(latches))},tick:function(sequence,rec,request){
         typedPredictorInteger(sequence,"sequence",0,9007199254740991)
         if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
         var tm=missionSampleMeasurement(rec)
@@ -2233,6 +2235,8 @@ function createTypedMissionSampleFeed(v,raiseTicks,clearTicks,maxGapS) {
         lastSequence=sequence;lastTime=tm.t_s;lastRequest=r;latches=states
         return output
     }}
+    }
+    return branch(-1,-1,null,{P1:missionSampleEmptyLatch(),P2:missionSampleEmptyLatch()})
 }
 
 // P3 finite-window hypothesis only; explicit chemistry and discharging session.
@@ -2296,8 +2300,9 @@ function createTypedCapacityFeed(v, options, raiseTicks, clearTicks, maxSamples)
     raiseTicks=raiseTicks===undefined?3:raiseTicks;clearTicks=clearTicks===undefined?10:clearTicks;maxSamples=maxSamples===undefined?601:maxSamples
     typedPredictorInteger(raiseTicks,"raise_ticks",1,10000);typedPredictorInteger(clearTicks,"clear_ticks",1,10000);typedPredictorInteger(maxSamples,"max_samples",cfg.min_samples,601)
     function empty(){return {active:null,raise:0,clear:0}}
-    var vehicle=geographicAlertSnapshot(v),lastSequence=-1,lastTime=-1,lastSession=null,history=[],latch=empty()
-    return {tick:function(sequence,rec,sessionId){
+    var vehicle=geographicAlertSnapshot(v)
+    function branch(lastSequence,lastTime,lastSession,history,latch){
+    return {fork:function(){return branch(lastSequence,lastTime,lastSession,geographicAlertSnapshot(history),geographicAlertSnapshot(latch))},tick:function(sequence,rec,sessionId){
         typedPredictorInteger(sequence,"sequence",0,9007199254740991)
         if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
         typedLinkIdentity(sessionId,"session_id")
@@ -2333,6 +2338,47 @@ function createTypedCapacityFeed(v, options, raiseTicks, clearTicks, maxSamples)
             measured_capacity:false,sensor_validated:false,telemetry_freshness_verified:false,independent_window_evidence:false,energy_correction_applied:false,landing_modeled:false,
             feasible:false,executable:false,candidates:[],rule_choice:null})
         lastSequence=sequence;lastTime=row.t_s;lastSession=sessionId;history=rows;latch={active:active,raise:raising,clear:clearing}
+        return output
+    }}
+    }
+    return branch(-1,-1,null,[],empty())
+}
+
+
+// P1/P2/P3 transactional caller. Other predictors remain visibly unassessed.
+function createTypedMissionOrchestrator(v,capacityOptions,raiseTicks,clearTicks,maxGapS,maxSamples) {
+    var mission=createTypedMissionSampleFeed(v,raiseTicks,clearTicks,maxGapS)
+    var capacity=createTypedCapacityFeed(v,capacityOptions,raiseTicks,clearTicks,maxSamples)
+    var lastSession=null,lastVersion=null
+    return {tick:function(sequence,measurement,request){
+        var m=geographicAlertSnapshot(measurement),r=geographicAlertSnapshot(request)
+        typedReturnKeys(m,["mission","capacity"],"orchestrator measurement")
+        typedReturnKeys(r,["mission","capacity_session_id"],"orchestrator request")
+        typedLinkIdentity(r.capacity_session_id,"capacity_session_id")
+        function object(x){return x!==null&&typeof x==="object"&&!Array.isArray(x)}
+        if(!object(m.mission)||!object(m.capacity)||!object(r.mission))throw new Error("mission/capacity objects required")
+        ;["t_s","battery_pct"].forEach(function(k){
+            if(!Object.prototype.hasOwnProperty.call(m.mission,k)||!Object.prototype.hasOwnProperty.call(m.capacity,k)||m.mission[k]!==m.capacity[k])
+                throw new Error("mission and capacity require identical measured "+k)
+        })
+        var session=r.capacity_session_id
+        if(lastSession!==null&&session!==lastSession&&r.mission.mission_version===lastVersion)throw new Error("battery session change requires new mission_version")
+        var nextMission=mission.fork(),nextCapacity=capacity.fork()
+        var a=nextMission.tick(sequence,m.mission,r.mission),b=nextCapacity.tick(sequence,m.capacity,session)
+        var predictors={P1:a.predictors.P1,P2:a.predictors.P2,P3:b}
+        var events=a.events.concat(b.events).map(function(e){return Object.assign({},e,{mission_version:a.mission_version,
+            recovery_reference_id:a.recovery_reference_id,session_id:session,battery_id:b.battery_id})})
+        var output=geographicAlertSnapshot({caller_scope:"atomic_measured_P1_P2_P3_only",
+            status:["P1","P2","P3"].every(function(k){return predictors[k].status==="ok"})?"ok":"unknown",
+            sequence:a.sequence,t_s:a.t_s,mission_version:a.mission_version,recovery_reference_id:a.recovery_reference_id,
+            session_id:session,battery_id:b.battery_id,mode:a.mode,predictors:predictors,events:events,
+            reset_reasons_by_predictor:{P1:a.reset_reasons,P2:a.reset_reasons,P3:b.reset_reasons},
+            evaluated_predictors:["P1","P2","P3"],unassessed_predictors:["P4","P5"],
+            continuous_boundary_known:false,latest_return_deadline_s:null,return_now_evaluated:false,
+            recovery_reference_verified:false,telemetry_freshness_verified:false,measured_capacity:false,sensor_validated:false,
+            independent_window_evidence:false,energy_correction_applied:false,landing_modeled:false,
+            feasible:false,executable:false,candidates:[],rule_choice:null})
+        mission=nextMission;capacity=nextCapacity;lastSession=session;lastVersion=a.mission_version
         return output
     }}
 }
