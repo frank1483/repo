@@ -1041,6 +1041,7 @@ if (typeof module !== "undefined") module.exports = {
     createTypedGeographicAlertFeed:createTypedGeographicAlertFeed,
     createTypedMissionSampleFeed:createTypedMissionSampleFeed,
     typedBatteryCapacitySnapshot:typedBatteryCapacitySnapshot,
+    createTypedCapacityFeed:createTypedCapacityFeed,
     typedReturnProbeSnapshot:typedReturnProbeSnapshot,
     typedLinkDistanceSnapshot:typedLinkDistanceSnapshot,
     createTypedLinkDistancePredictor:createTypedLinkDistancePredictor,
@@ -2278,4 +2279,60 @@ function typedBatteryCapacitySnapshot(v, samples, options) {
     out.status="ok";out.reason=risk?"conditional_capacity_risk":"conditional_capacity_no_risk";out.risk=risk;
     out.estimated_total_wh=total;out.capacity_ratio=total/nominal;out.estimated_remaining_wh=remaining;out.conservative_remaining_wh=conservative;out.soc_overestimate_pct=gapPct;
     return out;
+}
+
+
+// Independent P3 caller: conditional overlapping windows, no P1/P2 mutation.
+function createTypedCapacityFeed(v, options, raiseTicks, clearTicks, maxSamples) {
+    if(!v.airframe_profile||["fixed_wing","vtol_hybrid"].indexOf(airframeType(v))<0)throw new Error("typed capacity feed requires FW/hybrid profile")
+    routeNumber(v.battery_wh,"battery_wh",1e-6,1e9)
+    var defaults={min_samples:90,min_energy_span_fraction:0.08,min_r2:0.8,max_gap_s:30,min_fall_v_per_wh:1e-6,capacity_ratio_limit:0.9,soc_gap_limit_pct:3}
+    if(!options||typeof options!=="object"||Array.isArray(options)||!Object.prototype.hasOwnProperty.call(options,"cell_r_ohm")||!Object.prototype.hasOwnProperty.call(options,"cell_empty_v"))throw new Error("explicit chemistry options required")
+    var cfg=Object.assign({},defaults)
+    Object.keys(options).forEach(function(k){if(!Object.prototype.hasOwnProperty.call(defaults,k)&&k!=="cell_r_ohm"&&k!=="cell_empty_v")throw new Error("unsupported option");cfg[k]=options[k]})
+    cfg=geographicAlertSnapshot(cfg)
+    typedPredictorInteger(cfg.min_samples,"min_samples",3,601)
+    ;[["cell_r_ohm",0,1],["cell_empty_v",0.1,10],["min_energy_span_fraction",1e-6,1],["min_r2",0,1],["max_gap_s",1e-6,86400],["min_fall_v_per_wh",1e-12,10],["capacity_ratio_limit",1e-6,1],["soc_gap_limit_pct",0,100]].forEach(function(a){routeNumber(cfg[a[0]],a[0],a[1],a[2])})
+    raiseTicks=raiseTicks===undefined?3:raiseTicks;clearTicks=clearTicks===undefined?10:clearTicks;maxSamples=maxSamples===undefined?601:maxSamples
+    typedPredictorInteger(raiseTicks,"raise_ticks",1,10000);typedPredictorInteger(clearTicks,"clear_ticks",1,10000);typedPredictorInteger(maxSamples,"max_samples",cfg.min_samples,601)
+    function empty(){return {active:null,raise:0,clear:0}}
+    var vehicle=geographicAlertSnapshot(v),lastSequence=-1,lastTime=-1,lastSession=null,history=[],latch=empty()
+    return {tick:function(sequence,rec,sessionId){
+        typedPredictorInteger(sequence,"sequence",0,9007199254740991)
+        if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
+        typedLinkIdentity(sessionId,"session_id")
+        var row=geographicAlertSnapshot(rec)
+        typedBatteryCapacitySnapshot(vehicle,[row],cfg)
+        if(row.t_s<=lastTime)throw new Error("t_s must increase strictly across sessions")
+        var initial=lastSession===null,changed=!initial&&sessionId!==lastSession,last=history.length?history[history.length-1]:null
+        if(last&&!changed&&(row.battery_id!==last.battery_id||row.cell_count!==last.cell_count||row.used_wh<last.used_wh))throw new Error("battery/cell/counter change requires new session_id")
+        var reasons=changed?["session_changed"]:[]
+        if(lastTime>=0&&row.t_s-lastTime>cfg.max_gap_s)reasons.push("telemetry_gap")
+        var rows=(reasons.length?[]:history).concat([row]).slice(-maxSamples),snapshot=typedBatteryCapacitySnapshot(vehicle,rows,cfg)
+        var old=reasons.length?empty():latch,active=old.active,raising=old.raise,clearing=old.clear,known=snapshot.status==="ok",risk=snapshot.risk
+        if(!known){active=null;raising=0;clearing=0}
+        else if(risk){raising=Math.min(raising+1,raiseTicks);clearing=0;active=active===true||raising>=raiseTicks}
+        else{raising=0;clearing=Math.min(clearing+1,clearTicks);active=active===true&&clearing<clearTicks}
+        var value=active===true&&risk===false?"conditional_capacity_risk_latched_pending_clear":snapshot.reason,evidence={}
+        if(known)["sample_count","energy_span_wh","capacity_ratio","soc_overestimate_pct","assumptions"].forEach(function(k){evidence[k]=snapshot[k]})
+        var finding={key:"typed_capacity_P3",predictor:"P3",active:active,severity:active===true?4:5,title:"P3 conditional capacity hypothesis",value:value,
+            evidence:known?[{id:"E_TYPED_P3_WINDOW",text:"conditional fit, overlapping windows; not measured capacity",value:evidence}]:[],lead_s:null,candidates:[],rule_choice:null,executable:false},events=[]
+        function event(kind){
+            var e=Object.assign({},finding,{type:kind,status:snapshot.status,sequence:sequence,t:row.t_s,session_id:sessionId,battery_id:row.battery_id})
+            if(kind==="reset")Object.assign(e,{active:null,severity:5,value:"window_and_latch_reset",evidence:[]})
+            events.push(e)
+        }
+        if(reasons.length)event("reset")
+        if(active===null){if(old.active!==null||initial||reasons.length)event("unknown")}
+        else if(active){if(old.active!==true)event("raise")}
+        else if(old.active===true)event("resolve")
+        else if(old.active===null)event("known")
+        var output=geographicAlertSnapshot({caller_scope:"bounded_P3_only_conditional_capacity_feed",status:snapshot.status,sequence:sequence,t_s:row.t_s,session_id:sessionId,battery_id:row.battery_id,
+            active:active,risk:risk,raise_streak:raising,clear_streak:clearing,raise_ticks:raiseTicks,clear_ticks:clearTicks,window_sample_count:rows.length,max_samples:maxSamples,
+            snapshot:snapshot,finding:finding,events:events,reset_reasons:reasons,evaluated_predictors:["P3"],unassessed_predictors:["P1","P2","P4","P5"],
+            measured_capacity:false,sensor_validated:false,telemetry_freshness_verified:false,independent_window_evidence:false,energy_correction_applied:false,landing_modeled:false,
+            feasible:false,executable:false,candidates:[],rule_choice:null})
+        lastSequence=sequence;lastTime=row.t_s;lastSession=sessionId;history=rows;latch={active:active,raise:raising,clear:clearing}
+        return output
+    }}
 }
