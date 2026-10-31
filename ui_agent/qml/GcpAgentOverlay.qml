@@ -24,6 +24,9 @@ Item {
     // No inferred readable minimums or repair permissions.
     property var readableViewport: null
     property var readableGoalPolicy: null
+    // Optional trusted host scheduler, captured once per session. Never read from model/settings.
+    // Contract: schedule must defer its callback and return a non-null handle; cancel invalidates it.
+    property var readableScheduler: null
     property var _readableSession: null
     property bool _destroying: false
     // 讀環境變數（正式版傳 GcpEnv.value）；預設全部用預設值
@@ -258,6 +261,9 @@ Item {
         const prepared = pending.readable
         const viewport = readableViewport
         const candidates = JSON.parse(JSON.stringify(prepared.basis.candidates))
+        const scheduler = readableScheduler
+        if (scheduler !== null && (typeof scheduler.schedule !== "function" || typeof scheduler.cancel !== "function"))
+            throw new Error("invalid trusted readability scheduler")
         let session = null
         session = ReadableSession.create(prepared, {
             capture: function() {
@@ -272,8 +278,18 @@ Item {
             checkpoint: function() { return GcpAgentState.snapshot() },
             restore: function(s) { GcpAgentState._restore(s) },
             apply: function(id, next) { GcpAgentState.setOverride(id, next) },
-            schedule: function(fn, delay) { readableTick.onFire = fn; readableTick.interval = delay; readableTick.restart(); return fn },
-            cancelSchedule: function(fn) { if (readableTick.onFire === fn) { readableTick.stop(); readableTick.onFire = null } },
+            schedule: function(fn, delay) {
+                if (scheduler !== null) {
+                    const handle = scheduler.schedule(fn, delay)
+                    if (handle === null || handle === undefined) throw new Error("missing scheduled handle")
+                    return handle
+                }
+                readableTick.onFire = fn; readableTick.interval = delay; readableTick.restart(); return fn
+            },
+            cancelSchedule: function(handle) {
+                if (scheduler !== null) scheduler.cancel(handle)
+                else if (readableTick.onFire === handle) { readableTick.stop(); readableTick.onFire = null }
+            },
             now: function() { return Date.now() },
             report: function(e) { if (!root._destroying) root.decisionLogged({phase: "readability_loop", event: e}) },
             finished: function(s) {
@@ -824,7 +840,9 @@ Item {
         id: panel
         objectName: "agentPanel"
         z: 2
-        width: Math.min(520, root.width * 0.42)
+        // Fill narrow viewports; remain inside the owning overlay rather than the outer window.
+        width: Math.max(0, Math.min(root.width - 32, root.width < 800 ? root.width - 32 : Math.max(360, root.width * 0.42)))
+        clip: true
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.margins: 16
@@ -838,8 +856,8 @@ Item {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 22
-            spacing: 14
+            anchors.margins: 12
+            spacing: 6
 
             RowLayout {
                 Layout.fillWidth: true
@@ -865,6 +883,18 @@ Item {
             }
 
             // Bounded settings pane: timeout controls must not push the intent input off-screen.
+            ScrollView {
+                id: ordinaryBody
+                objectName: "agentBodyScroll"
+                visible: root._confirmation === null
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 0
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: ordinaryBody.availableWidth
+                    spacing: 10
             ScrollView {
                 id: settingsForm
                 visible: false
@@ -1007,53 +1037,6 @@ Item {
                 wrapMode: Text.Wrap
                 color: root.cText; font.pixelSize: (21 * GcpTheme.font.textScale)
             }
-            Rectangle {
-                objectName: "agentConfirmationCard"
-                Layout.fillWidth: true
-                Layout.preferredHeight: confirmationContent.implicitHeight + 24
-                visible: root._confirmation !== null
-                radius: 10
-                color: "#1A22D3EE"
-                border.color: root.cAccent
-                ColumnLayout {
-                    id: confirmationContent
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 10
-                    ScrollView {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(confirmationLabel.implicitHeight, 160)
-                        clip: true
-                        contentWidth: availableWidth
-                        Text {
-                            id: confirmationLabel
-                            objectName: "agentConfirmationText"
-                            width: parent.width
-                            text: root.confirmationSummary()
-                            wrapMode: Text.Wrap
-                            color: root.cText
-                            font.pixelSize: (20 * GcpTheme.font.textScale)
-                        }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Button {
-                            objectName: "agentConfirmYes"
-                            text: qsTr("對")
-                            enabled: root._confirmation !== null && !root.busy
-                            Layout.fillWidth: true
-                            onClicked: root.confirmIntent()
-                        }
-                        Button {
-                            objectName: "agentConfirmNo"
-                            text: qsTr("不是")
-                            enabled: root._confirmation !== null && !root.busy
-                            Layout.fillWidth: true
-                            onClicked: root.rejectIntent()
-                        }
-                    }
-                }
-            }
             ListView {
                 id: choicesList
                 Layout.fillWidth: true
@@ -1080,7 +1063,74 @@ Item {
                 }
             }
 
-            Item { Layout.fillHeight: true }
+                }
+            }
+            Rectangle {
+                id: confirmationCard
+                objectName: "agentConfirmationCard"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 0
+                visible: root._confirmation !== null
+                radius: 10
+                color: "#1A22D3EE"
+                border.color: root.cAccent
+                clip: true
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 8
+                    Flickable {
+                        id: confirmationScroll
+                        objectName: "agentConfirmationScroll"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.minimumHeight: 0
+                        contentWidth: width
+                        contentHeight: confirmationLabel.height
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        flickableDirection: Flickable.VerticalFlick
+                        ScrollBar.vertical: ScrollBar {
+                            objectName: "agentConfirmationScrollbar"
+                            policy: confirmationScroll.contentHeight > confirmationScroll.height ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+                        }
+                        Text {
+                            id: confirmationLabel
+                            objectName: "agentConfirmationText"
+                            // Reserve a scrollbar lane, including when wrapped on narrow viewports.
+                            width: Math.max(0, confirmationScroll.width - 16)
+                            height: implicitHeight
+                            text: root.confirmationSummary()
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            color: root.cText
+                            font.pixelSize: (20 * GcpTheme.font.textScale)
+                            property rect lastLineRect: Qt.rect(0, 0, 0, 0)
+                            onLineLaidOut: function(line) { lastLineRect = Qt.rect(line.x, line.y, line.width, line.height) }
+                            onTextChanged: confirmationScroll.contentY = 0
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.minimumHeight: implicitHeight
+                        Button {
+                            objectName: "agentConfirmYes"
+                            text: qsTr("對")
+                            enabled: root._confirmation !== null && !root.busy
+                            Layout.fillWidth: true
+                            onClicked: root.confirmIntent()
+                        }
+                        Button {
+                            objectName: "agentConfirmNo"
+                            text: qsTr("不是")
+                            enabled: root._confirmation !== null && !root.busy
+                            Layout.fillWidth: true
+                            onClicked: root.rejectIntent()
+                        }
+                    }
+                }
+            }
 
             Text {
                 objectName: "agentUnsavedLayout"
@@ -1097,11 +1147,13 @@ Item {
                 onClicked: root.execute({ kind: "layout_save_current" }, qsTr("使用者儲存"))
             }
             // 變更紀錄與復原
-            Text { text: qsTr("變更紀錄"); color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale) }
+            Text { objectName: "agentHistoryHeading"; text: qsTr("變更紀錄"); color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale) }
             ListView {
                 id: historyList
                 Layout.fillWidth: true
-                Layout.preferredHeight: 190
+                // Compact fixed footer; full history remains scrollable inside this list.
+                Layout.preferredHeight: root._confirmation !== null ? 32 : 64
+                Layout.minimumHeight: 32
                 clip: true
                 model: root.changeLog
                 delegate: Text {
