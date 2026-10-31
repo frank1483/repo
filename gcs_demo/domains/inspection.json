@@ -1,0 +1,16 @@
+{
+  "id": "inspection",
+  "schema": 0,
+  "name_zh": "巡檢",
+  "keywords_zh": ["巡檢", "班檢", "電線", "電塔", "輸電", "絕緣子", "橋梁", "管線", "太陽能板", "設施檢查"],
+  "ui_template": "inspection_default",
+  "recognition": {
+    "required_classes": ["insulator_defect", "line_foreign_object"],
+    "preferred_classes": ["bird_nest", "person"],
+    "max_latency_ms": 300,
+    "conf_threshold": 0.5,
+    "per_vehicle": false
+  },
+  "report_fields": ["detections_by_class", "defect_locations"],
+  "source": "draft"
+}

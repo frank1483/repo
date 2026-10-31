@@ -1,0 +1,21 @@
+{
+ "id": "onnx_general_missing",
+ "schema": 0,
+ "name_zh": "通用人車 ONNX（尚未下載）",
+ "task": "detect",
+ "runtime": "onnx",
+ "file": "onnx_general_missing.onnx",
+ "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+ "classes": [
+  "person",
+  "car"
+ ],
+ "input_size": [
+  640,
+  640
+ ],
+ "latency_ms": {},
+ "domain_hint": [],
+ "license": "unknown-until-user-approves-download",
+ "source": "placeholder"
+}

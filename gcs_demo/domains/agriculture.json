@@ -1,0 +1,16 @@
+{
+  "id": "agriculture",
+  "schema": 0,
+  "name_zh": "農業",
+  "keywords_zh": ["農業", "農田", "作物", "稻", "果園", "茶園", "病害", "病蟲害", "雜草", "噴灑", "施肥", "植保"],
+  "ui_template": "agri_default",
+  "recognition": {
+    "required_classes": ["crop_disease"],
+    "preferred_classes": ["weed", "person"],
+    "max_latency_ms": 200,
+    "conf_threshold": 0.4,
+    "per_vehicle": false
+  },
+  "report_fields": ["detections_by_class", "affected_area_note"],
+  "source": "draft"
+}

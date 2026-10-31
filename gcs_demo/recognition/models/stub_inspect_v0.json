@@ -1,0 +1,26 @@
+{
+ "id": "stub_inspect_v0",
+ "schema": 0,
+ "name_zh": "巡檢模擬模型 v0",
+ "task": "detect",
+ "runtime": "stub",
+ "file": "stub_inspect_v0.weights.json",
+ "sha256": "3894d2b81f291719b1b2a8f777fb54515d57c645e27a5a18caa676d78a7f52a9",
+ "classes": [
+  "insulator_defect",
+  "line_foreign_object",
+  "bird_nest"
+ ],
+ "input_size": [
+  640,
+  640
+ ],
+ "latency_ms": {
+  "demo-host": 120
+ },
+ "domain_hint": [
+  "inspection"
+ ],
+ "license": "demo-only (synthetic)",
+ "source": "synthetic"
+}

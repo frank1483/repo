@@ -1,0 +1,17 @@
+{
+  "id": "multi_uav",
+  "schema": 0,
+  "name_zh": "多機",
+  "keywords_zh": ["多機", "多架", "機群", "編隊", "協同", "群飛", "多台無人機"],
+  "ui_template": "multi_uav_default",
+  "recognition": {
+    "required_classes": ["person", "vehicle"],
+    "preferred_classes": [],
+    "max_latency_ms": 150,
+    "conf_threshold": 0.45,
+    "per_vehicle": true
+  },
+  "report_fields": ["detections_by_class", "detections_by_vehicle"],
+  "source": "draft",
+  "assumption_zh": "多機視為作業情境：沿用通用人/車模型，每架各自辨識（待使用者確認）"
+}

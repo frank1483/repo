@@ -1,0 +1,12 @@
+{
+  "schema": 0,
+  "classes": {
+    "person": {"zh": "人", "aliases": ["pedestrian", "people", "human"]},
+    "vehicle": {"zh": "車輛", "aliases": ["car", "truck", "bus", "van", "motorcycle"]},
+    "crop_disease": {"zh": "作物病斑", "aliases": ["leaf_disease", "blight"]},
+    "weed": {"zh": "雜草", "aliases": []},
+    "insulator_defect": {"zh": "絕緣子缺陷", "aliases": ["broken_insulator", "insulator_damage"]},
+    "line_foreign_object": {"zh": "電線異物", "aliases": ["foreign_object"]},
+    "bird_nest": {"zh": "鳥巢", "aliases": ["nest"]}
+  }
+}
