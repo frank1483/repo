@@ -71,6 +71,9 @@ def _sha16(obj) -> str:
 
 # ------------------------------------------------------------------ 上游引擎
 
+# 上游是本機／板上服務：不走系統代理（Windows 登錄檔或 HTTP_PROXY 設定會讓 urllib 繞去代理）
+_NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 class Upstream:
     """把 OpenAI 形式的請求送到真正的模型，回 (content 文字, 原始回覆 dict)。"""
     name = "none"
@@ -85,7 +88,7 @@ class Upstream:
     def _post(self, path, body, timeout_s):
         r = urllib.request.Request(self.url + path, data=json.dumps(body).encode("utf-8"),
                                    headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(r, timeout=timeout_s) as resp:
+        with _NO_PROXY.open(r, timeout=timeout_s) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
 
