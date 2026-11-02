@@ -153,24 +153,32 @@ def run(scenario="gusty", policy="ignore", dt=1.0, seed=7, explain_fn=None, max_
 
 def _apply(ev, t, route, target, wp_i):
     """把告警選中的建議套到模擬機（操作員按確認後）。"""
-    choice = (ev.get("explain") or {}).get("text", {}).get("choice_id") or ev.get("rule_choice")
+    # HOLD 的 rule_choice 只是供顯示的緊急備選，禁止自動跟從。
+    if ev.get("rule_decision") == "HOLD" or not any(c.get("feasible") is True for c in ev["candidates"]):
+        return None
+    text = (ev.get("explain") or {}).get("text", {})
+    if text and text.get("decision") != "SELECT":
+        return None
+    choice = text.get("choice_id") or ev.get("rule_choice")
     c = next((c for c in ev["candidates"] if c["id"] == choice), None)
-    if not c:
+    if not c or c.get("feasible") is not True:
         return None
     a = c["action"]
+    if a not in ("A_RTL_AFTER_WP", "A_REDUCE_SPEED", "A_RTL_NOW"):
+        return None                         # 未支援的操作不冒充已套用（含就地降落）
     out = {"t": t, "choice_id": choice, "action": a, "label": c["label"], "param": c.get("param"),
            "key": ev["key"], "target": target}
     if a == "A_RTL_AFTER_WP":
-        last = c["param"]
-        out["target"] = list(route[: last + 1])
+        last = c.get("param_pos", c["param"])
+        if not isinstance(last, int) or not 0 <= last < len(target):
+            return None
+        out["target"] = list(target[: last + 1])
         if wp_i >= len(out["target"]):
             out["phase"] = "home"
     elif a == "A_REDUCE_SPEED":
         out["speed"] = c["param"]
-    elif a in ("A_RTL_NOW", "A_LAND_NOW"):
+    elif a == "A_RTL_NOW":
         out["phase"] = "home"
-    elif a == "A_CONTINUE":
-        return None
     return out
 
 

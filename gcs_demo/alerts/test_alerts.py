@@ -46,13 +46,16 @@ class EnergyTests(unittest.TestCase):
 
 class ExplainTests(unittest.TestCase):
     def test_valid_llm_choice_kept(self):
-        d = {"decision": "SELECT", "choice_id": "C4", "reason_zh": "x", "evidence_ids": ["E1", "E9"],
+        # review_0305 第 8 項後，引用必須全部存在：混合 [E1,E9] 改為退回規則（原斷言保留 E1 已作廢）
+        d = {"decision": "SELECT", "choice_id": "C4", "reason_zh": "x", "evidence_ids": ["E1"],
              "summary_zh": "預估落地 5%，建議返航。"}
         r = explain.explain(EV, FakeBackend(d))
         self.assertEqual(r["source"], "llm")
         self.assertEqual(r["text"]["choice_id"], "C4")
         self.assertEqual(r["text"]["evidence_ids"], ["E1"])
         self.assertFalse(r["text"]["rule_agrees"])
+        mixed = explain.explain(EV, FakeBackend(dict(d, evidence_ids=["E1", "E9"])))
+        self.assertEqual(mixed["source"], "rule")
 
     def test_infeasible_choice_falls_back(self):
         d = {"decision": "SELECT", "choice_id": "C1", "reason_zh": "x", "evidence_ids": ["E1"], "summary_zh": "繼續"}
@@ -64,6 +67,13 @@ class ExplainTests(unittest.TestCase):
         self.assertEqual(explain.explain(EV, FakeBackend(d))["source"], "rule")
         d = {"decision": "SELECT", "choice_id": "C3", "reason_zh": "x", "evidence_ids": ["E1"], "summary_zh": "剩 63%"}
         self.assertIn("63", explain.explain(EV, FakeBackend(d))["fallback_reason"])
+
+    def test_simplified_or_field_names_fall_back(self):
+        d = {"decision": "SELECT", "choice_id": "C3", "reason_zh": "x", "evidence_ids": ["E1"],
+             "summary_zh": "电量不足以完成原航线，建议返航。"}
+        self.assertEqual(explain.explain(EV, FakeBackend(d))["fallback_reason"], "說明用了簡體字")
+        d["summary_zh"], d["reason_zh"] = "建議返航。", "missed_required 為 0"
+        self.assertEqual(explain.explain(EV, FakeBackend(d))["fallback_reason"], "說明寫出內部欄位名稱")
 
     def test_backend_down_still_alerts(self):
         r = explain.explain(EV, FakeBackend(None, ok=False))
