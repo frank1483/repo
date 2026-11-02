@@ -64,3 +64,10 @@ eng.set_route(new_route, indices)           # 操作員改航線後通知引擎�
 1. 把 P1–P5 移植成 C++ `GcpPredictiveAlerts`（讀 QGC `Vehicle` 的電池、風、位置與任務航點），事件轉成 `addConditionAlert`，嚴重度用 MAV_SEVERITY（2 緊急、4 警告、5 預告）。
 2. 詳情抽屜加「依據」「建議選項」兩區，建議按鈕走既有的 `GuidedActionsController` 與滑動確認列。
 3. 白話說明由同一個本機模型服務提供（OpenAI 相容 `/v1/chat/completions`），和 UI agent 共用。
+
+## MVP：接真模型（契約 v0.3 第 6 節，2026-11-02）
+
+- 預設後端：沒設 `GCS_LLM_BACKEND` 時，告警經共用閘道 `http://127.0.0.1:8090/f/alerts/v1` 連 `gemma4:e2b`（openai 相容）；`GCS_LLM_BACKEND=none` 可關閉，連不到就退回規則。
+- 分級一律由演算法先出：`typed_explain.LegacyAlertExplainer`（舊多旋翼引擎）與 `TypedAlertExplainer`（typed P1/P2/P3 編排）都是先回規則文字（`rule_pending`），模型說明在背景補上，用 `poll()` 取回；告警版本已變或已解除的回覆一律丟棄。
+- typed 編排目前沒有可執行候選，模型只能寫兩句說明並引用依據，`selected_id` 必須是 null；驗證項目：版本相符、兩句且每句 ≤ 60 字、依據存在、數字逐字出自事實、無內部欄位名、無簡體字、無「一定／保證」等斷言。
+- 冒煙測試：`python3 -m gcs_demo.alerts.mvp_smoke <輸出目錄>`（3 個情境，只在使用者同意後跑一次）；`--fake` 為不連網乾跑。

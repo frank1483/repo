@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 
 from gcs_demo import llm
@@ -25,8 +26,17 @@ SCHEMA = {"required": {"decision": "str", "choice_id": "str", "reason_zh": "str"
                        "evidence_ids": "list", "summary_zh": "str"}}
 
 
+# MVP（契約 v0.3）：告警預設經共用閘道接模型；設 GCS_LLM_BACKEND 時照環境變數（none 可關閉）
+ALERTS_GATEWAY_URL = "http://127.0.0.1:8090/f/alerts/v1"
+ALERTS_MODEL = "gemma4:e2b"
+ALERTS_TIMEOUT_S = 35.0          # 閘道 alerts 預算 30 秒（含排隊），多留 5 秒給連線
+
+
 def get_backend():
-    return llm.get_backend()
+    if os.environ.get("GCS_LLM_BACKEND"):
+        return llm.get_backend()
+    return llm.OpenAICompatBackend(os.environ.get("GCS_LLM_URL") or ALERTS_GATEWAY_URL,
+                                   os.environ.get("GCS_LLM_MODEL") or ALERTS_MODEL)
 
 
 def _facts(ev):
@@ -64,7 +74,7 @@ def rule_text(ev: dict) -> dict:
             "evidence_ids": [e["id"] for e in ev.get("evidence", [])][:2], "summary_zh": s}
 
 
-def explain(ev: dict, backend=None, timeout_s=60) -> dict:
+def explain(ev: dict, backend=None, timeout_s=ALERTS_TIMEOUT_S) -> dict:
     """先建規則結果；後端建立、呼叫、解碼、驗證例外都退回規則。"""
     rule = rule_text(ev)
     log = {"backend": "?", "model": None, "prompt_sha256": None, "ok": False,
