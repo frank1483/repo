@@ -42,8 +42,9 @@ Item {
         property int llmTimeoutMs: 0 // 0 inherits environment/default; panel overrides only when positive.
     }
     readonly property string backend: agentSettings.backend || envValue("GCS_LLM_BACKEND", "openai")
-    readonly property string modelUrl: agentSettings.llmUrl || envValue("GCS_LLM_URL", "")
-    readonly property string modelName: agentSettings.llmModel || envValue("GCS_LLM_MODEL", "")
+    // MVP（llm_contract v0.3）：預設連共用 LLM 閘道；連不到時逾時退回規則。設 GCS_LLM_BACKEND=none 可關閉模型。
+    readonly property string modelUrl: agentSettings.llmUrl || envValue("GCS_LLM_URL", "http://127.0.0.1:8090/f/ui/v1")
+    readonly property string modelName: agentSettings.llmModel || envValue("GCS_LLM_MODEL", "gemma4:e2b")
     readonly property int modelTimeoutMs: resolvedModelTimeoutMs()
     readonly property bool modelAlways: envValue("GCS_AGENT_LLM_ALWAYS", "0") === "1"
     readonly property bool modelEnabled: backend !== "none" && modelUrl !== ""
@@ -911,7 +912,7 @@ Item {
                     Repeater {
                         model: [
                             { key: "backend", label: qsTr("後端（openai／ollama／none）"), value: root.backend },
-                            { key: "llmUrl", label: qsTr("模型網址（Ollama：http://Ubuntu位址:11434）"), value: root.modelUrl },
+                            { key: "llmUrl", label: qsTr("模型網址（預設閘道 http://127.0.0.1:8090/f/ui/v1；Ollama：http://位址:11434）"), value: root.modelUrl },
                             { key: "llmModel", label: qsTr("模型名稱（Ollama：qwen2.5:3b）"), value: root.modelName }
                         ]
                         delegate: TextField {
