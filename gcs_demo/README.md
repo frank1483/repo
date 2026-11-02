@@ -5,12 +5,16 @@
 ```bash
 git clone -b claude/project-thread-ovsufa https://github.com/frank1483/repo.git
 cd repo
-python3 -m gcs_demo.server --port 8765          # 規則模式（不接模型）
+python3 -m gcs_demo.server --port 8765          # MVP 預設：經共用 LLM 閘道接 gemma4:e2b，連不到才退規則
+python3 -m gcs_demo.server --rules-only          # 規則模式（不接模型）
 # 瀏覽器開 http://127.0.0.1:8765/
 python3 -m unittest tests.test_gcs_demo          # 測試
 ```
 
-接模型（三功能共用的可抽換介面，見 `llm.py`）：
+接模型（三功能共用的可抽換介面，見 `llm.py`）。MVP 預設（`server.MVP_LLM_DEFAULTS`）：規劃與重規劃走
+`http://127.0.0.1:8090/f/mission/v1`，報告走 `GCS_LLM_URL_REPORT=http://127.0.0.1:8090/f/report/v1`（逾時 90 秒），
+已設定的環境變數優先。冒煙測試（出發前規劃、重規劃、報告各一次）：`python3 -m gcs_demo.smoke_mvp_mission OUT.json`。
+其他後端：
 
 ```bash
 # vLLM / llama.cpp server / Ollama 的 OpenAI 相容端點

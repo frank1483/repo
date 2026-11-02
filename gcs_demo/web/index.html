@@ -162,7 +162,7 @@ function candTable(cands, pick, onSel, sel) {
 function pickCard(p, ev) {
   const evs = (p.evidence_ids || []).map(id => { const e = ev.find(x => x.id === id); return e ? `<div class="muted">${id}：${e.text}</div>` : ""; }).join("");
   const d = p.decision === "HOLD" ? "<b style='color:var(--warn)'>暫緩（HOLD）</b>，請人工判斷" : `建議 <b>${p.choice_id}</b>`;
-  return `<div class="pick">${d}　<span class="tag ${p.source === "llm" ? "t-llm" : "t-rule"}">${p.source === "llm" ? "模型 " + (p.llm?.model || "") : "規則"}</span><div>${p.reason_zh}</div>${evs}</div>`;
+  return `<div class="pick">${d}　<span class="tag ${p.source === "llm" ? "t-llm" : "t-rule"}">${p.source === "llm" ? "模型 " + (p.llm?.model || "") : (p.llm ? "規則（模型未成功，已退回）" : "規則")}</span><div>${p.reason_zh}</div>${evs}</div>`;
 }
 
 async function doPlan() {
@@ -253,7 +253,7 @@ function renderReport(r) {
   const rep = r.report, s3 = $("#s3"); s3.classList.remove("hide");
   const facts = rep.facts.map(f => `<div class="fact" id="f_${f.id}"><span class="muted">${f.id}</span> ${f.text}</div>`).join("");
   const sugs = rep.suggestions.map(s => `<div class="sug ${s.level || ""}">${s.text_zh}${s.evidence_ids.map(e => `<span class="ev" data-f="${e}">[${e}]</span>`).join("")}</div>`).join("");
-  $("#repOut").innerHTML = `<div class="row"><span class="tag ${rep.source === "llm" ? "t-llm" : "t-rule"}">${rep.source === "llm" ? "模型撰寫（已核對證據）" : "規則撰寫"}</span></div>
+  $("#repOut").innerHTML = `<div class="row"><span class="tag ${rep.source === "llm" ? "t-llm" : "t-rule"}">${rep.source === "llm" ? "模型撰寫（已核對證據）" : (rep.llm ? "規則撰寫（模型未成功，已退回）" : "規則撰寫")}</span></div>
     <p>${rep.summary_zh}</p>${chart(r.planned_curve, [...(window.LOG0 || []), ...r.telemetry])}
     <h2 style="font-size:14px;margin:10px 0 4px">建議</h2>${sugs}
     <h2 style="font-size:14px;margin:10px 0 4px">演算法算出的事實</h2>${facts}

@@ -4,6 +4,7 @@
   GCS_LLM_BACKEND = openai | ollama | none   （預設 none：全部走規則）
   GCS_LLM_URL     = 例 http://127.0.0.1:8000/v1（openai 相容）或 http://127.0.0.1:11434（ollama）
   GCS_LLM_MODEL   = 模型名稱
+  GCS_LLM_URL_<功能>、GCS_LLM_TIMEOUT_<功能>（可選）= 該功能專用網址與逾時，例 GCS_LLM_URL_REPORT
 規則：模型永遠只回 JSON；呼叫失敗或格式不符時回 ok=False，由呼叫端退回規則。
 """
 from __future__ import annotations
@@ -99,7 +100,7 @@ class OpenAICompatBackend(LLMBackend):
         return bool(self.url and self.model)
 
     def complete_json(self, system, user, schema, timeout_s=None):
-        timeout_s = timeout_s or default_timeout()
+        timeout_s = timeout_s or getattr(self, "timeout_s", None) or default_timeout()
         t0 = time.time()
         # 關閉 thinking（Gemma 4 等預設會先思考，吃光輸出上限、content 變空）；不認得的伺服器會忽略
         body = {"model": self.model, "temperature": 0, "max_tokens": 1024,
@@ -123,7 +124,7 @@ class OllamaBackend(LLMBackend):
         return bool(self.url and self.model)
 
     def complete_json(self, system, user, schema, timeout_s=None):
-        timeout_s = timeout_s or default_timeout()
+        timeout_s = timeout_s or getattr(self, "timeout_s", None) or default_timeout()
         t0 = time.time()
         body = {"model": self.model, "stream": False, "format": "json", "think": False,
                 "options": {"temperature": 0, "seed": 17, "num_predict": 1024},
@@ -148,6 +149,20 @@ def get_backend() -> LLMBackend:
     if kind == "ollama":
         return OllamaBackend(url or "http://127.0.0.1:11434", model)
     return LLMBackend()
+
+
+def backend_for(feature: str) -> LLMBackend:
+    """功能專用後端：有 GCS_LLM_URL_<FEATURE> 就換網址，其餘設定沿用 get_backend()。"""
+    b = get_backend()
+    key = feature.upper()
+    url = os.environ.get(f"GCS_LLM_URL_{key}")
+    if url and b.name != "none":
+        b = type(b)(url, b.model)
+    try:
+        b.timeout_s = float(os.environ[f"GCS_LLM_TIMEOUT_{key}"])
+    except (KeyError, ValueError):
+        pass
+    return b
 
 
 def prompt_hash(system: str, user: str) -> str:

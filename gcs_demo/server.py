@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import scenario as S
 from .energy import Vehicle, Wind
-from .llm import get_backend
+from .llm import get_backend, backend_for
 from .planner import plan_mission, replan, check_apply
 from .planner_t3 import replan_context
 from .report import make_report
@@ -108,7 +108,7 @@ def handle(path, body):
             s.current_state = state
             out = {"state": state, "telemetry": s.run.log, "alerts": s.alerts}
             if state["done"]:
-                out.update({"report": make_report(s.run, s.mission, s.chosen, [], s.alerts,
+                out.update({"report": make_report(s.run, s.mission, s.chosen, [], s.alerts, backend=backend_for("report"),
                                                   versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")}),
                             "planned_curve": _curve(s.chosen)})
                 return out
@@ -138,7 +138,7 @@ def handle(path, body):
             n0 = len(s.run.log)
             state = s.run.fly(cand)
             s.current_state = state
-            rep = make_report(s.run, s.mission, s.chosen, s.replans, s.alerts,
+            rep = make_report(s.run, s.mission, s.chosen, s.replans, s.alerts, backend=backend_for("report"),
                               versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")})
             return {"state": state, "telemetry": s.run.log[n0:], "report": rep,
                     "planned_curve": _curve(s.chosen)}
@@ -197,11 +197,33 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+# MVP 預設：經共用 LLM 閘道接真模型（契約 v0.3）；環境變數已設定者優先，--rules-only 回到純規則
+GATEWAY = "http://127.0.0.1:8090"
+MVP_LLM_DEFAULTS = {
+    "GCS_LLM_BACKEND": "openai",
+    "GCS_LLM_URL": GATEWAY + "/f/mission/v1",
+    "GCS_LLM_URL_REPORT": GATEWAY + "/f/report/v1",
+    "GCS_LLM_MODEL": "gemma4:e2b",
+    "GCS_LLM_TIMEOUT": "60",
+    "GCS_LLM_TIMEOUT_REPORT": "90",
+}
+
+
+def apply_mvp_llm_defaults(rules_only=False, environ=os.environ):
+    if rules_only:
+        environ["GCS_LLM_BACKEND"] = "none"
+        return
+    for k, v in MVP_LLM_DEFAULTS.items():
+        environ.setdefault(k, v)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--rules-only", action="store_true", help="不接模型，全部走規則")
     a = ap.parse_args()
+    apply_mvp_llm_defaults(a.rules_only)
     b = get_backend()
     print(f"GCS 任務規劃 demo：http://{a.host}:{a.port}/  （LLM 後端：{b.name} {b.model or ''}）")
     ThreadingHTTPServer((a.host, a.port), Handler).serve_forever()
