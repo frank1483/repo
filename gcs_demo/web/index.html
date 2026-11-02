@@ -210,9 +210,24 @@ async function startFly() {
   });
 }
 
+const ALERT_TAG = {llm: "模型說明", rule_pending: "規則（說明待補）", rule: "規則說明"};
 function alertsHtml(list) {
-  return (list || []).map(a => `<div class="alert ${a.level}"><b>⚠ ${a.title}（${fmtT(a.t_s)}${a.lead_s ? `，約提前 ${Math.round(a.lead_s / 60)} 分鐘` : ""}）</b>
-    <span class="tag ${a.source === "llm" ? "t-llm" : "t-rule"}">${a.source === "llm" ? "模型說明" : "規則說明"}</span><br>${a.text_zh}</div>`).join("");
+  if ((list || []).some(a => a.source === "rule_pending")) pollAlerts();
+  return `<div id="alertBox">` + (list || []).map(a => `<div class="alert ${a.level}"><b>⚠ ${a.title}（${fmtT(a.t_s)}${a.lead_s ? `，約提前 ${Math.round(a.lead_s / 60)} 分鐘` : ""}）</b>
+    <span class="tag ${a.source === "llm" ? "t-llm" : "t-rule"}">${ALERT_TAG[a.source] || "規則說明"}</span><br>${a.text_zh}</div>`).join("") + `</div>`;
+}
+
+// 告警分級先出；模型說明在背景完成後每 2 秒取回一次，最多 60 秒
+let alertPoll = null;
+function pollAlerts() {
+  if (alertPoll) return;
+  let n = 0;
+  alertPoll = setInterval(async () => {
+    const r = await api("api/alerts", {});
+    const box = $("#alertBox");
+    if (box) box.outerHTML = alertsHtml(r.alerts);
+    if (!r.pending || ++n >= 30) { clearInterval(alertPoll); alertPoll = null; }
+  }, 2000);
 }
 
 function renderReplan(r) {

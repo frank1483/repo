@@ -37,5 +37,27 @@ class MvpLlmDefaults(unittest.TestCase):
             self.assertFalse(llm.backend_for("report").available())
 
 
+class AlertExplanationsArriveLater(unittest.TestCase):
+    def test_start_shows_pending_then_poll_fills_in(self):
+        import time
+        with mock.patch.dict(os.environ, {"GCS_LLM_BACKEND": "none"}):
+            srv.SESSION.reset()
+            try:
+                p = srv.handle("/api/plan", {})
+                r = srv.handle("/api/start", {"choice_id": p["pick"]["choice_id"] or p["rule_choice"],
+                                              "mission_version": p["mission_version"]})
+                self.assertTrue(r["alerts"])
+                self.assertTrue(all(a["source"] in ("rule_pending", "rule") for a in r["alerts"]))
+                for _ in range(50):
+                    out = srv.handle("/api/alerts", {})
+                    if not out["pending"]:
+                        break
+                    time.sleep(0.1)
+                self.assertFalse(out["pending"])
+                self.assertEqual({a["source"] for a in out["alerts"]}, {"rule"})
+            finally:
+                srv.SESSION.reset()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -40,6 +40,18 @@ class Session:
         self.alerts = []
         self.current_state = None
         self.active_event = None
+        close = getattr(getattr(self, "feed", None), "explain_fn", None)
+        if close is not None and hasattr(close, "close"):
+            close.close(wait=False)
+        self.feed = None
+
+    def refresh_alerts(self):
+        """取回背景完成的模型說明，重建告警畫面資料（分級先出、說明後補）。"""
+        if self.feed is None or self.chosen is None:
+            return self.alerts
+        self.feed.poll_explanations()
+        self.alerts = [_alert_view(e, self.chosen) for e in self.feed.events if e["type"] != "resolve"]
+        return self.alerts
 
     def vehicle(self):
         return Vehicle(calib=self.calib)
@@ -102,9 +114,10 @@ def handle(path, body):
             s.run = MissionRun(s.vehicle(), s.wind, S.TRUE_CALIB, S.WIND_EVENTS)
             s.replans, s.alerts = [], []
             feed = AlertFeed(s.mission["home"], s.chosen["path"], s.vehicle())
+            s.feed = feed
             # 飛到告警引擎發出「電量不足以飛完／即將到最晚返航點」的預測告警為止
             state = s.run.fly(s.chosen, on_tick=lambda rec, i: battery_raise(feed.tick(rec, i)) is not None)
-            s.alerts = [_alert_view(e, s.chosen) for e in feed.events if e["type"] != "resolve"]
+            s.refresh_alerts()
             s.current_state = state
             out = {"state": state, "telemetry": s.run.log, "alerts": s.alerts}
             if state["done"]:
@@ -138,10 +151,14 @@ def handle(path, body):
             n0 = len(s.run.log)
             state = s.run.fly(cand)
             s.current_state = state
+            s.refresh_alerts()
             rep = make_report(s.run, s.mission, s.chosen, s.replans, s.alerts, backend=backend_for("report"),
                               versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")})
-            return {"state": state, "telemetry": s.run.log[n0:], "report": rep,
+            return {"state": state, "telemetry": s.run.log[n0:], "report": rep, "alerts": s.alerts,
                     "planned_curve": _curve(s.chosen)}
+        if path == "/api/alerts":
+            alerts = s.refresh_alerts()
+            return {"alerts": alerts, "pending": any(a["source"] == "rule_pending" for a in alerts)}
         if path == "/api/apply_calib":
             s.calib = float(body["calib"])
             return {"calib": s.calib}
