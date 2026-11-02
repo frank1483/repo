@@ -7,16 +7,17 @@ from __future__ import annotations
 import math
 
 from .alerts import energy_api
-from .alerts.explain import explain
+from .alerts.typed_explain import LegacyAlertExplainer, legacy_version
 from .alerts.predict import Config, PredictiveAlertEngine, Telemetry
 from .energy import Wind
 
 CELLS = 4
+_DEFAULT_EXPLAIN = object()   # 預設：非同步說明（分級先出、模型說明後補）；傳 None 表示不要說明
 _M = math.pi * 6371000.0 / 180.0
 
 
 class AlertFeed:
-    def __init__(self, home: dict, path: list, vehicle, explain_fn=explain,
+    def __init__(self, home: dict, path: list, vehicle, explain_fn=_DEFAULT_EXPLAIN,
                  typed_geographic=False, typed_raise_ticks=3, typed_clear_ticks=10):
         if not isinstance(typed_geographic, bool):
             raise ValueError("typed_geographic must be boolean")
@@ -39,7 +40,7 @@ class AlertFeed:
         self.engine = PredictiveAlertEngine(self._route(path), (0.0, 0.0, 0.0), vehicle,
                                             Config(reserve_pct=vehicle.reserve_pct, cell_empty_v=3.5),
                                             priorities=prio)
-        self.explain_fn = explain_fn
+        self.explain_fn = LegacyAlertExplainer() if explain_fn is _DEFAULT_EXPLAIN else explain_fn
         self.events = []
 
     def enu(self, lat, lon, alt=0.0):
@@ -83,6 +84,19 @@ class AlertFeed:
                 ev["explain"] = self.explain_fn(ev)
             self.events.append(ev)
         return new
+
+    def poll_explanations(self) -> list:
+        """取回背景完成的模型說明，套回對應的告警事件（版本不符的已在背景丟棄）。"""
+        poll = getattr(self.explain_fn, "poll", None)
+        if poll is None:
+            return []
+        ready = poll()
+        for item in ready:
+            for ev in reversed(self.events):
+                if legacy_version(ev) == item["version"]:
+                    ev["explain"] = item["result"]
+                    break
+        return ready
 
 
 def battery_raise(events) -> dict | None:

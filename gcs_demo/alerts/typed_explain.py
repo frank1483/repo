@@ -250,6 +250,10 @@ class TypedAlertExplainer:
         self.async_.close(wait)
 
 
+def legacy_version(ev: dict) -> str:
+    return f"{ev['key']}|{ev.get('t')}|{ev.get('type')}"
+
+
 class LegacyAlertExplainer:
     """給舊多旋翼引擎（sim.run、AlertFeed 的 explain_fn）用的非同步版本。
 
@@ -270,7 +274,7 @@ class LegacyAlertExplainer:
         if ev.get("type") == "resolve":
             self.async_.retire(ev["key"])
             return None
-        version = f"{ev['key']}|{ev.get('t')}|{ev.get('type')}"
+        version = legacy_version(ev)
         rule = {"text": self._explain.rule_text(ev), "source": "rule_pending", "fallback_reason": None}
         return self.async_.submit(ev["key"], version, rule, ev)
 

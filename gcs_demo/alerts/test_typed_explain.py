@@ -154,6 +154,29 @@ class AsyncTests(unittest.TestCase):
         self.assertEqual(ex.poll()[0]["result"]["source"], "llm")
 
 
+class AlertFeedDefaultTests(unittest.TestCase):
+    def test_alert_feed_default_is_async_and_poll_applies(self):
+        from gcs_demo.alert_bridge import AlertFeed
+        from gcs_demo.energy import load_airframe
+        home = {"lat": 23.0, "lon": 120.0, "alt": 0}
+        path = [home, {**home, "lat": 23.001, "alt": 30}, home]
+        f = AlertFeed(home, path, load_airframe("x500"))
+        self.assertIsInstance(f.explain_fn, tx.LegacyAlertExplainer)
+        self.assertIsNone(AlertFeed(home, path, load_airframe("x500"), explain_fn=None).explain_fn)
+        ev = {"key": "battery_route", "t": 3, "type": "raise", "title": "電量", "value": "預估落地 5%",
+              "evidence": [{"id": "E1", "text": "預估落地", "value": "5%"}],
+              "candidates": [{"id": "C1", "label": "立即返航", "feasible": True}], "rule_choice": "C1"}
+        reply = {"decision": "SELECT", "choice_id": "C1", "reason_zh": "可行。", "evidence_ids": ["E1"],
+                 "summary_zh": "預估落地 5%，建議立即返航。"}
+        f.explain_fn = tx.LegacyAlertExplainer(FakeBackend(reply))
+        ev["explain"] = f.explain_fn(ev)
+        f.events.append(ev)
+        self.assertEqual(ev["explain"]["source"], "rule_pending")
+        f.explain_fn.close(wait=True)
+        self.assertEqual(len(f.poll_explanations()), 1)
+        self.assertEqual(ev["explain"]["source"], "llm")
+
+
 class DefaultBackendTests(unittest.TestCase):
     def test_default_is_gateway(self):
         with mock.patch.dict(os.environ, {}, clear=True):
