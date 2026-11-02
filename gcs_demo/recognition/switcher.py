@@ -7,22 +7,37 @@
 """
 from __future__ import annotations
 
+import os
 import time
 
+from .. import llm as L
 from ..domain_profile import load_classes, load_domains, resolve_domain
 from . import drivers as D
 from . import registry as R
 from . import selector as S
 
 TEST_FRAME = {"frame_id": "warmup", "objects": []}
+GATEWAY_URL = "http://127.0.0.1:8090/f/recognition/v1"
+GATEWAY_MODEL = "gemma4:e2b"
+_DEFAULT = object()
+
+
+def default_backend():
+    """MVP：預設經共用閘道接 Gemma 4 E2B（llm_contract v0.3）。
+    有設 GCS_LLM_BACKEND 就照環境變數（none = 純規則）；連不到時 llm_pick 退回規則並標示。"""
+    if os.environ.get("GCS_LLM_BACKEND"):
+        return L.get_backend()
+    return L.OpenAICompatBackend(os.environ.get("GCS_RECOG_LLM_URL", GATEWAY_URL),
+                                 os.environ.get("GCS_LLM_MODEL", GATEWAY_MODEL))
 
 
 class Switcher:
-    def __init__(self, domains=None, model_dir=R.MODEL_DIR, backend=None, device="demo-host", clock=time.time):
+    def __init__(self, domains=None, model_dir=R.MODEL_DIR, backend=_DEFAULT, device="demo-host", clock=time.time):
         self.alias, self.class_zh = load_classes()
         self.domains = domains or load_domains()
         self.drivers = D.default_drivers(self.alias)
-        self.model_dir, self.device, self.backend, self.clock = model_dir, device, backend, clock
+        self.model_dir, self.device, self.clock = model_dir, device, clock
+        self.backend = default_backend() if backend is _DEFAULT else backend
         self.domain_id = None
         self.model_id = None
         self.session = None
@@ -67,7 +82,8 @@ class Switcher:
                 "domain_name_zh": domain["name_zh"], "ui_template": domain["ui_template"],
                 "model_id": model_id if status != "HOLD" else self.model_id, "source": source,
                 "reason_zh": reason, "evaluation": ev, "judge_ms": ms,
-                "llm": {k: llm_rec.get(k) for k in ("ok", "error", "latency_s")} if llm_rec else None}
+                "llm": {k: llm_rec.get(k) for k in ("ok", "error", "latency_s", "backend", "model")} if llm_rec else None,
+                "backend": getattr(self.backend, "name", "none") if self.backend else "none"}
         self.proposals[pid] = prop
         self._log("propose", text=text, proposal=pid, to_domain=domain_id, to_model=prop["model_id"],
                   status=status, source=source, judge_ms=ms)

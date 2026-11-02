@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -7,7 +8,22 @@ from pathlib import Path
 from gcs_demo import llm
 from gcs_demo.domain_profile import load_domains, resolve_domain
 from gcs_demo.recognition import registry as R
+from gcs_demo.recognition import switcher as SW
 from gcs_demo.recognition.switcher import Switcher
+
+
+def setUpModule():
+    # 單元測試不連模型；預設接閘道的行為由 DefaultBackendTest 另外測
+    global _saved
+    _saved = os.environ.get("GCS_LLM_BACKEND")
+    os.environ["GCS_LLM_BACKEND"] = "none"
+
+
+def tearDownModule():
+    if _saved is None:
+        os.environ.pop("GCS_LLM_BACKEND", None)
+    else:
+        os.environ["GCS_LLM_BACKEND"] = _saved
 
 FRAME = {"frame_id": "f1", "objects": [
     {"class": "crop_disease", "bbox": [0.1, 0.1, 0.1, 0.1]},
@@ -123,7 +139,12 @@ class SwitchTest(unittest.TestCase):
             self.assertFalse(r["ok"])
             self.assertEqual(s.model_id, "stub_agri_v0")
             p2 = s.propose(domain_id="inspection")
-            self.assertEqual(p2["status"], "HOLD")
+            # 被竄改的模型改列排除，改選另一個合格的巡檢模型
+            self.assertEqual((p2["status"], p2["model_id"]), ("SELECT", "stub_inspect_fast_v0"))
+            rej = {r["id"]: r["reasons"] for r in p2["evaluation"]["rejected"]}
+            self.assertIn("SHA256 不符", rej["stub_inspect_v0"])
+            (tmp / "stub_inspect_fast_v0.weights.json").write_text("tampered", encoding="utf-8")
+            self.assertEqual(s.propose(domain_id="inspection")["status"], "HOLD")
         finally:
             shutil.rmtree(tmp)
 
@@ -138,6 +159,28 @@ class SwitchTest(unittest.TestCase):
     def test_judge_under_two_seconds(self):
         p = Switcher().propose("巡檢電線")
         self.assertLess(p["judge_ms"], 2000)
+
+
+class DefaultBackendTest(unittest.TestCase):
+    def test_default_is_gateway_and_unreachable_falls_back_labelled(self):
+        saved = os.environ.pop("GCS_LLM_BACKEND")
+        try:
+            b = SW.default_backend()
+            self.assertEqual((b.name, b.url, b.model),
+                             ("openai", "http://127.0.0.1:8090/f/recognition/v1", "gemma4:e2b"))
+            b.url = "http://127.0.0.1:9"  # 必定連不到
+            p = Switcher(backend=b).propose(domain_id="inspection")
+            self.assertEqual((p["model_id"], p["source"]), ("stub_inspect_v0", "rule"))
+            self.assertIn("退回規則", p["reason_zh"])
+            self.assertFalse(p["llm"]["ok"])
+        finally:
+            os.environ["GCS_LLM_BACKEND"] = saved
+
+    def test_smoke_dry_run_prepares_three(self):
+        from gcs_demo.recognition import smoke_llm
+        items = smoke_llm.prepare()
+        self.assertEqual([i["domain"] for i in items], ["agriculture", "inspection", "multi_uav"])
+        self.assertTrue(all(i["user"] for i in items))
 
 
 if __name__ == "__main__":

@@ -64,23 +64,34 @@ def evaluate(domain, rows, alias, current_model=None, class_zh=None):
 
 
 SCHEMA = {"required": {"decision": "str", "choice_id": "str", "reason_zh": "str", "evidence_ids": "list"}}
+TIMEOUT_S = 30.0  # 閘道 recognition 預算（含排隊）
+
+
+def build_prompt(domain, result):
+    """回傳 (system, user, cid→model_id)。只送演算法算好的數字，模型只能回 cid。"""
+    ids = {c["cid"]: c["id"] for c in result["candidates"]}
+    cands = [{"cid": c["cid"], "name": c["name_zh"], "score": c["score"], "latency_ms": c["latency_ms"],
+              "unmeasured": c["unmeasured"], "pref_coverage": c["pref_coverage"]} for c in result["candidates"]]
+    evidence = [{"id": f"E{i + 1}", "text": f"{c['cid']} 分數 {c['score']}，延遲 {c['latency_ms']} ms，"
+                 f"選配類別涵蓋 {c['pref_coverage']}"} for i, c in enumerate(result["candidates"])]
+    rule_cid = next(c["cid"] for c in result["candidates"] if c["id"] == result["choice"])
+    system = ("你是無人機地面站的辨識模型選擇助理。候選都已由程式檢查過必要類別與延遲。"
+              f"只能從 {sorted(ids)} 中選一個 choice_id，或回 HOLD。只輸出 JSON："
+              '{"decision":"SELECT|HOLD","choice_id":"<cid>","reason_zh":"一句繁體中文","evidence_ids":["E1"]}')
+    user = json.dumps({"domain": domain["name_zh"], "rule_choice": rule_cid, "candidates": cands,
+                       "evidence": evidence}, ensure_ascii=False)
+    return system, user, ids
 
 
 def llm_pick(backend, domain, result):
-    """模型只在候選 cid 內選；回傳 (model_id, source, reason, 紀錄)。沒後端或不合法 → 規則。"""
+    """模型只在候選 cid 內選；回傳 (model_id, source, reason, 紀錄)。沒後端、連不到或不合法 → 規則。"""
     rule = (result["choice"], "rule", result["reason_zh"], None)
     if result["decision"] != "SELECT" or backend is None or not backend.available():
         return rule
-    ids = {c["cid"]: c["id"] for c in result["candidates"]}
-    evidence = [{"id": f"E{i + 1}", "text": f"{c['cid']} 分數 {c['score']}，延遲 {c['latency_ms']} ms，"
-                 f"選配類別涵蓋 {c['pref_coverage']}"} for i, c in enumerate(result["candidates"])]
-    system = ("你是無人機地面站的辨識模型選擇助理。只能從候選 cid 中選一個，或回 HOLD。只輸出 JSON："
-              '{"decision":"SELECT|HOLD","choice_id":"<cid>","reason_zh":"一句繁體中文","evidence_ids":["E1"]}')
-    user = json.dumps({"domain": domain["name_zh"], "candidates": result["candidates"], "evidence": evidence},
-                      ensure_ascii=False)
-    res = backend.complete_json(system, user, SCHEMA)
+    system, user, ids = build_prompt(domain, result)
+    res = backend.complete_json(system, user, SCHEMA, TIMEOUT_S)
     if not res.get("ok"):
-        return rule[:3] + (res,)
+        return (rule[0], "rule", rule[2] + f"（模型無效或連不到：{res.get('error')}，已退回規則）", res)
     d = res["data"]
     if str(d.get("decision", "")).upper() == "HOLD":
         return None, "llm", d.get("reason_zh", ""), res

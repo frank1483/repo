@@ -1,0 +1,23 @@
+{
+ "id": "stub_general_alt_v0",
+ "schema": 0,
+ "name_zh": "通用人車模擬模型（替代）v0",
+ "task": "detect",
+ "runtime": "stub",
+ "file": "stub_general_alt_v0.weights.json",
+ "sha256": "a134d24aa7d03ffb17ffab4ea39febc2a64a35ccc0d96c5f5904ca9408149173",
+ "classes": [
+  "person",
+  "bus"
+ ],
+ "input_size": [
+  640,
+  640
+ ],
+ "latency_ms": {
+  "demo-host": 120
+ },
+ "domain_hint": [],
+ "license": "demo-only (synthetic)",
+ "source": "synthetic"
+}
