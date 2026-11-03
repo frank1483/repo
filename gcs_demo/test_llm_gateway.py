@@ -78,6 +78,7 @@ class GatewayTest(unittest.TestCase):
             self.assertEqual(sent["options"]["temperature"], 0)
             rec = read_log(self.log)[0]
             self.assertEqual(rec["feature"], "mission")
+            self.assertEqual(rec["format_kind"], "json")
             self.assertTrue(rec["ok"])
             self.assertIn("C1", rec["content"])
         finally:
@@ -92,6 +93,7 @@ class GatewayTest(unittest.TestCase):
                 "type": "json_schema", "json_schema": {"name": "x", "schema": schema}}})
             self.assertEqual(st, 200)
             self.assertEqual(fake.seen[0]["format"], schema)
+            self.assertEqual(read_log(self.log)[0]["format_kind"], "json_schema")
         finally:
             srv.shutdown(); fake.close()
 

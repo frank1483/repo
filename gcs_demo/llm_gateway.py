@@ -199,7 +199,9 @@ class Gateway:
                "priority": PRIORITY.get(job.feature, UNKNOWN_PRIORITY),
                "upstream": self.upstream.name, "model": self.upstream.model,
                "prompt_hash": _sha16(job.req.get("messages", [])),
-               "queue_wait_s": round(wait_s, 3), "budget_s": job.budget_s}
+               "queue_wait_s": round(wait_s, 3), "budget_s": job.budget_s,
+               # 有沒有用到約束解碼：json_schema = 候選 ID 等 schema 已交給 Ollama format；json = 只要求 JSON
+               "format_kind": "json_schema" if isinstance(_json_format(job.req), dict) else "json"}
         remaining = job.budget_s - wait_s
         if remaining <= 0.5:
             rec.update(ok=False, error="expired in queue", latency_s=0.0, content="")
