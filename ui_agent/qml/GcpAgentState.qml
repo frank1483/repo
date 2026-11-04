@@ -3,6 +3,8 @@ import QtQuick
 import QtQml
 import QtCore
 import "GcpAgentCore.js" as Core
+import "GcpAgentThemePalette.js" as ThemePalette
+import "GcpAgentThemeHostPolicy.js" as ThemeHostPolicy
 import "GcpAgentSnapshot.js" as AgentSnapshot
 import "GcpAgentHost.js" as AgentHost
 import QGroundControl.GCP
@@ -12,10 +14,135 @@ import QGroundControl.GCP
 QtObject {
     id: root
 
+    // Trusted host configuration only. No model may supply policy or token maps.
+    property var themePolicy: null
+    property var _themeGroups: ({})
+    readonly property var themeGroups: ThemePalette.checkedGroups(_themeGroups)
+    property bool _themeLoadPending: false
+    property var _pendingThemeLayout: null
+    readonly property bool themeReady: themePolicy !== null && !_themeLoadPending
+
+    function _requireThemeLayoutReady() {
+        if (_themeLoadPending) throw new Error("saved theme awaits trusted host policy; original retained")
+    }
+    function _checkedTheme(groups, policy) {
+        const clean = ThemePalette.checkedGroups(groups === undefined ? {} : groups)
+        if (Object.keys(clean).length && (!policy || !ThemePalette.verify(clean, policy).pass))
+            throw new Error("theme policy or contrast unavailable")
+        return clean
+    }
+    function _writeThemeGroups(groups) {
+        const clean = _checkedTheme(groups, themePolicy)
+        // Theme never imports State; avoid a singleton construction cycle.
+        GcpTheme.color.setAgentThemeGroups(clean)
+        _themeGroups = clean
+        revision++
+    }
+    // User-selected initial values (0392); host may explicitly adjust later.
+    // Pair evidence and source identity are still required: defaults never enable alone.
+    function configureHostThemePolicy(sourceThemeSha256, pairs, values) {
+        const selected = values === undefined ? {} : values
+        if (!selected || typeof selected !== "object" || Array.isArray(selected))
+            throw new Error("host policy values object required")
+        for (const key of Object.keys(selected))
+            if (key !== "minimumHueDistance" && key !== "relativeAmount")
+                throw new Error("unknown host policy value")
+        configureThemePolicy({
+            sourceThemeSha256: sourceThemeSha256,
+            scope: "host-declared-static-pairs",
+            pairs: pairs,
+            minimumHueDistance: Object.prototype.hasOwnProperty.call(selected, "minimumHueDistance") ? selected.minimumHueDistance : 20,
+            relativeAmount: Object.prototype.hasOwnProperty.call(selected, "relativeAmount") ? selected.relativeAmount : 0.03
+        })
+    }
+    function configureThemePolicy(policy) {
+        if (_groupActive) throw new Error("cannot replace theme policy during a transaction")
+        ThemePalette.policyKey(policy)
+        const cleanPolicy = JSON.parse(JSON.stringify(policy))
+        _checkedTheme(_themeGroups, cleanPolicy)
+        for (const entry of undoStack.concat(redoStack)) _checkedTheme(entry.snap.themeGroups, cleanPolicy)
+        if (_pendingThemeLayout) _checkedTheme(_pendingThemeLayout.themeGroups, cleanPolicy)
+        const oldPolicy = themePolicy
+        const beforeResume = snapshot()
+        themePolicy = cleanPolicy
+        try {
+            if (_pendingThemeLayout) {
+                _restore(_pendingThemeLayout, true)
+                _pendingThemeLayout = null
+                _themeLoadPending = false
+                _savedFingerprint = layoutFingerprint()
+            }
+        } catch (e) {
+            themePolicy = oldPolicy
+            _restore(beforeResume, true)
+            throw e
+        }
+        revision++
+    }
+    function previewThemeAction(action) {
+        _requireThemeLayoutReady()
+        return ThemePalette.preview(_themeGroups, action, themePolicy)
+    }
+    function previewThemeInput(group, input) {
+        _requireThemeLayoutReady()
+        return ThemePalette.fromInput(_themeGroups, group, input, themePolicy)
+    }
+    function applyThemeProposal(proposal, confirmed) {
+        _requireThemeLayoutReady()
+        const groups = ThemePalette.validatedCommit(_themeGroups, proposal, themePolicy, confirmed)
+        const checkpoint = beginGroup()
+        try {
+            _writeThemeGroups(groups)
+            commitGroup(checkpoint, qsTr("調整主題色彩"), "theme")
+        } catch (e) { rollbackGroup(checkpoint); throw e }
+    }
+    // Fixed app shortcut; model output cannot choose actions or policy for this bundle.
+    function previewThemeHighContrast() {
+        _requireThemeLayoutReady()
+        let groups = ThemePalette.checkedGroups(_themeGroups)
+        const actions = [{group:"background",color:"#000000"}, {group:"text",color:"#FFFFFF"}, {group:"accent",color:"#00FFFF"}]
+        const rows = []
+        for (const action of actions) {
+            const value = ThemePalette.preview(groups, action, themePolicy)
+            if (value.kind !== "confirm") throw new Error("high contrast shortcut unavailable")
+            rows.push({group: action.group, requested: value.requested, actual: value.actual})
+            groups = value.groups
+        }
+        const verified = ThemePalette.verify(groups, themePolicy)
+        if (!verified.pass) throw new Error("high contrast final recheck failed")
+        return {kind:"high_contrast", basis:ThemePalette.fingerprint(_themeGroups),
+            policyKey:ThemePalette.policyKey(themePolicy), groups:groups, rows:rows}
+    }
+    function applyThemeHighContrast(proposal, confirmed) {
+        _requireThemeLayoutReady()
+        if (confirmed !== true || !proposal || proposal.kind !== "high_contrast") throw new Error("explicit confirmation required")
+        const again = previewThemeHighContrast()
+        if (proposal.basis !== again.basis || proposal.policyKey !== again.policyKey ||
+            ThemePalette.fingerprint(proposal.groups) !== ThemePalette.fingerprint(again.groups) ||
+            JSON.stringify(proposal.rows) !== JSON.stringify(again.rows)) throw new Error("stale or altered high contrast proposal")
+        const checkpoint = beginGroup()
+        try {
+            _writeThemeGroups(again.groups)
+            commitGroup(checkpoint, qsTr("高對比色彩"), "theme")
+        } catch (e) { rollbackGroup(checkpoint); throw e }
+    }
+    function resetTheme(confirmed) {
+        _requireThemeLayoutReady()
+        if (confirmed !== true) throw new Error("explicit theme reset confirmation required")
+        if (!Object.keys(_themeGroups).length) return false
+        const checkpoint = beginGroup()
+        try {
+            _writeThemeGroups({})
+            commitGroup(checkpoint, qsTr("復原預設色彩"), "theme")
+        } catch (e) { rollbackGroup(checkpoint); throw e }
+        return true
+    }
+
     // 由 GcpMainShell 提供：agentLocation() → {page, section}；agentGoTo(page, section) → bool
     property var shell: null
     readonly property real textScale: GcpTheme.font.textScale
     function setTextScale(value) {
+        _requireThemeLayoutReady()
         if (Core.TEXT_SCALES.indexOf(value) < 0) throw new Error("invalid text scale")
         GcpTheme.font.textScale = value
         revision++
@@ -28,23 +155,36 @@ QtObject {
 
     property bool _savedLoaded: false
     property bool _savedCorrupt: false
-    property string _savedFingerprint: '{"overrides":{},"textScale":1}'
-    readonly property bool hasUnsavedChanges: revision >= 0 && layoutFingerprint() !== _savedFingerprint
+    property string _savedFingerprint: '{"overrides":{},"textScale":1,"themeGroups":{}}'
+    readonly property bool hasUnsavedChanges: revision >= 0 && !_themeLoadPending && layoutFingerprint() !== _savedFingerprint
     function layoutFingerprint() {
         const ordered = {}
         for (const id of Object.keys(_overrides).sort()) {
             const o = _overrides[id]
             ordered[id] = { rx: o.rx, ry: o.ry, scale: o.scale, hidden: o.hidden }
         }
-        return JSON.stringify({ overrides: ordered, textScale: textScale })
+        return JSON.stringify({ overrides: ordered, textScale: textScale, themeGroups: ThemePalette.checkedGroups(_themeGroups) })
     }
-    Component.onCompleted: loadSavedLayout()
+    Component.onCompleted: {
+        // Installed host policy only. Model values cannot supply pairs or thresholds.
+        try { configureHostThemePolicy(ThemeHostPolicy.SOURCE_THEME_SHA256, ThemeHostPolicy.pairs()) }
+        catch (e) { console.warn("Theme host policy unavailable: " + e.message) }
+        loadSavedLayout()
+    }
     function loadSavedLayout() {
         if (_savedLoaded) return
         _savedLoaded = true
         if (!_layoutSettings.savedLayoutJson) { _savedFingerprint = layoutFingerprint(); return }
         try {
             const saved = checkedLayout(JSON.parse(_layoutSettings.savedLayoutJson))
+            if (Object.keys(saved.themeGroups).length && (!themePolicy || !ThemePalette.verify(saved.themeGroups, themePolicy).pass)) {
+                _pendingThemeLayout = saved
+                _themeLoadPending = true
+                _savedFingerprint = layoutFingerprint()
+                revision++
+                return // Retain raw settings and defer, never label missing policy as corruption.
+            }
+            _writeThemeGroups(saved.themeGroups)
             // Restore layout only; opening a saved flight screen is not a startup side effect.
             _overrides = saved.overrides
             GcpTheme.font.textScale = saved.textScale
@@ -60,6 +200,7 @@ QtObject {
     }
     function saveCurrentLayout() {
         loadSavedLayout()
+        _requireThemeLayoutReady()
         if (_groupActive) throw new Error("change group still active")
         if (_savedCorrupt) throw new Error("saved layout is corrupt; original retained; recovery required")
         const snap = snapshot()
@@ -95,7 +236,8 @@ QtObject {
         }
         const scale = snap.textScale === undefined ? 1 : snap.textScale
         if (Core.TEXT_SCALES.indexOf(scale) < 0) throw new Error("invalid text scale")
-        return { layoutVersion: 2, page: snap.page, section: snap.section, overrides: clean, textScale: scale }
+        return { layoutVersion: 2, page: snap.page, section: snap.section, overrides: clean, textScale: scale,
+                 themeGroups: ThemePalette.checkedGroups(snap.themeGroups === undefined ? {} : snap.themeGroups) }
     }
 
     function saveLayout(name) {
@@ -113,15 +255,19 @@ QtObject {
         return checkedLayout(store[name])
     }
     function applyLayout(name) {
+        _requireThemeLayoutReady()
         const snap = namedLayout(name)
+        _checkedTheme(snap.themeGroups, themePolicy)
         if (!shell || !shell.agentGoTo(snap.page, snap.section)) throw new Error("layout page denied")
         _restore(snap, true)
     }
 
     function defaultLayout() {
+        _requireThemeLayoutReady()
         const snap = snapshot()
         snap.overrides = {}
         snap.textScale = 1
+        snap.themeGroups = {}
         _restore(snap)
     }
 
@@ -234,6 +380,7 @@ QtObject {
     }
 
     function setOverride(id, ov) {
+        _requireThemeLayoutReady()
         const policy = Core.MODULES.filter(m => m.id === id)[0]
         const b = baseBox(id)
         if (!policy || (policy.locked && ov.hidden)) throw new Error("invalid or locked module")
@@ -286,10 +433,12 @@ QtObject {
     // ------------------------------------------------------------ 快照與復原
     function snapshot() {
         const loc = shell && shell.agentLocation ? shell.agentLocation() : { page: -1, section: -1 }
-        return { layoutVersion: 2, page: loc.page, section: loc.section, overrides: JSON.parse(JSON.stringify(_overrides)), textScale: textScale }
+        return { layoutVersion: 2, page: loc.page, section: loc.section, overrides: JSON.parse(JSON.stringify(_overrides)), textScale: textScale,
+                 themeGroups: ThemePalette.checkedGroups(_themeGroups) }
     }
 
     function _restore(snap, skipNavigation) {
+        _writeThemeGroups(snap.themeGroups === undefined ? {} : snap.themeGroups)
         const ids = {}
         for (const id in _overrides) ids[id] = true
         for (const id in snap.overrides) ids[id] = true
@@ -302,6 +451,7 @@ QtObject {
 
     // 套用一個變更前呼叫：記下目前狀態，並清掉重做堆疊
     function beginChange(label, kind) {
+        _requireThemeLayoutReady()
         _cancelRedo = redoStack.slice()
         undoStack = undoStack.concat([{ label: label, kind: kind || "layout", snap: snapshot() }])
         redoStack = []
@@ -311,6 +461,7 @@ QtObject {
     property bool _groupActive: false
     property var _activeGroupCheckpoint: null
     function beginGroup() {
+        _requireThemeLayoutReady()
         if (_groupActive) throw new Error("nested change group")
         const checkpoint = { snap: snapshot(), undo: undoStack.slice(), redo: redoStack.slice() }
         _activeGroupCheckpoint = checkpoint
@@ -356,6 +507,7 @@ QtObject {
     }
 
     function undo(steps) {
+        _requireThemeLayoutReady()
         let n = Math.max(1, steps || 1)
         const labels = []
         while (n-- > 0 && undoStack.length) {
@@ -370,6 +522,7 @@ QtObject {
     }
 
     function redo() {
+        _requireThemeLayoutReady()
         if (!redoStack.length) return ""
         const entry = redoStack[redoStack.length - 1]
         redoStack = redoStack.slice(0, -1)
@@ -381,8 +534,10 @@ QtObject {
 
     // 回到 agent 第一次介入前；這個動作本身也能再復原
     function resetAll() {
-        if (!undoStack.length && Object.keys(_overrides).length === 0 && textScale === 1) return false
-        const first = undoStack.length ? undoStack[0].snap : { page: -1, section: -1, overrides: {}, textScale: 1 }
+        _requireThemeLayoutReady()
+        if (!undoStack.length && Object.keys(_overrides).length === 0 && textScale === 1 && !Object.keys(_themeGroups).length) return false
+        const first = undoStack.length ? JSON.parse(JSON.stringify(undoStack[0].snap)) : { page: -1, section: -1, overrides: {}, textScale: 1 }
+        first.themeGroups = {}
         beginChange(qsTr("全部復原"))
         _restore(first)
         return true

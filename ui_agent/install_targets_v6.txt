@@ -41,3 +41,4 @@ GCP/GcpWeatherForecastRow.qml
 GCP/Home/GcpHomeScreen.qml
 GCP/Safety/GcpSafetyDraftField.qml
 GCS_開發交接與變更紀錄.md
+GCP/GcpThemeColor.qml

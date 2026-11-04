@@ -20,6 +20,94 @@ Item {
 
     // GcpMainShell 傳入：agentLocation()、agentGoTo(page, section)、agentPageName(page)
     property var shell: null
+    // Notification only: the built-in backend adapter owns transport. Returned data is {group,color}.
+    signal themeColorRequested(var request)
+    function receiveThemeModelValue(action, requestId) {
+        return themeEditor.receiveModelValue(action, requestId)
+    }
+    property var _cancelThemeModel: null
+    property int _themeModelGeneration: 0
+    function cancelThemeModel() {
+        _themeModelGeneration++
+        if (_cancelThemeModel) _cancelThemeModel()
+    }
+    function requestThemeModel(request) {
+        cancelThemeModel()
+        if (!open || !themeEditor.visible || !themeEditor._request || themeEditor._request.id !== request.id) return false
+        if (!modelEnabled || (backend !== "openai" && backend !== "ollama")) {
+            themeEditor.receiveModelError(request.id, qsTr("模型未啟用，請改用取色器或明確色碼。"))
+            return false
+        }
+        const generation = _themeModelGeneration, requestId = request.id
+        const requestBackend = backend, requestUrl = modelUrl.replace(/\/+$/, ""), requestModel = modelName
+        const requestTimeout = modelTimeoutMs, requestKey = envValue("GCS_LLM_API_KEY", "")
+        const schema = {type:"object", additionalProperties:false, required:["group","color"], properties:{
+            group:{type:"string", enum:[request.group]}, color:{type:"string", pattern:"^#[0-9A-Fa-f]{6}$"}}}
+        const messages = [{role:"system",content:"Suggest one UI color value only. Return exactly JSON {group,color}; color must be #RRGGBB. Do not return instructions, policy, tokens or actions. The application validates and asks the user to confirm."},
+            {role:"user",content:JSON.stringify({group:request.group,description:request.text})}]
+        let xhr = null, finished = false, fallbackSent = false
+        function cleanup() {
+            finished = true
+            themeTimeoutTimer.stop(); themeTimeoutTimer.onFire = null
+            root._cancelThemeModel = null
+        }
+        function fail(reason) {
+            if (finished || generation !== root._themeModelGeneration) return
+            cleanup()
+            themeEditor.receiveModelError(requestId, reason)
+        }
+        root._cancelThemeModel = function() {
+            if (finished) return
+            cleanup()
+            if (xhr) xhr.abort()
+        }
+        themeTimeoutTimer.onFire = function() {
+            const active = xhr
+            fail(qsTr("色值提議等待逾時，請重試或使用取色器。"))
+            if (active) active.abort()
+        }
+        themeTimeoutTimer.interval = requestTimeout
+        themeTimeoutTimer.restart()
+        function send(useSchema) {
+            if (finished || generation !== root._themeModelGeneration) return
+            const current = new XMLHttpRequest()
+            xhr = current
+            const body = requestBackend === "ollama" ? {model:requestModel,messages:messages,stream:false,format:schema,options:{temperature:0}} :
+                {model:requestModel,messages:messages,temperature:0,max_tokens:120,response_format:useSchema ?
+                    {type:"json_schema",json_schema:{name:"gcp_theme_color",strict:false,schema:schema}} : {type:"json_object"}}
+            current.onreadystatechange = function() {
+                if (finished || generation !== root._themeModelGeneration || current !== xhr || current.readyState !== XMLHttpRequest.DONE) return
+                if (requestBackend !== "ollama" && useSchema && current.status === 400 && !fallbackSent) {
+                    fallbackSent = true; send(false); return
+                }
+                if (current.status < 200 || current.status >= 300) { fail(qsTr("無法取得色值提議，請重試或使用取色器。")); return }
+                try {
+                    const response = JSON.parse(current.responseText)
+                    const content = requestBackend === "ollama" ? response.message.content : response.choices[0].message.content
+                    if (typeof content !== "string" || content.length > 4096) throw new Error("invalid content")
+                    const action = JSON.parse(content)
+                    // Editor checks exact keys, group, hex, policy, navigation and revision.
+                    cleanup()
+                    root.receiveThemeModelValue(action, requestId)
+                } catch (e) { fail(qsTr("色值回覆格式不符，保留目前色彩。")) }
+            }
+            try {
+                current.open("POST", requestUrl + (requestBackend === "ollama" ? "/api/chat" : "/chat/completions"))
+                current.setRequestHeader("Content-Type", "application/json")
+                if (requestKey) current.setRequestHeader("Authorization", "Bearer " + requestKey)
+                current.send(JSON.stringify(body))
+            } catch (e) { fail(qsTr("無法建立色值請求，請使用取色器。")); current.abort() }
+        }
+        send(requestBackend === "ollama" || envValue("GCS_LLM_SCHEMA", "1") === "1")
+        return true
+    }
+    Timer {
+        id: themeTimeoutTimer
+        property var onFire: null
+        repeat: false
+        onTriggered: if (onFire) onFire()
+    }
+
     // Trusted shell configuration; never populated from model output or environment.
     // No inferred readable minimums or repair permissions.
     property var readableViewport: null
@@ -49,6 +137,8 @@ Item {
     readonly property bool modelAlways: envValue("GCS_AGENT_LLM_ALWAYS", "0") === "1"
     readonly property bool modelEnabled: backend !== "none" && modelUrl !== ""
 
+    property int _dismissedUnsavedRevision: -1
+    property bool themeEditorOpen: false
     property bool open: false
     property bool busy: false
     property string statusText: ""
@@ -99,6 +189,7 @@ Item {
 
     onOpenChanged: {
         if (!open) {
+            themeEditor.cancel()
             clearConfirmation()
             pendingText = ""
             choices = []
@@ -142,6 +233,7 @@ Item {
         text = String(text || "").trim()
         if (/^(取消|算了|cancel)[。！!]?$/i.test(text)) { cancelWaiting(); return }
         if (!text || busy) return
+        themeEditor.cancel()
         modelNotice = ""
         clearConfirmation()
         choices = []
@@ -712,6 +804,7 @@ Item {
 
     Component.onDestruction: {
         _destroying = true
+        cancelThemeModel()
         if (_readableSession) _readableSession.cancel()
         readableTick.stop()
         if (_cancelModel) _cancelModel()
@@ -883,11 +976,42 @@ Item {
                 color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale)
             }
 
+            Button {
+                objectName: "agent_theme_toggle"
+                visible: root._confirmation === null
+                text: root.themeEditorOpen ? qsTr("返回一般助理") : qsTr("調整介面色彩")
+                font.pixelSize: 18 * GcpTheme.font.textScale
+                enabled: !root.busy
+                onClicked: { themeEditor.cancel(); root.themeEditorOpen = !root.themeEditorOpen }
+            }
+            // Dedicated viewport: ordinary input/chips/history do not compete with color cards.
+            ScrollView {
+                id: themeBody
+                objectName: "agentThemeScroll"
+                visible: root.themeEditorOpen && root._confirmation === null
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 0
+                contentWidth: availableWidth
+                contentHeight: themeEditor.implicitHeight
+                clip: true
+                GcpAgentThemeEditor {
+                    id: themeEditor
+                    objectName: "agent_theme_editor"
+                    width: Math.max(0, themeBody.availableWidth - 16)
+                    height: implicitHeight
+                    visible: root.themeEditorOpen && root._confirmation === null
+                    enabled: !root.busy
+                    shell: root.shell
+                    onModelColorRequested: function(request) { root.requestThemeModel(request); root.themeColorRequested(request) }
+                    onModelColorCancelled: root.cancelThemeModel()
+                }
+            }
             // Bounded settings pane: timeout controls must not push the intent input off-screen.
             ScrollView {
                 id: ordinaryBody
                 objectName: "agentBodyScroll"
-                visible: root._confirmation === null
+                visible: root._confirmation === null && !root.themeEditorOpen
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: 0
@@ -1133,24 +1257,26 @@ Item {
                 }
             }
 
-            Text {
-                objectName: "agentUnsavedLayout"
+            Flow {
                 Layout.fillWidth: true
-                visible: GcpAgentState.hasUnsavedChanges
-                text: qsTr("未儲存")
-                color: root.cWarn; font.pixelSize: (20 * GcpTheme.font.textScale)
+                spacing: 8
+                visible: GcpAgentState.hasUnsavedChanges && root._dismissedUnsavedRevision !== GcpAgentState.revision
+                Text { objectName: "agentUnsavedLayout"; text: qsTr("未儲存版面與色彩"); color: root.cWarn; font.pixelSize: 20 * GcpTheme.font.textScale }
+                Button { objectName: "agentUnsavedUndo"; text: qsTr("復原"); font.pixelSize: 18 * GcpTheme.font.textScale; enabled: !root.busy && GcpAgentState.canUndo; onClicked: root.execute({kind:"undo",steps:1}, "") }
+                Button { objectName: "agentUnsavedDismiss"; text: "×"; Accessible.name: qsTr("收起未儲存提示"); font.pixelSize: 18 * GcpTheme.font.textScale; onClicked: root._dismissedUnsavedRevision = GcpAgentState.revision }
             }
             Button {
                 objectName: "agentSaveLayout"
-                text: qsTr("儲存版面")
+                text: qsTr("儲存版面與色彩")
                 font.pixelSize: (20 * GcpTheme.font.textScale)
                 enabled: root.canSaveLayout
                 onClicked: root.execute({ kind: "layout_save_current" }, qsTr("使用者儲存"))
             }
             // 變更紀錄與復原
-            Text { objectName: "agentHistoryHeading"; text: qsTr("變更紀錄"); color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale) }
+            Text { objectName: "agentHistoryHeading"; visible: !root.themeEditorOpen; text: qsTr("變更紀錄"); color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale) }
             ListView {
                 id: historyList
+                visible: !root.themeEditorOpen
                 Layout.fillWidth: true
                 // Compact fixed footer; full history remains scrollable inside this list.
                 Layout.preferredHeight: root._confirmation !== null ? 32 : 64

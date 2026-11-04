@@ -1,0 +1,548 @@
+diff --git a/GCP/GcpThemeColor.qml b/GCP/GcpThemeColor.qml
+--- a/GCP/GcpThemeColor.qml
++++ b/GCP/GcpThemeColor.qml
+@@ -1,265 +1,279 @@
+-import QtQuick
+-
+-// GcpTheme.qml 的顏色分組，拆成具名元件讓 qmllint 能解析成員型別。
+-QtObject {
+-    // 主色（cyan-400）：強調文字、圖示、HUD 刻度與數值
+-    readonly property color primary: "#00D3F2"
+-    // cyan-500：選中底色（20%）、實心主要按鈕
+-    readonly property color primaryStrong: "#00B8DB"
+-    // 選中項目的內陰影 25% 與 3px 強調條光暈 80%（呼叫端自行套用透明度）
+-    readonly property color selectionGlow: "#06B6D4"
+-
+-    // 整頁背景（不透明）
+-    readonly property color bgBase: "#000000"
+-    readonly property color bgSurface: "#0A0A0A"
+-    // 安全設定頁底（Prototype Safety.png 取樣 #070B10）
+-    readonly property color bgPageSafety: "#070B10"
+-    // 媒體庫影片預覽區底（Prototype Media.png 取樣 #141F2E）
+-    readonly property color mediaVideoBackground: "#141F2E"
+-    // 地圖與 3D 畫布維持不透明背景，不套玻璃效果
+-    readonly property color bgCanvas: "#0A0F12"
+-    // 影像訊號尚未接通時的中性灰底，取自 Figma GCP/Flight/VideoSignalState。
+-    readonly property color videoSignalBackground: neutral600
+-
+-    // 玻璃感面板：黑 60% + 背景模糊 24（GcpPanel 用；效能不足時退回 panelFallbackFill）
+-    readonly property color panelFill: Qt.rgba(0, 0, 0, 0.6)
+-    readonly property color panelFallbackFill: Qt.rgba(0, 0, 0, 0.8)
+-    // 疊在其他浮動元件上方的彈出面板（例如即時飛行「更多操作」）：不透明度 95%，避免底下酬載列透出造成文字重疊
+-    readonly property color panelPopupFill: Qt.rgba(0.04, 0.05, 0.07, 0.96)
+-    readonly property real  panelBlurRadius: 24
+-    readonly property color panelBorder: Qt.rgba(1, 1, 1, 0.1)
+-    // 面板內的卡片、列表列
+-    readonly property color bgCard: Qt.rgba(1, 1, 1, 0.05)
+-    // 面板內的輸入框、下拉框
+-    readonly property color bgInput: Qt.rgba(0, 0, 0, 0.4)
+-    // 所有分隔線與邊框
+-    readonly property color borderDefault: Qt.rgba(1, 1, 1, 0.1)
+-
+-    // 文字層級：標題與數值 / 次要內容 / 標籤 / 說明 / 停用
+-    readonly property color textPrimary: Qt.rgba(1, 1, 1, 1.0)
+-    readonly property color textSecondary: Qt.rgba(1, 1, 1, 0.7)
+-    readonly property color textLabel: Qt.rgba(1, 1, 1, 0.5)
+-    readonly property color textDescription: Qt.rgba(1, 1, 1, 0.4)
+-    readonly property color textDisabled: Qt.rgba(1, 1, 1, 0.3)
+-    // 淺色主要按鈕底（primaryStrong）上用的深色文字，規格沒有另外定義，
+-    // 對應新版 Figma token color_on_primary（深青黑，跟 bgBase 區分開避免混淆用途）。
+-    // 2026-10-10 依新版 Figma token color_on_primary 更新（原值 #050505 取自舊匯出稿）。
+-    readonly property color textOnPrimary: "#06222A"
+-    // Toggle 關閉狀態的軌道底色（白 20%），取自 Figma GCP/Input/Toggle 匯出稿
+-    // （`#33ffffff`），規格沒有另外定義，數值跟既有的 bgCard（白 5%）／
+-    // borderDefault（白 10%）／textDisabled（白 30%）都不同，故獨立命名。
+-    readonly property color bgToggleOff: Qt.rgba(1, 1, 1, 0.2)
+-    // 設定列面板底色（黑 50%），取自 Figma GCP/System/SettingRow 匯出稿
+-    // （`#80050608`，rgb 幾乎是純黑，判斷是取樣誤差），規格沒有另外定義，
+-    // 數值跟既有的 bgInput（黑 40%）／panelFill（黑 60%）都不同，故獨立命名。
+-    readonly property color bgSettingRow: Qt.rgba(0, 0, 0, 0.5)
+-
+-    // 狀態色：正常、警告、嚴重
+-    readonly property color statusSuccess: "#4ADE80"
+-    readonly property color statusWarning: "#FBBF24"
+-    readonly property color statusCritical: "#EF4444"
+-
+-    // GPS 定位狀態專用色（與上面的一般狀態色分開定義，不可混用）
+-    // 無定位＝紅、2D／RTK Float＝黃、3D／DGPS＝綠、RTK Fixed＝主色青
+-    readonly property color gpsNone: "#FF5B5B"
+-    readonly property color gpsWeak: "#F6C344"
+-    readonly property color gpsGood: "#05DF72"
+-    readonly property color gpsFixed: primary
+-
+-    // Telemetry summary metric accents sampled from Figma GCP_Telemetry_MetricCard tones.
+-    readonly property color telemetryMetricGreen: "#22C55E"
+-    readonly property color telemetryMetricBlue: "#3C8CF2"
+-    readonly property color telemetryMetricOrange: "#F58014"
+-
+-    // ── 2026-10-10 新版 Figma「GCP Tokens」補入（P1a）────────────────────────────
+-    // 既有成員與 Figma token 的對應：primary=color_primary、primaryStrong=color_primary_strong、
+-    // bgBase/bgSurface/bgCard/bgInput=color_bg_*、panelFill=color_bg_panel（黑 60%）、
+-    // borderDefault=color_border_default、textPrimary/textSecondary=color_text_*、
+-    // textLabel=color_text_tertiary（白 50%）、textDescription=color_text_muted（白 40%）、
+-    // textDisabled=color_text_disabled、statusSuccess/Warning/Critical=color_status_*。
+-    // Figma 值為 #AARRGGBB，這裡照原值寫，不另外換算。
+-
+-    // 浮起的不透明面板底（color_bg_elevated）
+-    readonly property color bgElevated: "#0F1113"
+-    // 疊層表面：白 4% / 7% / 10%（color_surface_1/2/3），由淺到深用於巢狀卡片與 hover
+-    readonly property color surface1: "#0AFFFFFF"
+-    readonly property color surface2: "#12FFFFFF"
+-    readonly property color surface3: "#1AFFFFFF"
+-
+-    // 主色淡底（12%）與主色邊框（70%）：選中卡片、選中下拉項（color_primary_subtle/border）
+-    readonly property color primarySubtle: "#1F00D3F2"
+-    readonly property color primaryBorder: "#B200D3F2"
+-
+-    // 一般圖示預設色（color_icon_default，白 50%）
+-    readonly property color iconDefault: "#80FFFFFF"
+-    // 細線、刻度輔助線（color_line_subtle）
+-    readonly property color lineSubtle: "#808A94"
+-    // 中性灰階（color_neutral_300/500/600）
+-    readonly property color neutral300: "#B2B8BD"
+-    readonly property color neutral500: "#8C9196"
+-    readonly property color neutral600: "#666B73"
+-    // 地圖上禁航／遮蔽區塊（color_map_block，75%）
+-    readonly property color mapBlock: "#BF0E1F1B"
+-
+-    // HUD（color_hud_*）：主刻度與數值、次要刻度（72%）、速度/高度帶底、目標標記
+-    readonly property color hudPrimary: primary
+-    readonly property color hudSecondary: "#B800D3F2"
+-    readonly property color hudTape: "#616970"
+-    readonly property color hudTarget: "#FF66E5"
+-
+-    // 其他狀態色：資訊、已確認（告警 ACK）、離線、停用（color_status_info/ack/offline/disabled）
+-    readonly property color statusInfo: primary
+-    readonly property color statusAck: "#60A5FA"
+-    readonly property color statusOffline: "#616970"
+-    readonly property color statusDisabled: "#40454A"
+-    // 狀態色的淡底與邊框（color_status_{success,warning,critical}_{subtle,border}）
+-    readonly property color statusSuccessSubtle: "#244ADE80"
+-    readonly property color statusSuccessBorder: "#804ADE80"
+-    readonly property color statusWarningSubtle: "#29FBBF24"
+-    readonly property color statusWarningBorder: "#73FBBF24"
+-    readonly property color statusCriticalSubtle: "#1AEF4444"
+-    readonly property color statusCriticalBorder: "#80EF4444"
+-
+-    // 停用控制項整體透明度（opacity_disabled = 0.45）
+-    readonly property real opacityDisabled: 0.45
+-
+-    // 導覽選單高對比配色（Figma collection「GCP Menu High Contrast」，Launcher 與頂端下拉選單用）
+-    readonly property color menuAccent: "#00E5FF"
+-    readonly property color menuBg: "#080D12"
+-    readonly property color menuSurface: "#0B1117"
+-    readonly property color menuButtonDefaultBg: "#0E151C"
+-    readonly property color menuButtonDefaultStroke: "#526270"
+-    readonly property color menuButtonActiveBg: "#07303A"
+-    readonly property color menuButtonActiveStroke: "#00E5FF"
+-    readonly property color menuButtonFeaturedBg: "#08C7DC"
+-    readonly property color menuButtonFeaturedStroke: "#78F1FF"
+-    readonly property color menuButtonFeaturedText: "#001419"
+-    readonly property color menuIconDefault: "#D6E0E7"
+-    readonly property color menuTextPrimary: "#F7FAFC"
+-    readonly property color menuTextSecondary: "#B8C4CE"
+-
+-    // 共用按鈕狀態色（P1b，取樣自新版 Figma GCP/Button/Base、GCP/Shell/HeaderIconButton 狀態 PNG；
+-    // Tokens 檔沒有對應名稱）
+-    readonly property color primaryHover: "#29E0FA"        // Primary hover 底色
+-    // 按鈕對比與狀態（使用者 2026-10-16：提高按鈕與背景對比、強化 Normal／Hover／Pressed／Disabled 差異）：
+-    // Secondary／Ghost 在地圖、影像上原本是半透明黑，容易融入背景；改用較實心的底色＋明確邊框。
+-    readonly property color primaryPressed: "#00A7C2"       // Primary 按下底色（比 hover 暗）
+-    readonly property color buttonSolidBg: "#212832"        // Secondary 實心底（深灰，與黑底、地圖都分得開）
+-    readonly property color buttonSolidBorder: "#6B7684"    // Secondary 明確邊框
+-    readonly property color buttonSolidHoverBg: "#303A47"   // Secondary hover
+-    readonly property color buttonSolidPressedBg: "#0A0D11" // Secondary 按下（比 normal 更深）
+-    readonly property color buttonSolidPressedBorder: "#00B8DB" // 按下／選取時邊框用品牌色（只有互動中才亮，避免到處都是青色）
+-    readonly property color buttonGhostBg: Qt.rgba(0.13, 0.16, 0.2, 0.88) // Ghost 在地圖／影像上的半實心底
+-    readonly property color dangerPressed: "#5A0D11"        // Danger 按下底色
+-    readonly property color controlBg: "#080A0C"           // 頁首圖示按鈕 Default 底色
+-    readonly property color controlHoverBg: "#191C21"      // Secondary／Ghost／圖示按鈕 hover 底色
+-    readonly property color controlHoverBorder: "#9AA5B3"  // 同上 hover 邊框
+-    readonly property color dangerFill: "#33080A"          // Danger 按鈕底色
+-    readonly property color dangerFillHover: "#470A0D"     // Danger hover 底色
+-    readonly property color dangerBorderHover: "#FF5454"   // Danger hover 邊框
+-
+-    // 輸入類控制項狀態色（P1b-2，取樣自新版 Figma GCP/Tab/Base、GCP/Input/SearchField、
+-    // GCP/Input/Field、GCP/DevicesB/SliderRow 狀態 PNG／匯出 QML；Tokens 檔沒有對應名稱）
+-    readonly property color tabSelectedBg: "#06292E"       // 分頁 Selected 底色（邊框與文字用 selectionGlow）
+-    readonly property color tabDefaultText: "#85919C"      // 分頁 Default 文字
+-    readonly property color searchHoverBorder: "#3300D3F2" // 搜尋欄 hover 邊框（primary 20%）
+-    readonly property color searchFocusBorder: "#9900D3F2" // 搜尋欄 focus 邊框（primary 60%）
+-    readonly property color inputErrorBorder: "#F23B45"    // 輸入框 Error 邊框與文字
+-    readonly property color sliderRail: "#24FFFFFF"        // 滑桿軌道（白 14%）
+-    readonly property color sliderFillDisabled: "#4000D3F2" // 停用滑桿填色（primary 25%）
+-
+-    // 對話框／Toast（P1c，取自新版 Figma GCP/Alerts/ClearDialog、GCP/Mission/Planner/ClearDialog、
+-    // GCP/Overlay/Scrim、GCP/PopUp/ToastBanner、GCP/PopUp/IconBadge 匯出 QML 數值）
+-    readonly property color dialogBg: "#FA0B0F14"           // 對話框底色（近不透明）
+-    readonly property color dialogBorder: "#33FFFFFF"       // 對話框邊框（白 20%）
+-    readonly property color dialogBodyText: "#D9FFFFFF"     // 對話框內文（白 85%）
+-    readonly property color scrim: "#7A000000"              // 全螢幕遮罩（黑 48%）
+-    readonly property color badgePrimaryBg: "#2600D3F2"     // 圓形狀態徽章淡底：primary 15%
+-    readonly property color badgeCriticalBg: "#26EF4444"    // 圓形狀態徽章淡底：critical 15%
+-    readonly property color toastProcessingBg: "#0E272B"
+-    readonly property color toastProcessingBorder: "#7300D3F2"
+-    readonly property color toastSuccessBg: "#16251B"
+-    readonly property color toastSuccessBorder: "#734ADE80"
+-    readonly property color toastFailedBg: "#261515"
+-    readonly property color toastFailedBorder: "#73EF4444"
+-    readonly property color toastSubText: "#99FFFFFF"       // Toast 副標（白 60%）
+-
+-    // 登入／建立管理員（P3a，取自新版 Figma LoginScreen、CreateAdminScreen、GCP/AuthC/LoginField、
+-    // GCP/AuthC/PrimaryButton 匯出 QML 與 input*.png 底線取樣）
+-    readonly property color authDim: "#99000000"             // 背景圖遮罩（黑 60%）；背景圖改用較亮的 eLAN.png（使用者 2026-10-16：原圖太黑看不到背景；全亮時表單文字看不清，取折衷）
+-    readonly property color authFieldLabel: "#A6FFFFFF"      // 欄位標籤（白 65%）
+-    readonly property color authFieldText: "#F2FFFFFF"       // 已輸入文字（白 95%）
+-    readonly property color authFieldUnderline: "#59FFFFFF"  // 欄位底線（白 35%）
+-    readonly property color authFieldUnderlineError: "#CCEF4444" // 欄位底線 Error（critical 80%）
+-    readonly property color authButtonText: "#000000"        // 主要按鈕 Idle／Success 文字與圖示
+-    readonly property color authBusyBg: "#2400D3F2"          // 主要按鈕 Authenticating 底（primary 14%）
+-    readonly property color authBusyBorder: "#8000D3F2"      // 主要按鈕 Authenticating 框（primary 50%）
+-    readonly property color authFailedBg: "#24EF4444"        // 主要按鈕 Failed 底（critical 14%）
+-    readonly property color authDisabledBg: "#1F999999"      // 主要按鈕 Disabled 底
+-    readonly property color authDisabledBorder: "#80999999"  // 主要按鈕 Disabled 框
+-    readonly property color authDisabledText: "#999999"      // 主要按鈕 Disabled 文字與圖示
+-
+-    // 首頁 Launcher（P4：HomeScreen／GCP_Home_*；數值取自新版匯出 QML）
+-    readonly property color homeStatusBarBg: "#8C000000"     // 狀態列底（黑 55%）
+-    readonly property color homeStatusBarBorder: "#29FFFFFF" // 狀態列框（白 16%）
+-    readonly property color homeChipBg: "#80000000"          // 天氣膠囊底（黑 50%）
+-    readonly property color homeChipBorder: "#24FFFFFF"      // 天氣膠囊／系統詳情框（白 14%）
+-    readonly property color homeDetailsBg: "#73000000"       // 系統詳情膠囊底（黑 45%）
+-    readonly property color homeDivider: "#2EFFFFFF"         // 分隔線（白 18%）
+-    readonly property color homeLabel: "#99FFFFFF"           // 標籤文字（白 60%）
+-    readonly property color homeUnit: "#8CFFFFFF"            // 單位文字（白 55%）
+-    readonly property color homeDetailsText: "#CCFFFFFF"     // 系統詳情／箭頭文字（白 80%）
+-    readonly property color homeSubtitle: "#A6BAC7"          // 品牌副標（藍灰）
+-    readonly property color homeAvatarBg: "#2E00D3F2"        // 使用者頭像底（primary 18%）
+-    readonly property color homeAlertBg: "#2EEF4444"         // 告警徽章底（critical 18%）
+-    readonly property color homeTileSecondaryBg: "#A6000000" // 次要磚底（黑 65%；原 50% 疊在背景照片上對比不足）
+-    readonly property color homeTileSecondaryBorder: "#38FFFFFF" // 次要磚框（白 22%）
+-    readonly property color homeTileText: "#001018"          // 主要磚文字（深藍黑）
+-    readonly property color homeTileSubText: "#B2001018"     // 主要磚副文字（70%）
+-    readonly property color homeDimStart: "#9E030506"        // 背景水平暗化漸層 0／.38／.72／1
+-    readonly property color homeDimMid1: "#2E030506"
+-    readonly property color homeDimMid2: "#1A030506"
+-    readonly property color homeDimEnd: "#7A030506"
+-    readonly property color homeScrimStrong: "#B2000000"     // 上緣漸層起點（黑 70%）
+-    readonly property color homeScrimBottom: "#CC000000"     // 下緣漸層終點（黑 80%）
+-    readonly property color homeScrimClear: "#00000000"
+-
+-    // 選項選單（final_export/GCP_PopUp_OptionMenu／PopUp_MenuItem）
+-    readonly property color optionMenuBg: "#101010"          // 選單底色
+-    readonly property color optionMenuSelectedBg: "#2600D3F2"     // 選中項底（primary 15%）
+-    readonly property color optionMenuSelectedBorder: "#9900D3F2" // 選中項框（primary 60%）
+-    readonly property color optionMenuItemText: "#E5FFFFFF"  // 選項文字（白 90%）
+-    readonly property color flightModeSelectedBg: "#053941"        // Flight Mode Menu 選中項底（Prototype 實測，不透明）
+-
+-    // v1.4 Token `opaque/*`：Live Flight（HUD、指令卡、頂列、迷你地圖）使用的實心色，其他畫面照 Figma 保留半透明。
+-    // v1.4 T6 任務規劃（Prototype 03 取樣）：面板與卡片近不透明
+-    readonly property color missionPanelBg: "#0B0F13"
+-    readonly property color missionCardBg: "#171B1F"
+-    readonly property color missionSelectedBg: "#0A2A32"
+-    readonly property color missionPropertyBg: "#0A1A21"
+-    readonly property color missionPropertyTileBg: "#1B2A31"
+-    readonly property color missionButtonBg: "#1C2024"
+-    readonly property color opaqueDock: "#050505"   // 即時飛行指令鈕底座（匯出稿 dock）
+-    readonly property color opaqueBgCard: "#161616"
+-    readonly property color opaqueBgInput: "#070707"
+-    readonly property color opaqueBgPanel: "#0F1113"
+-    readonly property color opaqueBorderDefault: "#232323"
+-    readonly property color opaqueHudSecondary: "#0098AE"
+-    readonly property color opaqueIconDefault: "#858585"
+-    readonly property color opaqueMapBlock: "#0E1F1B"
+-    readonly property color opaquePrimaryBorder: "#039BB1"
+-    readonly property color opaquePrimarySubtle: "#092226"
+-    readonly property color opaqueStatusCriticalBorder: "#7C2727"
+-    readonly property color opaqueStatusCriticalSubtle: "#211010"
+-    readonly property color opaqueStatusSuccessBorder: "#2A7445"
+-    readonly property color opaqueStatusSuccessSubtle: "#13281B"
+-    readonly property color opaqueStatusWarningBorder: "#775C16"
+-    readonly property color opaqueStatusWarningSubtle: "#312710"
+-    readonly property color opaqueSurface1: "#1B1B1B"
+-    readonly property color opaqueSurface2: "#212121"
+-    readonly property color opaqueSurface3: "#2A2A2A"
+-    readonly property color opaqueTextDisabled: "#505050"
+-    readonly property color opaqueTextMuted: "#6A6A6A"
+-    readonly property color opaqueTextSecondary: "#B6B6B6"
+-    readonly property color opaqueTextTertiary: "#858585"
+-}
++import QtQuick
++import "Agent/GcpAgentThemePalette.js" as AgentPalette
++
++// GcpTheme.qml 的顏色分組，拆成具名元件讓 qmllint 能解析成員型別。
++QtObject {
++    property var _agentThemeGroups: ({})
++    readonly property var _agentThemeColors: AgentPalette.materialize(_agentThemeGroups)
++    // State owns transactions and policy validation. Do not call from model output.
++    function setAgentThemeGroups(groups) {
++        _agentThemeGroups = AgentPalette.checkedGroups(groups)
++    }
++    function _agentColor(name, fallback) {
++        const group = AgentPalette.tokenGroup(name)
++        if (!Object.prototype.hasOwnProperty.call(_agentThemeGroups, group)) return fallback
++        const value = _agentThemeColors[name]
++        return Qt.rgba(value.r, value.g, value.b, value.a)
++    }
++
++    // 主色（cyan-400）：強調文字、圖示、HUD 刻度與數值
++    readonly property color primary: _agentColor("primary", "#00D3F2")
++    // cyan-500：選中底色（20%）、實心主要按鈕
++    readonly property color primaryStrong: _agentColor("primaryStrong", "#00B8DB")
++    // 選中項目的內陰影 25% 與 3px 強調條光暈 80%（呼叫端自行套用透明度）
++    readonly property color selectionGlow: _agentColor("selectionGlow", "#06B6D4")
++
++    // 整頁背景（不透明）
++    readonly property color bgBase: _agentColor("bgBase", "#000000")
++    readonly property color bgSurface: _agentColor("bgSurface", "#0A0A0A")
++    // 安全設定頁底（Prototype Safety.png 取樣 #070B10）
++    readonly property color bgPageSafety: _agentColor("bgPageSafety", "#070B10")
++    // 媒體庫影片預覽區底（Prototype Media.png 取樣 #141F2E）
++    readonly property color mediaVideoBackground: "#141F2E"
++    // 地圖與 3D 畫布維持不透明背景，不套玻璃效果
++    readonly property color bgCanvas: "#0A0F12"
++    // 影像訊號尚未接通時的中性灰底，取自 Figma GCP/Flight/VideoSignalState。
++    readonly property color videoSignalBackground: neutral600
++
++    // 玻璃感面板：黑 60% + 背景模糊 24（GcpPanel 用；效能不足時退回 panelFallbackFill）
++    readonly property color panelFill: _agentColor("panelFill", Qt.rgba(0, 0, 0, 0.6))
++    readonly property color panelFallbackFill: _agentColor("panelFallbackFill", Qt.rgba(0, 0, 0, 0.8))
++    // 疊在其他浮動元件上方的彈出面板（例如即時飛行「更多操作」）：不透明度 95%，避免底下酬載列透出造成文字重疊
++    readonly property color panelPopupFill: _agentColor("panelPopupFill", Qt.rgba(0.04, 0.05, 0.07, 0.96))
++    readonly property real  panelBlurRadius: 24
++    readonly property color panelBorder: Qt.rgba(1, 1, 1, 0.1)
++    // 面板內的卡片、列表列
++    readonly property color bgCard: _agentColor("bgCard", Qt.rgba(1, 1, 1, 0.05))
++    // 面板內的輸入框、下拉框
++    readonly property color bgInput: _agentColor("bgInput", Qt.rgba(0, 0, 0, 0.4))
++    // 所有分隔線與邊框
++    readonly property color borderDefault: Qt.rgba(1, 1, 1, 0.1)
++
++    // 文字層級：標題與數值 / 次要內容 / 標籤 / 說明 / 停用
++    readonly property color textPrimary: _agentColor("textPrimary", Qt.rgba(1, 1, 1, 1.0))
++    readonly property color textSecondary: _agentColor("textSecondary", Qt.rgba(1, 1, 1, 0.7))
++    readonly property color textLabel: _agentColor("textLabel", Qt.rgba(1, 1, 1, 0.5))
++    readonly property color textDescription: _agentColor("textDescription", Qt.rgba(1, 1, 1, 0.4))
++    readonly property color textDisabled: Qt.rgba(1, 1, 1, 0.3)
++    // 淺色主要按鈕底（primaryStrong）上用的深色文字，規格沒有另外定義，
++    // 對應新版 Figma token color_on_primary（深青黑，跟 bgBase 區分開避免混淆用途）。
++    // 2026-10-10 依新版 Figma token color_on_primary 更新（原值 #050505 取自舊匯出稿）。
++    readonly property color textOnPrimary: "#06222A"
++    // Toggle 關閉狀態的軌道底色（白 20%），取自 Figma GCP/Input/Toggle 匯出稿
++    // （`#33ffffff`），規格沒有另外定義，數值跟既有的 bgCard（白 5%）／
++    // borderDefault（白 10%）／textDisabled（白 30%）都不同，故獨立命名。
++    readonly property color bgToggleOff: Qt.rgba(1, 1, 1, 0.2)
++    // 設定列面板底色（黑 50%），取自 Figma GCP/System/SettingRow 匯出稿
++    // （`#80050608`，rgb 幾乎是純黑，判斷是取樣誤差），規格沒有另外定義，
++    // 數值跟既有的 bgInput（黑 40%）／panelFill（黑 60%）都不同，故獨立命名。
++    readonly property color bgSettingRow: _agentColor("bgSettingRow", Qt.rgba(0, 0, 0, 0.5))
++
++    // 狀態色：正常、警告、嚴重
++    readonly property color statusSuccess: "#4ADE80"
++    readonly property color statusWarning: "#FBBF24"
++    readonly property color statusCritical: "#EF4444"
++
++    // GPS 定位狀態專用色（與上面的一般狀態色分開定義，不可混用）
++    // 無定位＝紅、2D／RTK Float＝黃、3D／DGPS＝綠、RTK Fixed＝主色青
++    readonly property color gpsNone: "#FF5B5B"
++    readonly property color gpsWeak: "#F6C344"
++    readonly property color gpsGood: "#05DF72"
++    readonly property color gpsFixed: "#00D3F2" // Freeze protected original cyan; never follow mutable primary.
++
++    // Telemetry summary metric accents sampled from Figma GCP_Telemetry_MetricCard tones.
++    readonly property color telemetryMetricGreen: "#22C55E"
++    readonly property color telemetryMetricBlue: "#3C8CF2"
++    readonly property color telemetryMetricOrange: "#F58014"
++
++    // ── 2026-10-10 新版 Figma「GCP Tokens」補入（P1a）────────────────────────────
++    // 既有成員與 Figma token 的對應：primary=color_primary、primaryStrong=color_primary_strong、
++    // bgBase/bgSurface/bgCard/bgInput=color_bg_*、panelFill=color_bg_panel（黑 60%）、
++    // borderDefault=color_border_default、textPrimary/textSecondary=color_text_*、
++    // textLabel=color_text_tertiary（白 50%）、textDescription=color_text_muted（白 40%）、
++    // textDisabled=color_text_disabled、statusSuccess/Warning/Critical=color_status_*。
++    // Figma 值為 #AARRGGBB，這裡照原值寫，不另外換算。
++
++    // 浮起的不透明面板底（color_bg_elevated）
++    readonly property color bgElevated: _agentColor("bgElevated", "#0F1113")
++    // 疊層表面：白 4% / 7% / 10%（color_surface_1/2/3），由淺到深用於巢狀卡片與 hover
++    readonly property color surface1: "#0AFFFFFF"
++    readonly property color surface2: "#12FFFFFF"
++    readonly property color surface3: "#1AFFFFFF"
++
++    // 主色淡底（12%）與主色邊框（70%）：選中卡片、選中下拉項（color_primary_subtle/border）
++    readonly property color primarySubtle: _agentColor("primarySubtle", "#1F00D3F2")
++    readonly property color primaryBorder: _agentColor("primaryBorder", "#B200D3F2")
++
++    // 一般圖示預設色（color_icon_default，白 50%）
++    readonly property color iconDefault: "#80FFFFFF"
++    // 細線、刻度輔助線（color_line_subtle）
++    readonly property color lineSubtle: "#808A94"
++    // 中性灰階（color_neutral_300/500/600）
++    readonly property color neutral300: "#B2B8BD"
++    readonly property color neutral500: "#8C9196"
++    readonly property color neutral600: "#666B73"
++    // 地圖上禁航／遮蔽區塊（color_map_block，75%）
++    readonly property color mapBlock: "#BF0E1F1B"
++
++    // HUD（color_hud_*）：主刻度與數值、次要刻度（72%）、速度/高度帶底、目標標記
++    readonly property color hudPrimary: _agentColor("hudPrimary", primary)
++    readonly property color hudSecondary: _agentColor("hudSecondary", "#B800D3F2")
++    readonly property color hudTape: "#616970"
++    readonly property color hudTarget: "#FF66E5"
++
++    // 其他狀態色：資訊、已確認（告警 ACK）、離線、停用（color_status_info/ack/offline/disabled）
++    readonly property color statusInfo: "#00D3F2" // Freeze protected original cyan; never follow mutable primary.
++    readonly property color statusAck: "#60A5FA"
++    readonly property color statusOffline: "#616970"
++    readonly property color statusDisabled: "#40454A"
++    // 狀態色的淡底與邊框（color_status_{success,warning,critical}_{subtle,border}）
++    readonly property color statusSuccessSubtle: "#244ADE80"
++    readonly property color statusSuccessBorder: "#804ADE80"
++    readonly property color statusWarningSubtle: "#29FBBF24"
++    readonly property color statusWarningBorder: "#73FBBF24"
++    readonly property color statusCriticalSubtle: "#1AEF4444"
++    readonly property color statusCriticalBorder: "#80EF4444"
++
++    // 停用控制項整體透明度（opacity_disabled = 0.45）
++    readonly property real opacityDisabled: 0.45
++
++    // 導覽選單高對比配色（Figma collection「GCP Menu High Contrast」，Launcher 與頂端下拉選單用）
++    readonly property color menuAccent: "#00E5FF"
++    readonly property color menuBg: "#080D12"
++    readonly property color menuSurface: "#0B1117"
++    readonly property color menuButtonDefaultBg: "#0E151C"
++    readonly property color menuButtonDefaultStroke: "#526270"
++    readonly property color menuButtonActiveBg: "#07303A"
++    readonly property color menuButtonActiveStroke: "#00E5FF"
++    readonly property color menuButtonFeaturedBg: "#08C7DC"
++    readonly property color menuButtonFeaturedStroke: "#78F1FF"
++    readonly property color menuButtonFeaturedText: "#001419"
++    readonly property color menuIconDefault: "#D6E0E7"
++    readonly property color menuTextPrimary: "#F7FAFC"
++    readonly property color menuTextSecondary: "#B8C4CE"
++
++    // 共用按鈕狀態色（P1b，取樣自新版 Figma GCP/Button/Base、GCP/Shell/HeaderIconButton 狀態 PNG；
++    // Tokens 檔沒有對應名稱）
++    readonly property color primaryHover: _agentColor("primaryHover", "#29E0FA")        // Primary hover 底色
++    // 按鈕對比與狀態（使用者 2026-10-16：提高按鈕與背景對比、強化 Normal／Hover／Pressed／Disabled 差異）：
++    // Secondary／Ghost 在地圖、影像上原本是半透明黑，容易融入背景；改用較實心的底色＋明確邊框。
++    readonly property color primaryPressed: _agentColor("primaryPressed", "#00A7C2")       // Primary 按下底色（比 hover 暗）
++    readonly property color buttonSolidBg: "#212832"        // Secondary 實心底（深灰，與黑底、地圖都分得開）
++    readonly property color buttonSolidBorder: "#6B7684"    // Secondary 明確邊框
++    readonly property color buttonSolidHoverBg: "#303A47"   // Secondary hover
++    readonly property color buttonSolidPressedBg: "#0A0D11" // Secondary 按下（比 normal 更深）
++    readonly property color buttonSolidPressedBorder: "#00B8DB" // 按下／選取時邊框用品牌色（只有互動中才亮，避免到處都是青色）
++    readonly property color buttonGhostBg: Qt.rgba(0.13, 0.16, 0.2, 0.88) // Ghost 在地圖／影像上的半實心底
++    readonly property color dangerPressed: "#5A0D11"        // Danger 按下底色
++    readonly property color controlBg: "#080A0C"           // 頁首圖示按鈕 Default 底色
++    readonly property color controlHoverBg: "#191C21"      // Secondary／Ghost／圖示按鈕 hover 底色
++    readonly property color controlHoverBorder: "#9AA5B3"  // 同上 hover 邊框
++    readonly property color dangerFill: "#33080A"          // Danger 按鈕底色
++    readonly property color dangerFillHover: "#470A0D"     // Danger hover 底色
++    readonly property color dangerBorderHover: "#FF5454"   // Danger hover 邊框
++
++    // 輸入類控制項狀態色（P1b-2，取樣自新版 Figma GCP/Tab/Base、GCP/Input/SearchField、
++    // GCP/Input/Field、GCP/DevicesB/SliderRow 狀態 PNG／匯出 QML；Tokens 檔沒有對應名稱）
++    readonly property color tabSelectedBg: "#06292E"       // 分頁 Selected 底色（邊框與文字用 selectionGlow）
++    readonly property color tabDefaultText: "#85919C"      // 分頁 Default 文字
++    readonly property color searchHoverBorder: "#3300D3F2" // 搜尋欄 hover 邊框（primary 20%）
++    readonly property color searchFocusBorder: "#9900D3F2" // 搜尋欄 focus 邊框（primary 60%）
++    readonly property color inputErrorBorder: "#F23B45"    // 輸入框 Error 邊框與文字
++    readonly property color sliderRail: "#24FFFFFF"        // 滑桿軌道（白 14%）
++    readonly property color sliderFillDisabled: "#4000D3F2" // 停用滑桿填色（primary 25%）
++
++    // 對話框／Toast（P1c，取自新版 Figma GCP/Alerts/ClearDialog、GCP/Mission/Planner/ClearDialog、
++    // GCP/Overlay/Scrim、GCP/PopUp/ToastBanner、GCP/PopUp/IconBadge 匯出 QML 數值）
++    readonly property color dialogBg: "#FA0B0F14"           // 對話框底色（近不透明）
++    readonly property color dialogBorder: "#33FFFFFF"       // 對話框邊框（白 20%）
++    readonly property color dialogBodyText: "#D9FFFFFF"     // 對話框內文（白 85%）
++    readonly property color scrim: "#7A000000"              // 全螢幕遮罩（黑 48%）
++    readonly property color badgePrimaryBg: "#2600D3F2"     // 圓形狀態徽章淡底：primary 15%
++    readonly property color badgeCriticalBg: "#26EF4444"    // 圓形狀態徽章淡底：critical 15%
++    readonly property color toastProcessingBg: "#0E272B"
++    readonly property color toastProcessingBorder: "#7300D3F2"
++    readonly property color toastSuccessBg: "#16251B"
++    readonly property color toastSuccessBorder: "#734ADE80"
++    readonly property color toastFailedBg: "#261515"
++    readonly property color toastFailedBorder: "#73EF4444"
++    readonly property color toastSubText: "#99FFFFFF"       // Toast 副標（白 60%）
++
++    // 登入／建立管理員（P3a，取自新版 Figma LoginScreen、CreateAdminScreen、GCP/AuthC/LoginField、
++    // GCP/AuthC/PrimaryButton 匯出 QML 與 input*.png 底線取樣）
++    readonly property color authDim: "#99000000"             // 背景圖遮罩（黑 60%）；背景圖改用較亮的 eLAN.png（使用者 2026-10-16：原圖太黑看不到背景；全亮時表單文字看不清，取折衷）
++    readonly property color authFieldLabel: "#A6FFFFFF"      // 欄位標籤（白 65%）
++    readonly property color authFieldText: "#F2FFFFFF"       // 已輸入文字（白 95%）
++    readonly property color authFieldUnderline: "#59FFFFFF"  // 欄位底線（白 35%）
++    readonly property color authFieldUnderlineError: "#CCEF4444" // 欄位底線 Error（critical 80%）
++    readonly property color authButtonText: "#000000"        // 主要按鈕 Idle／Success 文字與圖示
++    readonly property color authBusyBg: "#2400D3F2"          // 主要按鈕 Authenticating 底（primary 14%）
++    readonly property color authBusyBorder: "#8000D3F2"      // 主要按鈕 Authenticating 框（primary 50%）
++    readonly property color authFailedBg: "#24EF4444"        // 主要按鈕 Failed 底（critical 14%）
++    readonly property color authDisabledBg: "#1F999999"      // 主要按鈕 Disabled 底
++    readonly property color authDisabledBorder: "#80999999"  // 主要按鈕 Disabled 框
++    readonly property color authDisabledText: "#999999"      // 主要按鈕 Disabled 文字與圖示
++
++    // 首頁 Launcher（P4：HomeScreen／GCP_Home_*；數值取自新版匯出 QML）
++    readonly property color homeStatusBarBg: "#8C000000"     // 狀態列底（黑 55%）
++    readonly property color homeStatusBarBorder: "#29FFFFFF" // 狀態列框（白 16%）
++    readonly property color homeChipBg: "#80000000"          // 天氣膠囊底（黑 50%）
++    readonly property color homeChipBorder: "#24FFFFFF"      // 天氣膠囊／系統詳情框（白 14%）
++    readonly property color homeDetailsBg: "#73000000"       // 系統詳情膠囊底（黑 45%）
++    readonly property color homeDivider: "#2EFFFFFF"         // 分隔線（白 18%）
++    readonly property color homeLabel: "#99FFFFFF"           // 標籤文字（白 60%）
++    readonly property color homeUnit: "#8CFFFFFF"            // 單位文字（白 55%）
++    readonly property color homeDetailsText: "#CCFFFFFF"     // 系統詳情／箭頭文字（白 80%）
++    readonly property color homeSubtitle: "#A6BAC7"          // 品牌副標（藍灰）
++    readonly property color homeAvatarBg: "#2E00D3F2"        // 使用者頭像底（primary 18%）
++    readonly property color homeAlertBg: "#2EEF4444"         // 告警徽章底（critical 18%）
++    readonly property color homeTileSecondaryBg: "#A6000000" // 次要磚底（黑 65%；原 50% 疊在背景照片上對比不足）
++    readonly property color homeTileSecondaryBorder: "#38FFFFFF" // 次要磚框（白 22%）
++    readonly property color homeTileText: "#001018"          // 主要磚文字（深藍黑）
++    readonly property color homeTileSubText: "#B2001018"     // 主要磚副文字（70%）
++    readonly property color homeDimStart: "#9E030506"        // 背景水平暗化漸層 0／.38／.72／1
++    readonly property color homeDimMid1: "#2E030506"
++    readonly property color homeDimMid2: "#1A030506"
++    readonly property color homeDimEnd: "#7A030506"
++    readonly property color homeScrimStrong: "#B2000000"     // 上緣漸層起點（黑 70%）
++    readonly property color homeScrimBottom: "#CC000000"     // 下緣漸層終點（黑 80%）
++    readonly property color homeScrimClear: "#00000000"
++
++    // 選項選單（final_export/GCP_PopUp_OptionMenu／PopUp_MenuItem）
++    readonly property color optionMenuBg: "#101010"          // 選單底色
++    readonly property color optionMenuSelectedBg: "#2600D3F2"     // 選中項底（primary 15%）
++    readonly property color optionMenuSelectedBorder: "#9900D3F2" // 選中項框（primary 60%）
++    readonly property color optionMenuItemText: "#E5FFFFFF"  // 選項文字（白 90%）
++    readonly property color flightModeSelectedBg: "#053941"        // Flight Mode Menu 選中項底（Prototype 實測，不透明）
++
++    // v1.4 Token `opaque/*`：Live Flight（HUD、指令卡、頂列、迷你地圖）使用的實心色，其他畫面照 Figma 保留半透明。
++    // v1.4 T6 任務規劃（Prototype 03 取樣）：面板與卡片近不透明
++    readonly property color missionPanelBg: "#0B0F13"
++    readonly property color missionCardBg: "#171B1F"
++    readonly property color missionSelectedBg: "#0A2A32"
++    readonly property color missionPropertyBg: "#0A1A21"
++    readonly property color missionPropertyTileBg: "#1B2A31"
++    readonly property color missionButtonBg: "#1C2024"
++    readonly property color opaqueDock: "#050505"   // 即時飛行指令鈕底座（匯出稿 dock）
++    readonly property color opaqueBgCard: "#161616"
++    readonly property color opaqueBgInput: "#070707"
++    readonly property color opaqueBgPanel: "#0F1113"
++    readonly property color opaqueBorderDefault: "#232323"
++    readonly property color opaqueHudSecondary: "#0098AE"
++    readonly property color opaqueIconDefault: "#858585"
++    readonly property color opaqueMapBlock: "#0E1F1B"
++    readonly property color opaquePrimaryBorder: "#039BB1"
++    readonly property color opaquePrimarySubtle: "#092226"
++    readonly property color opaqueStatusCriticalBorder: "#7C2727"
++    readonly property color opaqueStatusCriticalSubtle: "#211010"
++    readonly property color opaqueStatusSuccessBorder: "#2A7445"
++    readonly property color opaqueStatusSuccessSubtle: "#13281B"
++    readonly property color opaqueStatusWarningBorder: "#775C16"
++    readonly property color opaqueStatusWarningSubtle: "#312710"
++    readonly property color opaqueSurface1: "#1B1B1B"
++    readonly property color opaqueSurface2: "#212121"
++    readonly property color opaqueSurface3: "#2A2A2A"
++    readonly property color opaqueTextDisabled: "#505050"
++    readonly property color opaqueTextMuted: "#6A6A6A"
++    readonly property color opaqueTextSecondary: "#B6B6B6"
++    readonly property color opaqueTextTertiary: "#858585"
++}

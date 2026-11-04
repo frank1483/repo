@@ -8,3 +8,7 @@ GcpAgentReadableSession.js
 GcpAgentSnapshot.js
 GcpAgentState.qml
 GcpAgentVerifier.js
+GcpAgentThemeColorMath.js
+GcpAgentThemePalette.js
+GcpAgentThemeHostPolicy.js
+GcpAgentThemeEditor.qml
