@@ -13,7 +13,7 @@ pair('OVERLAP',s=>s.modules.b={visible:true,page:1,rect:{x:20,y:20,w:50,h:30}});
 pair('OUT_OF_BOUNDS',s=>s.modules.a.rect.x=750);
 pair('OCCLUDED',s=>s.modules.b={visible:true,page:1,rect:{x:20,y:20,w:50,h:30},paintOrder:2,occludes:true,collisionGroup:'overlay'});
 pair('TEXT_TRUNCATED',s=>s.modules.a.rect.w=70);
-pair('LOCKED_VIOLATION',(s,e)=>{s.modules.a.locked=true;e.before=structuredClone(s);s.modules.a.rect.x+=1;});
+pair('LOCKED_VIOLATION',(s,e)=>{s.modules.a.locked=true;e.before=structuredClone(s);s.modules.a.visible=false;});
 const s=base(),e=expected();s.modules.a.locked=true;e.before=structuredClone(s);assert(V.verify(s,e).ok);count++;
 const before=JSON.stringify(s);V.verify(s,e);assert.equal(JSON.stringify(s),before);count++;
 s.modules.a.rect.x+=1e-8;assert(!codes(s,e).includes('LOCKED_VIOLATION'));count++;
@@ -26,3 +26,25 @@ const ext={extraChecks:['data_source'],modules:[]};assert(V.verify(base(),ext).f
 assert(V.verify(base(),ext,{data_source:()=>[]}).ok);count++;
 const out=V.verify(base(),ext,{data_source:()=>[{code:'WRONG_DATA_SOURCE',module:'a',detail:'fixture'}]});assert.equal(out.failures[0].code,'WRONG_DATA_SOURCE');count++;
 console.log(JSON.stringify({scope:'pure verifier; simulated snapshots only',assertion_cases:count,ok:true}));
+
+// 0397 user option B: movement/scaling passes; hide/opacity/page fails.
+for(const change of [m=>m.rect.x=200,m=>{m.rect.w=125;m.rect.h=75;m.scale=1.25;}]) {
+    const s=base();s.modules.a.locked=true;s.modules.a.opacity=1;
+    const e={modules:[],before:structuredClone(s)};change(s.modules.a);
+    assert(V.verify(s,e).ok);count++;
+}
+for(const change of [m=>m.visible=false,m=>m.opacity=0,m=>m.page=2]) {
+    const s=base();s.modules.a.locked=true;s.modules.a.opacity=1;
+    const e={modules:[],before:structuredClone(s)};change(s.modules.a);
+    assert(codes(s,e).includes('LOCKED_VIOLATION'));count++;
+}
+for(const [code,change] of [
+    ['OUT_OF_BOUNDS',s=>s.modules.a.rect.x=-1],
+    ['OVERLAP',s=>s.modules.b={page:1,visible:true,rect:{x:20,y:20,w:20,h:20}}],
+    ['OCCLUDED',s=>s.modules.b={page:1,visible:true,rect:{x:20,y:20,w:20,h:20},paintOrder:2,occludes:true,collisionGroup:'overlay'}],
+    ['TEXT_TRUNCATED',s=>s.modules.a.textTruncated=true]
+]) {
+    const s=base();s.modules.a.locked=true;const e={modules:[],before:structuredClone(s)};
+    change(s);assert(codes(s,e).includes(code));count++;
+}
+console.log(JSON.stringify({batch:'0397',assertion_cases:count,ok:true}));

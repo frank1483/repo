@@ -26,6 +26,7 @@ function setup() {
         textScale: { get: () => S.GcpTheme.font.textScale },
         hasUnsavedChanges: { get: () => S.layoutFingerprint() !== S._savedFingerprint }
     });
+    require('./theme_fixture_v6').install(S);
     vm.createContext(S);
     vm.runInContext(['snapshot', '_restore', 'checkedLayout', 'layoutFingerprint', 'beginChange',
         'beginGroup', 'commitGroup', 'rollbackGroup', 'undo', 'redo', 'resetAll', 'setTextScale',
@@ -36,10 +37,11 @@ function setup() {
     const O = { GcpAgentState: S, Core, toast, toastTimer: timer, JSON, Date, console,
         busy: false, _transaction: null, choices: [], pendingText: '', messageText: '', changeLog: [],
         open: true, qsTr: s => s, executeSteps() { throw Error('unexpected transaction in toast test'); } };
+    O.context=()=>({page:1,section:-1,modules:{}}); O.decisionLogged=()=>{};
     O.root = O;
     Object.defineProperty(O, 'canSaveLayout', { get: () => !O.busy && S.hasUnsavedChanges });
     vm.createContext(O);
-    vm.runInContext(['dismissToast', 'showHistoryToast', 'showToast', 'toastActionAvailable',
+    vm.runInContext(['recordGate','checkSelection','checkSteps','dismissToast', 'showHistoryToast', 'showToast', 'toastActionAvailable',
         'performToastAction', 'recordChange', 'execute', 'done'].map(n => extract(overlaySource, n)).join('\n'), O);
     vm.runInContext('String.prototype.arg = function(v) { return String(this).replace(/%[1-9]/, String(v)); }', O);
     function change(kind, mutate) {

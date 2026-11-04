@@ -8,7 +8,7 @@ const source=fs.readFileSync(path.join(__dirname,'../qml/GcpAgentOverlay.qml'),'
 function extract(name){const a=source.indexOf('    function '+name+'(');assert(a>=0,name);const line=source.indexOf('\n',a);const end=source.slice(a,line).trimEnd().endsWith('}')?line:source.indexOf('\n    }',line)+6;assert(end>a);return source.slice(a,end).trim();}
 const plain=x=>JSON.parse(JSON.stringify(x));
 const nav=()=>({id:'NAV_1',kind:'nav',page:1,section:-1,label_zh:'切到即時飛行',score:1});
-const layout=()=>({id:'LAYOUT_WIND',kind:'layout',module:'wind',region:'top_left',label_zh:'風速計移到左上角',score:1});
+const layout=()=>({id:'LAYOUT_WIND',kind:'layout',module:'windGauge',op:'move',region:'top_left',label_zh:'風速計移到左上角',score:1});
 function setup(){
     const calls=[],events=[],loc={page:0,section:-1};let focus=0;
     const O={Core,ReadableLoop,GcpAgentState:{revision:0},JSON,Date,Array,console:{log(){}},
@@ -17,10 +17,14 @@ function setup(){
         backend:'none',modelName:'',modelEnabled:false,modelAlways:false,_t0:Date.now(),
         input:{forceActiveFocus(){focus++;}},context:()=>({...loc}),
         executeSteps:(steps,from)=>calls.push({steps:plain(steps),from}),decisionLogged:e=>events.push(plain(e))};
+    O.themeEditor={cancel(){}}; // Theme UI is outside this confirmation fixture.
     O.root=O;vm.createContext(O);
-    vm.runInContext(['sameContext','clearConfirmation','requestExecution','confirmationSummary','confirmIntent',
+    O._candidateScope=[]; O.recordChange=function(){};
+    vm.runInContext(['recordGate','checkSelection','checkSteps','sameContext','clearConfirmation','requestExecution','confirmationSummary','confirmIntent',
         'rejectIntent','cancelWaiting','submit','choose','finish'].map(extract).join('\n'),O);
     vm.runInContext('String.prototype.arg=function(v){return String(this).replace(/%[1-9]/,String(v));}',O);
+ const requestWithTrustedFixture=O.requestExecution;
+ O.requestExecution=function(steps,source,policy){O._candidateScope=plain(steps);return requestWithTrustedFixture(steps,source,Object.assign({},policy,{candidates:plain(steps)}));};
     return {O,calls,events,loc,focus:()=>focus};
 }
 function result(c=layout()){return {intent:'把風速計移到左上角',candidates:[c],rule:{decision:'SELECT',choice_id:c.id,reason_zh:'明確'}};}
@@ -45,7 +49,7 @@ test('manual page change blocks Yes',()=>{const {O,calls,loc}=setup();O.requestE
 test('manual section change blocks Yes',()=>{const {O,calls,loc}=setup();O.requestExecution([nav()],'model',{modelSelected:true});loc.section=2;O.confirmIntent();assert.equal(calls.length,0);});
 test('double Yes dispatches once',()=>{const {O,calls}=setup();O.requestExecution([layout()],'model',{modelSelected:true});O.confirmIntent();O.confirmIntent();assert.equal(calls.length,1);});
 test('No clears all continuation state and focuses correction input',()=>{const {O,calls,focus}=setup();O.requestExecution([layout()],'model',{modelSelected:true});O.pendingText='old';O._pending=result();O.rejectIntent();assert.equal(calls.length,0);assert.equal(O._confirmation,null);assert.equal(O._pending,null);assert.equal(O.pendingText,'');assert.equal(focus(),1);});
-test('card plan is detached from mutable candidates',()=>{const {O,calls}=setup(),c=layout();O.requestExecution([c],'model',{modelSelected:true});c.module='different';c.label_zh='changed';O.confirmIntent();assert.equal(calls[0].steps[0].module,'wind');assert.notEqual(calls[0].steps[0].label_zh,'changed');});
+test('card plan is detached from mutable candidates',()=>{const {O,calls}=setup(),c=layout();O.requestExecution([c],'model',{modelSelected:true});c.module='different';c.label_zh='changed';O.confirmIntent();assert.equal(calls[0].steps[0].module,'windGauge');assert.notEqual(calls[0].steps[0].label_zh,'changed');});
 test('cancel clears card and cannot later dispatch',()=>{const {O,calls}=setup();let aborted=0;O.requestExecution([layout()],'model',{modelSelected:true});O._cancelModel=()=>{aborted++;};O.cancelWaiting();O.confirmIntent();assert.equal(calls.length,0);assert.equal(aborted,1);assert.equal(O._confirmation,null);});
 test('unsupported flight action is rejected before card or dispatch',()=>{const {O,calls}=setup();O.requestExecution([{id:'ARM',kind:'flight',label_zh:'解鎖'}],'model',{modelSelected:true});assert.equal(calls.length,0);assert.equal(O._confirmation,null);});
 test('missing action is rejected',()=>{const {O,calls}=setup();O.requestExecution([null],'model',{modelSelected:true});assert.equal(calls.length,0);assert.equal(O._confirmation,null);});
@@ -55,7 +59,7 @@ test('request cannot replace an active transaction',()=>{const {O,calls}=setup()
 test('summary is numbered in execution order',()=>{const {O}=setup();O.requestExecution([nav(),layout()],'rule',{});assert(O.confirmationSummary().includes('① 切到即時飛行\n② 風速計移到左上角'));});
 test('failed model uses direct confident rule fallback',()=>{const {O,calls}=setup();O.finish(result(),{ok:false,error:'timeout'});assert.equal(calls.length,1);assert.equal(O._confirmation,null);});
 test('generic settings stay clarification even with valid fake model',()=>{const {O,calls}=setup(),r=result(nav());r.generic_settings=true;r.rule={decision:'CLARIFY',reason_zh:'設定目標待確認'};O.finish(r,model(nav()));assert.equal(calls.length,0);assert.equal(O._confirmation,null);assert.equal(O.choices.length,1);});
-test('unknown model candidate never reaches execution or card',()=>{const {O,calls}=setup();O.finish(result(),{ok:true,decision:'SELECT',choice_id:'UNKNOWN'});assert.equal(calls.length,0);assert.equal(O._confirmation,null);});
+test('unknown model candidate is rejected and validated rule fallback keeps its own action',()=>{const {O,calls}=setup();O.finish(result(),{ok:true,decision:'SELECT',choice_id:'UNKNOWN'});assert.equal(calls.length,1);assert.equal(calls[0].steps[0].id,'LAYOUT_WIND');assert.equal(calls[0].steps[0].module,'windGauge');assert.equal(O._confirmation,null);assert(O.gateLog.some(e=>e.stage==='selection'&&!e.ok));assert(O.gateLog.some(e=>e.stage==='rule_fallback'&&e.ok));});
 test('fresh utterance discards old card before analysis',()=>{const {O,calls}=setup();O.requestExecution([layout()],'model',{modelSelected:true});let observed=false;O.finish=()=>{observed=true;assert.equal(O._confirmation,null);};O.submit('去告警中心');assert(observed);assert.equal(calls.length,0);});
-test('events distinguish pending confirmation from accepted execution',()=>{const {O,events,calls}=setup();O.requestExecution([nav()],'model',{modelSelected:true,intent:'看畫面'});assert.equal(events[0].phase,'confirmation_required');assert.equal(events[0].executed,false);assert.equal(calls.length,0);O.confirmIntent();assert.equal(events[1].phase,'confirmation_accepted');assert.equal(calls.length,1);});
+test('events distinguish pending confirmation from accepted execution',()=>{const {O,events,calls}=setup();O.requestExecution([nav()],'model',{modelSelected:true,intent:'看畫面'});assert.equal(events.filter(e=>e.phase)[0].phase,'confirmation_required');assert.equal(events.filter(e=>e.phase)[0].executed,false);assert.equal(calls.length,0);O.confirmIntent();assert.equal(events.filter(e=>e.phase)[1].phase,'confirmation_accepted');assert.equal(calls.length,1);assert(events.some(e=>e.gate==='post'&&e.stage==='before_card'&&e.ok));assert(events.some(e=>e.gate==='post'&&e.stage==='after_card'&&e.ok));});
 console.log('confirmation v6: '+count+' cases PASS');

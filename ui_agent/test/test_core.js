@@ -341,5 +341,52 @@ const pendingForModel=C.analyzeTurn('風速計',ctx,'放大一點')
 const pendingMessage=JSON.parse(C.buildUserMessage(pendingForModel,ctx))
 if(pendingMessage.pending_intent!=='放大一點'||pendingMessage.input_intent!=='風速計')fail++
 
+
+// 0397 safety gate: first functional execution belongs to Claude.
+{
+    const assert = require('assert')
+    const loc = {page:1,section:-1,modules:{}}
+    const ok = {id:'LAY_attitude_SCALE_125',kind:'layout',module:'attitude',op:'scale',factor:1.25}
+    const gate = (ids,cs=[ok]) => C.gateSelection({decision:'SELECT',steps:ids.map(choice_id=>({choice_id}))},cs,loc)
+    const code = (r,c) => r.failures.some(f=>f.code===c)
+    assert(gate([ok.id]).ok)
+    assert(code(gate(['FORGED']), 'NOT_IN_CANDIDATES'))
+    assert(!code(gate([ok.id]), 'NOT_IN_CANDIDATES'))
+    assert(code(gate(['CMD'],[{id:'CMD',kind:'flight',command:'takeoff'}]), 'FLIGHT_COMMAND'))
+    assert(!code(gate([ok.id]), 'FLIGHT_COMMAND'))
+    for (const action of [{op:'hide'},{op:'show',opacity:0},{op:'move',region:'TR',page:2}]) {
+        const c=Object.assign({},ok,action)
+        assert(code(gate([c.id],[c]), 'LOCKED_MODULE'))
+    }
+    for (const action of [{op:'scale',factor:1.25},{op:'move',region:'TR'}]) {
+        const c=Object.assign({},ok,action)
+        assert(gate([c.id],[c]).ok)
+    }
+    assert(code(gate(Array(6).fill(ok.id)), 'STEP_LIMIT'))
+    assert(!code(gate(Array(5).fill(ok.id)), 'STEP_LIMIT'))
+    assert(code(gate([ok.id,'FORGED']), 'NOT_IN_CANDIDATES'))
+    assert(code(gate([ok.id],[ok,ok]), 'NOT_IN_CANDIDATES'))
+    const a=C.analyze('切到即時飛行然後把風速計放大',loc)
+    assert.equal(a.rule.decision,'SELECT')
+    assert.deepEqual(a.rule.steps.map(s=>s.choice_id),['LAY_windGauge_SCALE_125'])
+    assert.equal(a.skipped.length,1)
+    const b=C.analyze('把風速計放大並移到右上',loc)
+    assert.equal(b.rule.decision,'SELECT')
+    assert.deepEqual(b.rule.steps.map(s=>s.choice_id),['LAY_windGauge_SCALE_125','LAY_windGauge_MOVE_TR'])
+    assert(!b.candidates.some(c=>c.kind==='layout'&&c.module!=='windGauge'))
+    assert.equal(C.analyze('打開返航設定',loc).rule.choice_id,'NAV_3_0')
+    const d=C.analyze('返航電量在哪裡看',loc)
+    assert.equal(d.rule.decision,'CLARIFY')
+    for(const id of ['NAV_3_0','NAV_3_1'])assert(d.candidates.some(c=>c.id===id))
+    assert.equal(C.analyze('起飛然後把風速計放大',loc).gate,'pre')
+    const info=['返航電量在哪裡看','返航高度設多少','返航在哪裡','哪裡看返航','顯示返航設定','返航高度多少',
+        '起飛在哪裡看','降落在哪裡看','拍照在哪裡看','錄影在哪裡看','解鎖狀態在哪裡看','上鎖狀態在哪裡看',
+        '懸停在哪裡看','開始任務在哪裡看','暫停任務在哪裡看']
+    for(const q of info)assert.equal(C.preGate(q),null,q)
+    for(const q of ['起飛','降落','返航','解鎖','上鎖','懸停','開始任務','執行任務','暫停任務','拍照','錄影']) {
+        const r=C.preGate(q); assert(r&&r.gate==='pre'&&r.rule.decision==='HOLD',q)
+    }
+}
+
 console.log(fail ? fail + " 項失敗" : "全部通過")
 process.exit(fail ? 1 : 0)

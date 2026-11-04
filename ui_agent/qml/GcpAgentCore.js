@@ -215,7 +215,7 @@ function parameterNavigation(intent, ctx) {
         var c = { id: "NAV_" + r.page + "_" + r.section, kind: "nav", page: r.page, section: r.section,
                   label_zh: "開啟「" + pageName(r.page) + "」設定頁，請自行修改數值", score: 1.2 }
         var here = ctx.page === r.page && ctx.section === r.section
-        return { intent: String(intent), candidates: here ? [] : [c],
+        return { intent: String(intent), noop: here, candidates: here ? [] : [c],
             evidence: [{ id: "E1", text: "參數只能由操作使用者手動修改；本動作只換頁" }],
             rule: { decision: here ? "HOLD" : "SELECT", choice_id: here ? "" : c.id, final: true,
                     reason_zh: here ? "已在設定頁，請自行修改參數" : c.label_zh } }
@@ -282,12 +282,21 @@ function analyze(intent, ctx) {
         rule: { decision: "HOLD", choice_id: "", final: true, reason_zh: why } } }
     if (parts.length > MAX_PLAN_STEPS) return hold("一次最多五步，請分開說明")
     var candidates = [], evidence = [], seen = {}, steps = [], clauses = [], next = Object.assign({}, ctx || {})
-    var all = true
+    var all = true, inheritedModule = "", skipped = []
     for (var i = 0; i < parts.length; ++i) {
-        var r = analyzeSingle(parts[i], next)
+        var clause = parts[i]
+        if (inheritedModule && hasLayoutAction(clause) && !namedModuleTarget(clause) && !globalTextTarget(clause))
+            clause = moduleById(inheritedModule).name + " " + clause
+        var r = analyzeSingle(clause, next)
         clauses.push({ intent: parts[i], page: next.page, section: next.section,
                        candidate_ids: r.candidates.map(function(c) { return c.id }) })
-        if (r.rule.final && r.rule.decision === "HOLD") return hold(r.rule.reason_zh)
+        if (r.noop === true) { skipped.push({clause: i+1, reason_zh: r.rule.reason_zh}); continue }
+        if (r.rule.final && r.rule.decision === "HOLD") {
+            var blocked = hold(r.rule.reason_zh)
+            if (r.gate) blocked.gate = r.gate
+            if (r.safety_hold) blocked.safety_hold = true
+            return blocked
+        }
         for (var j = 0; j < r.candidates.length; ++j) {
             var c = r.candidates[j]
             // History commands cannot participate in a transaction containing new changes.
@@ -298,10 +307,14 @@ function analyze(intent, ctx) {
             evidence.push({ id: "E" + (evidence.length + 1), text: "步驟" + (i + 1) + "：" + r.evidence[j].text })
         if (r.rule.decision === "SELECT") {
             steps.push({ choice_id: r.rule.choice_id })
-            next = afterCandidate(next, candidateById(r, r.rule.choice_id))
+            var selected = candidateById(r, r.rule.choice_id)
+            next = afterCandidate(next, selected)
+            inheritedModule = selected && selected.kind === "layout" ? selected.module : ""
         } else all = false
     }
-    return { intent: String(intent), candidates: candidates, evidence: evidence, compound: true, clauses: clauses,
+    if (all && !steps.length) return {intent: String(intent), candidates: [], evidence: evidence, compound: true,
+        noop: true, skipped: skipped, rule: {decision: "HOLD", final: true, choice_id: "", reason_zh: "已在指定畫面，沒有其他待執行步驟"}}
+    return { intent: String(intent), candidates: candidates, evidence: evidence, compound: true, clauses: clauses, skipped: skipped,
         rule: all ? { decision: "SELECT", steps: steps, reason_zh: "全部子句皆明確，依序套用" }
                   : { decision: "CLARIFY", choice_id: "", reason_zh: "有子句不明確，請分開或補充說明；尚未套用任何一步" } }
 }
@@ -377,8 +390,69 @@ function genericSettings(intent, ctx) {
             rule:{decision:"CLARIFY",choice_id:"",reason_zh:"想開啟哪個設定頁？"}}
 }
 
+// Coarse intent screening. Informational queries pass to ordinary matching.
+function preGate(intent) {
+    var raw = norm(intent)
+    var CMD_WORDS = ["起飛", "降落", "返航", "解鎖", "上鎖", "懸停", "開始任務", "執行任務", "暫停任務", "拍照", "錄影", "takeoff", "land"]
+    var NAV_HINTS = ["在哪", "哪裡", "哪里", "顯示", "多少", "什麼", "是否", "怎麼", "如何", "查詢", "查询", "設定", "設置", "頁", "畫面", "切", "去", "打開", "開啟", "看", "查看", "進入", "前往", "參數", "保護"]
+    // 模組名稱裡的字（例如「返航距離」）不算飛行指令
+    // Strip complete parameter subjects before module aliases (高度) split them.
+    // A separate explicit 起飛/返航 still blocks; no broad edit-verb exemption.
+    var cmdText = raw.replace(/返航(?:高度|電量|电量|速度|距離|距离)/g, " ")
+    var modNames = []
+    for (var mi = 0; mi < MODULES.length; ++mi) modNames = modNames.concat([MODULES[mi].name], MODULES[mi].aliases)
+    modNames.sort(function (a, b) { return b.length - a.length })
+    for (mi = 0; mi < modNames.length; ++mi) cmdText = cmdText.split(norm(modNames[mi])).join(" ")
+    if (hasAny(cmdText, CMD_WORDS) && !hasAny(raw, NAV_HINTS)) {
+        return { intent: String(intent || ""), candidates: [], gate: "pre", safety_hold: true, evidence: [{ id: "E1", text: "意圖像是飛行或相機指令；介面助理只換頁與調整版面，不送指令" }],
+                 rule: { decision: "HOLD", choice_id: "", final: true, reason_zh: "我不會送飛行或相機指令，請用畫面上的指令區（需滑動確認）" } }
+    }
+
+    return null
+}
+
+// Pure post-selection boundary. Resolve trusted candidates by ID, never model action fields.
+// Failure step is one-based; step 0 describes the whole plan.
+function gateSelection(decision, candidates, ctx) {
+    var failures = [], checks = [], d = decision || {}, scope = Array.isArray(candidates) ? candidates : []
+    ctx = ctx || {}
+    function fail(code, step, detail) { failures.push({code: code, step: step, detail: detail}) }
+    if (d.decision !== "SELECT") return {ok: true, failures: [], checks: []}
+    var steps = Array.isArray(d.steps) ? d.steps : [{choice_id: d.choice_id}]
+    if (!steps.length || steps.length > MAX_PLAN_STEPS) fail("STEP_LIMIT", 0, "Plan must contain one to five steps")
+    for (var i = 0; i < steps.length; ++i) {
+        var step = steps[i], id = step && step.choice_id
+        var matches = scope.filter(function(c) { return c && c.id === id })
+        var first = failures.length
+        if (typeof id !== "string" || !id || matches.length !== 1) {
+            fail("NOT_IN_CANDIDATES", i+1, "Every selected ID must occur exactly once in this utterance's candidates")
+        } else {
+            var c = matches[0], a = c.action || c
+            var kinds = ["nav", "layout", "text_scale", "layout_load", "layout_default", "layout_save_current", "layout_save", "undo", "redo", "reset_all"]
+            var unsafe = kinds.indexOf(a.kind) < 0 || a.command !== undefined || a.parameter !== undefined || a.mavlink !== undefined
+            if (a.kind === "layout" && ["move", "nudge", "scale", "show", "hide", "reset"].indexOf(a.op) < 0) unsafe = true
+            if (a.kind === "nav" && (!Number.isInteger(a.page) || a.page < 0 || a.page > 13 ||
+                !Number.isInteger(a.section) || a.section < -1 || a.op !== undefined)) unsafe = true
+            if (a.kind === "text_scale" && TEXT_SCALES.indexOf(a.value) < 0) unsafe = true
+            if (unsafe) fail("FLIGHT_COMMAND", i+1, "Only catalogued UI navigation, layout and history actions are allowed")
+            var policy = a.kind === "layout" ? moduleById(a.module) : null
+            var observed = (ctx.modules || {})[a.module] || {}
+            var locked = policy && policy.locked || observed.locked === true || a.module === "attitude" || a.module === "actionDock"
+            if (a.kind === "layout" && locked && (a.op === "hide" || a.visible === false ||
+                (a.opacity !== undefined && a.opacity !== (observed.opacity === undefined ? 1 : observed.opacity)) ||
+                (a.page !== undefined && a.page !== (observed.page === undefined ? policy && policy.page : observed.page))))
+                fail("LOCKED_MODULE", i+1, "Locked modules cannot be hidden, made transparent or moved to another page")
+        }
+        checks.push({step: i+1, choice_id: id || "", ok: failures.length === first,
+            failures: failures.slice(first)})
+    }
+    return {ok: failures.length === 0, failures: failures, checks: checks}
+}
+
 function analyzeSingle(intent, ctx) {
     ctx = ctx || {}
+    var screened = preGate(intent)
+    if (screened) return screened
     var named = namedLayoutIntent(intent, ctx)
     if (named) return named
     var parameter = parameterNavigation(intent, ctx)
@@ -398,18 +472,16 @@ function analyzeSingle(intent, ctx) {
         cands.push(c)
     }
 
-    var CMD_WORDS = ["起飛", "降落", "返航", "解鎖", "上鎖", "懸停", "開始任務", "執行任務", "暫停任務", "拍照", "錄影", "takeoff", "land"]
-    var NAV_HINTS = ["設定", "設置", "頁", "畫面", "切", "去", "打開", "開啟", "看", "查看", "進入", "前往", "參數", "保護"]
-    // 模組名稱裡的字（例如「返航距離」）不算飛行指令
-    var cmdText = raw
-    var modNames = []
-    for (var mi = 0; mi < MODULES.length; ++mi) modNames = modNames.concat([MODULES[mi].name], MODULES[mi].aliases)
-    modNames.sort(function (a, b) { return b.length - a.length })
-    for (mi = 0; mi < modNames.length; ++mi) cmdText = cmdText.split(norm(modNames[mi])).join(" ")
-    if (hasAny(cmdText, CMD_WORDS) && !hasAny(raw, NAV_HINTS)) {
-        evidence.push({ id: "E2", text: "意圖像是飛行或相機指令；介面助理只換頁與調整版面，不送指令" })
-        return { intent: String(intent || ""), candidates: [], evidence: evidence,
-                 rule: { decision: "HOLD", choice_id: "", final: true, reason_zh: "我不會送飛行或相機指令，請用畫面上的指令區（需滑動確認）" } }
+
+    if (hasAny(raw, ["返航", "rtl"]) && hasAny(raw, ["電量", "電池"]) &&
+        hasAny(raw, ["在哪", "哪裡", "哪里", "看", "查詢", "多少", "顯示"])) {
+        var topics = [0,1].map(function(section) {
+            var sec = SECTIONS.filter(function(s) { return s.page === 3 && s.section === section })[0]
+            return {id: "NAV_3_"+section, kind: "nav", page: 3, section: section,
+                score: 1, label_zh: "切到「安全設定 › "+sec.name+"」"}
+        })
+        return {intent: String(intent), candidates: topics, evidence: evidence,
+            rule: {decision: "CLARIFY", final: true, choice_id: "", reason_zh: "返航與電量分屬兩個設定目標，請選要查看的項目"}}
     }
 
     var textAction = textScaleAction(raw)
@@ -464,6 +536,8 @@ function analyzeSingle(intent, ctx) {
     }
     mods.sort(function (a, b) { return b.s - a.s })
     if (mods.length > 1 && mods[1].s < mods[0].s - 0.15) mods = [mods[0]]   // 明確點名的模組優先
+
+    if (hasAny(raw, ["設定", "設置", "頁", "畫面"]) && hasAny(raw, ["打開", "開啟", "切到", "前往"]) && !hasLayoutAction(raw)) mods = []
 
     // 動作字詞只在「去掉模組名稱」後的文字裡找，避免「底部遙測列」的「底部」被當成位置
     var opText = raw
@@ -521,7 +595,7 @@ function analyzeSingle(intent, ctx) {
 
     // 2) 版面調整
     if (layoutIntent && !wantRedo && !wantResetAll) {
-        var targets = mods.length ? mods : MODULES.map(function (m) { return { m: m, s: 0.3 } })
+        var targets = mods.length ? mods : MODULES.filter(function(m) { return m.page === ctx.page }).map(function (m) { return { m: m, s: 0.3 } })
         for (i = 0; i < targets.length; ++i) {
             var m = targets[i].m, base = targets[i].s >= 0.5 ? 0.9 : 0.3
             var info = (ctx.modules || {})[m.id]
@@ -616,7 +690,7 @@ function analyzeSingle(intent, ctx) {
         else otherBest = Math.max(otherBest, cands[i].score)
     }
     if (hereBest && hereBest.score + 0.3 >= 0.75 && hereBest.score + 0.3 - otherBest >= 0.15)
-        return { intent: String(intent || ""), candidates: [], evidence: evidence,
+        return { intent: String(intent || ""), noop: true, candidates: [], evidence: evidence,
                  rule: { decision: "HOLD", choice_id: "", final: true, reason_zh: "已經在" + hereBest.label_zh.replace("（已在此畫面）", "").replace("切到", "") + "了" } }
 
     cands.sort(function (a, b) { return b.score - a.score })

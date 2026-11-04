@@ -151,8 +151,11 @@ Item {
     property var _cancelModel: null
     property int _modelGeneration: 0
     property var _confirmation: null   // Detached plan; no execution until explicit Yes.
+    property var _candidateScope: [] // Detached candidates for this utterance only.
     property var _choiceGuard: null
     readonly property bool canSaveLayout: !busy && GcpAgentState.hasUnsavedChanges
+    property var gateLog: []           // Separate bounded session audit; never changes undo/history or Settings.
+    property bool gateHistoryOpen: false
     property var changeLog: []         // Session log includes undone actions; never written to Settings.
 
     function resolvedModelTimeoutMs() {
@@ -171,6 +174,15 @@ Item {
         if (!isFinite(n) || n < 1 || n > 120000) return false
         agentSettings.llmTimeoutMs = n
         return true
+    }
+
+    function recordGate(entry) {
+        const row = JSON.parse(JSON.stringify(entry))
+        row.time = new Date().toISOString()
+        row.label = (row.gate === "pre" ? qsTr("粗篩") : qsTr("放行檢查")) + "：" +
+            (row.ok ? qsTr("通過") : qsTr("已停止"))
+        root.gateLog = [row].concat(root.gateLog || []).slice(0, 100)
+        decisionLogged(entry)
     }
 
     function recordChange(text) {
@@ -194,6 +206,7 @@ Item {
             pendingText = ""
             choices = []
             _pending = null
+        _candidateScope = []
             _choiceGuard = null
             if (_readableSession) _readableSession.cancel()
             if (_cancelModel) cancelWaiting()
@@ -224,9 +237,30 @@ Item {
         statusText = ""
         choices = []
         _pending = null
+        _candidateScope = []
         _choiceGuard = null
         messageText = readableCancelled && readableCancelled.phase === "rollback_failed" ?
             qsTr("取消時整組復原未完成，請檢查畫面") : qsTr("已取消")
+    }
+
+    function checkSelection(decision, candidates, stage) {
+        const result = Core.gateSelection(decision, candidates, context())
+        recordGate({gate: "post", stage: stage, ok: result.ok, failures: result.failures, checks: result.checks})
+        if (!result.ok) messageText = qsTr("介面動作未通過檢查：%1").arg(result.failures.map(f => f.code).join("、"))
+        return result.ok
+    }
+
+    function checkSteps(steps, candidates, stage) {
+        const decision = {decision: "SELECT", steps: (steps || []).map(c => ({choice_id: c && c.id}))}
+        if (!checkSelection(decision, candidates || [], stage)) return false
+        // Dispatch uses the same detached trusted actions that were selected, never altered payloads.
+        const same = steps.every(c => (candidates || []).some(t => t.id === c.id && JSON.stringify(t) === JSON.stringify(c)))
+        if (!same) {
+            const failure = {code: "NOT_IN_CANDIDATES", step: 0, detail: "Candidate action changed after selection"}
+            recordGate({gate: "post", stage: stage, ok: false, failures: [failure]})
+            messageText = qsTr("候選動作已改變，請重新提出要求")
+        }
+        return same
     }
 
     function submit(text) {
@@ -238,7 +272,14 @@ Item {
         clearConfirmation()
         choices = []
         messageText = ""
+        _candidateScope = []
+        _pending = null
+        _candidateScope = []
+        _choiceGuard = null
         const ctx = context()
+        const screened = Core.preGate(text)
+        recordGate({gate: "pre", ok: !screened, intent: text})
+        if (screened) { pendingText = ""; messageText = screened.rule.reason_zh; return }
         // Intercept the bounded goal before ordinary candidate analysis/model fallback.
         const readable = ReadableLoop.goalTemplate(text, ctx)
         if (readable) {
@@ -247,6 +288,9 @@ Item {
             return
         }
         let result = Core.analyzeTurn(text, ctx, pendingText)
+        if (result.gate === "pre") {
+            recordGate({gate:"pre",ok:false,intent:result.intent})
+        }
         if (!result.pending_intent) pendingText = ""
         _pending = result
         _t0 = Date.now()
@@ -266,6 +310,7 @@ Item {
                 statusText = ""
                 if (!sameContext(guard)) {
                     _pending = null
+        _candidateScope = []
                     choices = []
                     messageText = qsTr("畫面已改變，請再說一次")
                     return
@@ -291,6 +336,13 @@ Item {
         // invent which setting the user meant. Model errors use the same fallback.
         if (result.generic_settings) { decision = result.rule; source = qsTr("規則（設定目標待確認）") }
         // 模型被給全目錄但無效時，規則原本就沒有候選 → 保持 HOLD
+        const scope = JSON.parse(JSON.stringify(result.candidates || []))
+        if (!checkSelection(decision, scope, "selection")) {
+            if (decision === model && checkSelection(result.rule, scope, "rule_fallback")) {
+                decision = result.rule; source = qsTr("規則（模型未通過放行檢查）")
+            } else decision = {decision: "HOLD", reason_zh: messageText}
+        }
+        _candidateScope = scope
         const selectedIds = decision.steps ? decision.steps.map(s => s.choice_id) : [decision.choice_id]
         if (decision.decision === "SELECT" && (!selectedIds.length || selectedIds.length > Core.MAX_PLAN_STEPS ||
             selectedIds.some(id => !Core.candidateById(result, id))))
@@ -310,7 +362,7 @@ Item {
                 ruleUnique: result.rule.decision === "SELECT" && !result.compound && steps.length === 1 &&
                     result.rule.choice_id === steps[0].id &&
                     result.candidates.filter(c => c.score >= 0.75).length === 1,
-                intent: result.intent
+                intent: result.intent, candidates: scope
             })
         } else if (decision.decision === "CLARIFY") {
             pendingText = result.intent
@@ -320,6 +372,7 @@ Item {
             choices = result.compound ? [] : (result.generic_settings ? available : available.slice(0, 6))
             messageText = result.compound ? decision.reason_zh : (decision.reason_zh || qsTr("有多個可能")).replace(/[，。,]?\s*請選一個[：:]?$/, "") + qsTr("，請選一個：")
         } else {
+            _candidateScope = []
             pendingText = result.pending_text || ""
             messageText = decision.reason_zh || qsTr("我沒辦法處理這個要求。可以試試「切到告警中心」或「把風速計移到左上角」。")
         }
@@ -336,10 +389,13 @@ Item {
         clearConfirmation()
         pendingText = ""
         _pending = null
+        _candidateScope = []
         choices = []
         try {
             const prepared = ReadableHost.prepareReadable(captureReadable(candidates), Core, ReadableCatalog)
-            _confirmation = { readable: prepared, intent: String(intent), source: qsTr("規則目標"),
+            const scope = JSON.parse(JSON.stringify(prepared.spec.catalog))
+            if (!checkSelection({decision:"SELECT",steps:prepared.spec.steps.map(id => ({choice_id:id}))}, scope, "readable_before_card")) return
+            _confirmation = { candidates: scope, readable: prepared, intent: String(intent), source: qsTr("規則目標"),
                 guard: prepared.spec.guard, steps: [] }
             messageText = ""
             decisionLogged({phase: "confirmation_required", goal: true, intent: String(intent), executed: false})
@@ -352,6 +408,7 @@ Item {
     function startReadable(pending) {
         // Never route a goal through the legacy executeSteps scale-only path.
         const prepared = pending.readable
+        if (!checkSelection({decision:"SELECT",steps:prepared.spec.steps.map(id => ({choice_id:id}))}, pending.candidates, "readable_before_start")) return
         const viewport = readableViewport
         const candidates = JSON.parse(JSON.stringify(prepared.basis.candidates))
         const scheduler = readableScheduler
@@ -384,7 +441,10 @@ Item {
                 else if (readableTick.onFire === handle) { readableTick.stop(); readableTick.onFire = null }
             },
             now: function() { return Date.now() },
-            report: function(e) { if (!root._destroying) root.decisionLogged({phase: "readability_loop", event: e}) },
+            report: function(e) { if (!root._destroying) {
+                root.decisionLogged({phase: "readability_loop", event: e})
+                if (e.gate) root.recordGate(e)
+            } },
             finished: function(s) {
                 if (root._readableSession !== session) return
                 root._readableSession = null
@@ -440,13 +500,15 @@ Item {
             return
         }
         policy = policy || {}
+        const scope = JSON.parse(JSON.stringify(policy.candidates || _candidateScope))
+        if (!checkSteps(steps, scope, "before_card")) { _candidateScope = []; return }
         const requireCard = policy.modelSelected === true || policy.goal === true || steps.length > 1 ||
             (steps[0].kind !== "nav" && policy.ruleUnique !== true && policy.userSelected !== true)
         // Detach from model/rule candidates so they cannot mutate a plan after it is shown.
         const plan = JSON.parse(JSON.stringify(steps))
-        if (!requireCard) { executeSteps(plan, source); return }
+        if (!requireCard) { executeSteps(plan, source, scope); return }
         const loc = context()
-        _confirmation = { steps: plan, source: source, intent: policy.intent || "",
+        _confirmation = { candidates: scope, steps: plan, source: source, intent: policy.intent || "",
             guard: { revision: GcpAgentState.revision, page: loc.page, section: loc.section } }
         pendingText = ""
         messageText = ""
@@ -471,11 +533,13 @@ Item {
         if (!sameContext(pending.guard)) {
             pendingText = ""
             _pending = null
+        _candidateScope = []
             choices = []
             messageText = qsTr("畫面已改變，請再說一次")
             return
         }
         _pending = null
+        _candidateScope = []
         if (pending.readable) {
             try {
                 ReadableHost.assertReadableCurrent(pending.readable, captureReadable(pending.readable.basis.candidates), Core, ReadableCatalog)
@@ -489,7 +553,8 @@ Item {
         }
         decisionLogged({ phase: "confirmation_accepted", intent: pending.intent,
             steps: pending.steps.map(c => c.id), source: pending.source })
-        executeSteps(pending.steps, pending.source)
+        if (!checkSteps(pending.steps, pending.candidates, "after_card")) { _candidateScope = []; return }
+        executeSteps(pending.steps, pending.source, pending.candidates)
     }
 
     function rejectIntent() {
@@ -499,6 +564,7 @@ Item {
         pendingText = ""
         choices = []
         _pending = null
+        _candidateScope = []
         messageText = qsTr("請改說你想做什麼，尚未套用任何動作")
         decisionLogged({ phase: "confirmation_rejected", intent: intent, executed: false })
         input.forceActiveFocus()
@@ -597,19 +663,28 @@ Item {
     // ------------------------------------------------------------ 執行
     function choose(c) {
         if (!sameContext(_choiceGuard)) {
+            _candidateScope = []; _pending = null; _choiceGuard = null
             choices = []
             messageText = qsTr("畫面已改變，請再說一次")
             return
         }
-        requestExecution([c], qsTr("使用者選擇"), { userSelected: true,
+        requestExecution([c], qsTr("使用者選擇"), { candidates: _candidateScope, userSelected: true,
             goal: _pending && _pending.goal_intent === true, intent: _pending ? _pending.intent : "" })
     }
 
-    function execute(c, source) {
+    function execute(c, source, scope) {
         if (busy || _transaction) return
         if (root._confirmation) root.clearConfirmation()
         choices = []
         if (!c) return
+        // Native toolbar/history controls have no model ID. Limit their host scope explicitly.
+        if (!scope) {
+            if (c.id || ["layout_save_current", "undo", "redo", "reset_all"].indexOf(c.kind) < 0) return
+            c = JSON.parse(JSON.stringify(c)); c.id = "HOST_" + c.kind
+            scope = [JSON.parse(JSON.stringify(c))]
+        }
+        if (!checkSteps([c], scope, "direct_executor")) return
+        _candidateScope = []
         if (c.kind === "layout_save_current") {
             pendingText = ""
             if (!canSaveLayout) { messageText = qsTr("沒有未儲存的版面變更"); return }
@@ -658,16 +733,18 @@ Item {
             }
             return
         }
-        executeSteps([c], source)
+        executeSteps([c], source, scope)
     }
 
     property var _transaction: null
     property var _layoutJob: null
-    function executeSteps(steps, source) {
+    function executeSteps(steps, source, scope) {
         if (busy || _transaction || !Array.isArray(steps) || !steps.length ||
             steps.length > Core.MAX_PLAN_STEPS || steps.some(c => !c)) return
+        scope = JSON.parse(JSON.stringify(scope || _candidateScope))
+        if (!checkSteps(steps, scope, "executor_begin")) { _candidateScope = []; return }
         if (steps.length === 1 && ["nav", "layout", "text_scale", "layout_load", "layout_default"].indexOf(steps[0].kind) < 0) {
-            execute(steps[0], source)
+            execute(steps[0], source, scope)
             return
         }
         if (steps.some(c => ["nav", "layout", "text_scale", "layout_load", "layout_default"].indexOf(c.kind) < 0) ||
@@ -679,7 +756,7 @@ Item {
         choices = []
         const label = steps.map(c => c.label_zh).join("、")
         const checkpoint = GcpAgentState.beginGroup()
-        _transaction = { steps: steps, index: 0, source: source, label: label,
+        _transaction = { candidates: scope, steps: JSON.parse(JSON.stringify(steps)), index: 0, source: source, label: label,
                          checkpoint: checkpoint, layoutGroup: false,
                          beforeLayout: GcpAgentState.layoutFingerprint() }
         _transaction.layoutLabel = steps.filter(c => c.kind !== "nav").map(c => c.label_zh).join("、")
@@ -688,6 +765,7 @@ Item {
     }
 
     function failSteps(reason) {
+        _candidateScope = []
         layoutRetry.stop()
         _layoutJob = null
         if (_transaction) GcpAgentState.rollbackGroup(_transaction.checkpoint)
@@ -726,6 +804,7 @@ Item {
             return
         }
         const c = tx.steps[tx.index]
+        if (!checkSteps([c], tx.candidates, "executor_step")) { failSteps(messageText); return }
         try {
             if (c.kind === "text_scale") {
                 beginLayoutStep()
@@ -770,6 +849,7 @@ Item {
             const job = root._layoutJob
             if (!job || !root._transaction) return
             const c = job.c
+            if (!root.checkSteps([c], root._transaction.candidates, "executor_layout_apply")) { root.failSteps(root.messageText); return }
             if (root.context().page !== job.page) {
                 root.failSteps(qsTr("等待時畫面已改變，已還原整組"))
                 return
@@ -793,6 +873,7 @@ Item {
     }
 
     function done(c, source, layoutChanged, navigated) {
+        _candidateScope = []
         pendingText = ""
         messageText = qsTr("已套用：%1（%2）").arg(c.label_zh).arg(source)
         recordChange(messageText)
@@ -1271,6 +1352,31 @@ Item {
                 font.pixelSize: (20 * GcpTheme.font.textScale)
                 enabled: root.canSaveLayout
                 onClicked: root.execute({ kind: "layout_save_current" }, qsTr("使用者儲存"))
+            }
+            Button {
+                objectName: "agentGateHistoryToggle"
+                visible: !root.themeEditorOpen
+                text: (root.gateHistoryOpen ? qsTr("收起安全檢查紀錄") : qsTr("查看安全檢查紀錄")) + " (" + root.gateLog.length + ")"
+                font.pixelSize: 18 * GcpTheme.font.textScale
+                onClicked: root.gateHistoryOpen = !root.gateHistoryOpen
+            }
+            ListView {
+                id: gateHistoryList
+                objectName: "agentGateHistory"
+                visible: root.gateHistoryOpen && !root.themeEditorOpen
+                Layout.fillWidth: true
+                Layout.preferredHeight: visible ? 64 : 0
+                clip: true
+                model: root.gateLog
+                delegate: Text {
+                    required property var modelData
+                    width: gateHistoryList.width
+                    text: modelData.label
+                    color: modelData.ok ? root.cSub : root.cWarn
+                    font.pixelSize: 18 * GcpTheme.font.textScale
+                    elide: Text.ElideRight
+                    height: 32
+                }
             }
             // 變更紀錄與復原
             Text { objectName: "agentHistoryHeading"; visible: !root.themeEditorOpen; text: qsTr("變更紀錄"); color: root.cSub; font.pixelSize: (18 * GcpTheme.font.textScale) }

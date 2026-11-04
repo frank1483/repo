@@ -30,7 +30,8 @@ function setup(options={}){
         requestExecution:(steps,from,policy)=>dispatch.push({steps:plain(steps),from,policy:plain(policy)}),
         decisionLogged:e=>events.push(plain(e)),failSteps(){throw Error('unexpected transaction');}};
     O.root=O;vm.createContext(O);
-    vm.runInContext(['resolvedModelTimeoutMs','setModelTimeout','callModel','finish','clearConfirmation','cancelWaiting'].map(extract).join('\n'),O);
+    O._candidateScope=[]; O.recordChange=function(){};
+    vm.runInContext(['recordGate','checkSelection','checkSteps','resolvedModelTimeoutMs','setModelTimeout','callModel','finish','clearConfirmation','cancelWaiting'].map(extract).join('\n'),O);
     vm.runInContext('String.prototype.arg=function(v){return String(this).replace(/%[1-9]/,String(v));}',O);
     Object.defineProperty(O,'modelTimeoutMs',{get:()=>O.resolvedModelTimeoutMs()});
     function start(r=result()){O.callModel(r,{page:0,section:-1},v=>done.push(plain(v)));return requests[requests.length-1];}

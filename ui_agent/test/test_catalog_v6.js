@@ -97,6 +97,7 @@ function runLoop(repair) {
     let state = clone(h.snapshot), ov = clone(h.frame.override), begins = 0, commits = 0, rollbacks = 0, proposes = 0;
     const p = spec(h), candidateIds = new Set(p.catalog.map(c => c.id));
     const loop = Loop.create(p, {
+        gateSelection: Core.gateSelection,
         begin() { ++begins; return 'group'; }, commit() { ++commits; },
         rollback() { ++rollbacks; state = clone(initial); },
         checkpoint() { return {state: clone(state), ov: clone(ov)}; },

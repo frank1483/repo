@@ -85,7 +85,7 @@ test('obstacle opacity change invalidates confirmation without revision',()=>{co
 test('prepared current host spec executes real Loop and Verifier once',()=>{
  const f=fixture();f.goal.allowMove=false;const p=Host.prepareReadable(f.capture(),Core,Catalog),s=Host.assertReadableCurrent(p,f.capture(),Core,Catalog);
  const baseline=clone(f.ov);let begins=0,commits=0,rollbacks=0;
- const loop=Loop.create(s,{begin(){begins++;return 'g';},commit(){commits++;},rollback(){rollbacks++;Object.assign(f.ov,baseline);},
+ const loop=Loop.create(s,{gateSelection:Core.gateSelection,begin(){begins++;return 'g';},commit(){commits++;},rollback(){rollbacks++;Object.assign(f.ov,baseline);},
  snapshot(){return f.capture().snapshot;},checkpoint(){return clone(f.ov);},restore(o){Object.assign(f.ov,o);},verify:Verifier.verify,
  execute(a,done){const h=f.capture(),policy=Core.MODULES.find(m=>m.id==='miniView');
    Object.assign(f.ov,Core.layoutTarget(a.op,h.frame.base,h.frame.area,h.frame.override,a.factor,h.frame.others,policy));done();}});

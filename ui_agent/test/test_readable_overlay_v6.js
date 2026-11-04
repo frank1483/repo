@@ -39,7 +39,8 @@ function fixture(){
   decisionLogged:e=>events.push(clone(e)),done(){finished.push('complete');O.open=false;},input:{forceActiveFocus(){}},
   callModel(){backendCalls++;throw Error('backend forbidden');}};
  O.root=O;vm.createContext(O);
- vm.runInContext(['captureReadable','requestReadableConfirmation','requestExecution','startReadable','clearConfirmation','sameContext','confirmationSummary',
+    O._candidateScope=[]; O.recordChange=function(){};
+ vm.runInContext(['recordGate','checkSelection','checkSteps','captureReadable','requestReadableConfirmation','requestExecution','startReadable','clearConfirmation','sameContext','confirmationSummary',
   'confirmIntent','submit','cancelWaiting','rejectIntent'].map(extract).join('\n'),O);
  vm.runInContext('String.prototype.arg=function(v){return String(this).replace(/%[1-9]/,String(v));}',O);
  function step(){assert(queue.length,'no pending poll');const q=queue.shift();clock+=q.delay;tick.onFire=null;q.fn();}

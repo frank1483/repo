@@ -53,6 +53,7 @@ function create(prepared, host, libs) {
         scheduled = host.schedule(poll, 16)
     }
     var loop = libs.loop.create(original.spec, {
+        gateSelection: function(d, candidates, ctx) { return libs.core.gateSelection(d, candidates, ctx) },
         snapshot: function() {
             if (token !== null) { own(); return copy(capture().snapshot) }
             var fresh = host.capture()

@@ -12,6 +12,7 @@ function harness(options={}){
     const reports=[],requests=[],callbacks=[],proposalCallbacks=[];
     const spec=options.spec||{goal:'fake goal',label:'goal group',steps:['A'],catalog:[nav('A',1),nav('R',1,{repairFor:['A'],failureCodes:['PAGE_NOT_REACHED']})],expected:{page:1}};
     const ports={
+        gateSelection: require('./load_core').gateSelection,
         begin(){begins++;return {world:clone(world),undo:clone(undo),redo:clone(redo)};},
         commit(cp,label){if(options.commitError)throw Error('commit');undo=cp.undo.concat([{label,world:cp.world}]);redo=[];commits++;},
         rollback(cp){rollbacks++;if(options.rollbackError)throw Error('restore unavailable');world=clone(cp.world);undo=clone(cp.undo);redo=clone(cp.redo);},
@@ -77,7 +78,7 @@ const stateSource=fs.readFileSync(path.join(__dirname,'../qml/GcpAgentState.qml'
 function functionText(name){const start=stateSource.indexOf('    function '+name+'(');assert(start>=0);const headEnd=stateSource.indexOf('\n',start);if(stateSource.slice(start,headEnd).trimEnd().endsWith('}'))return stateSource.slice(start,headEnd);const end=stateSource.indexOf('\n    }',headEnd);assert(end>start);return stateSource.slice(start,end+6);}
 function stateHarness(){let world={page:0};const s={_groupActive:false,_activeGroupCheckpoint:null,undoStack:[],redoStack:[{label:'old redo'}],revision:0,
     snapshot(){return clone(world);},_restore(cp){world=clone(cp);},setPage(page){world.page=page;},getPage(){return world.page;}};
-    vm.createContext(s);vm.runInContext(['beginGroup','commitGroup','rollbackGroup','undo','redo'].map(functionText).join('\n'),s);return s;}
+    require('./theme_fixture_v6').install(s);vm.createContext(s);vm.runInContext(['beginGroup','commitGroup','rollbackGroup','undo','redo'].map(functionText).join('\n'),s);return s;}
 test('opt-in State atomic group creates one undo then one redo for entire chain',()=>{const s=stateHarness(),cp=s.beginGroup();s.setPage(1);s.undoStack.push({label:'intermediate',snap:{page:0}});s.setPage(2);s.commitGroup(cp,'all steps','layout');assert.equal(s.undoStack.length,1);s.undo(1);assert.equal(s.getPage(),0);s.redo();assert.equal(s.getPage(),2);});
 test('State failure restores pre-group redo and undo',()=>{const s=stateHarness(),old=clone(s.redoStack),cp=s.beginGroup();s.setPage(3);s.undoStack.push({label:'bad'});s.redoStack=[];s.rollbackGroup(cp);assert.equal(s.getPage(),0);assert.deepStrictEqual(clone(s.redoStack),old);assert.equal(s.undoStack.length,0);});
 test('State rejects forged token and nested begin',()=>{const s=stateHarness(),cp=s.beginGroup();assert.throws(()=>s.beginGroup(),/nested/);assert.throws(()=>s.commitGroup(clone(cp),'bad'),/invalid/);assert.throws(()=>s.rollbackGroup(clone(cp)),/invalid/);s.rollbackGroup(cp);assert.throws(()=>s.rollbackGroup(cp),/invalid/);});

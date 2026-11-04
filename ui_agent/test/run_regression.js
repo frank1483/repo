@@ -2,6 +2,8 @@
 const fs = require('fs'), path = require('path'), C = require('./load_core');
 const input = process.argv[2] || path.join(__dirname,'regression_ui_agent.jsonl');
 const rows = fs.readFileSync(input,'utf8').split(/\r?\n/).filter(s=>s.trim()).map(JSON.parse);
+// Independent 0397 source fixtures. Existing corpus is unchanged.
+if (!process.argv[2]) rows.push(...fs.readFileSync(path.join(__dirname,'regression_safety_gate_0397.jsonl'),'utf8').trim().split(/\r?\n/).map(JSON.parse));
 if(rows.length<200) throw Error('Expected at least 200 fixtures');
 const seen = new Set();
 function simulate(cs,ctx) {
@@ -50,12 +52,23 @@ function evaluateTurns(r) {
 }
 let actions=0,locations=0,passed=0;const failures=[],by_category={},by_group={};
 for(const r of rows) {
+    if(r.gate_expect) {
+        if(!r.id||seen.has(r.id)||!r.ctx||typeof r.intent!=='string')throw Error('Invalid gate fixture');
+        seen.add(r.id);
+        const blocked=C.preGate(r.intent)!==null, valid=blocked===r.gate_expect.blocked;
+        const bucket=by_category[r.category]||(by_category[r.category]={total:0,passed:0});bucket.total++;
+        const group=by_group[r.group]||(by_group[r.group]={total:0,passed:0});group.total++;
+        if(valid){passed++;actions++;locations++;bucket.passed++;group.passed++;}
+        else failures.push({id:r.id,intent:r.intent,gate_expect:r.gate_expect,actual:{blocked}});
+        continue;
+    }
     if(!r.id||seen.has(r.id)||(typeof r.intent!=='string'&&!Array.isArray(r.turns))||!r.ctx||!r.expect||!Array.isArray(r.expect.ids))throw Error('Invalid fixture '+r.id);
     seen.add(r.id);
     const turns=evaluateTurns(r), result=turns.result, decision=result.rule;
     const ids=decision.decision==='SELECT'?(decision.steps?decision.steps.map(s=>s.choice_id):[decision.choice_id]):[];
     const candidates=ids.map(id=>C.candidateById(result,id));
-    const actionOK=turns.ok&&decision.decision===r.expect.decision&&JSON.stringify(ids)===JSON.stringify(r.expect.ids)&&candidates.every(Boolean);
+    const actionOK=turns.ok&&decision.decision===r.expect.decision&&JSON.stringify(ids)===JSON.stringify(r.expect.ids)&&candidates.every(Boolean)&&
+        (!r.expect.contains||r.expect.contains.every(id=>result.candidates.some(c=>c.id===id)));
     const final=candidates.every(Boolean)?simulate(candidates,r.turns?turns.ctx:r.ctx):{page:r.ctx.page,section:r.ctx.section,applied:false};
     const locationOK=final.page===r.expect.final_page&&final.section===r.expect.final_section&&
         (r.expect.applied===undefined||final.applied===r.expect.applied);
@@ -69,4 +82,3 @@ for(const group of Object.values(by_group))group.accuracy=group.passed/group.tot
 console.log(JSON.stringify({verification_scope:'rules + simulated shell only; no Qt/HTTP/Settings/device',total:rows.length,passed,
     action_accuracy:actions/rows.length,final_page_accuracy:locations/rows.length,by_category,by_group,failures},null,2));
 process.exitCode=failures.length?1:0;
-

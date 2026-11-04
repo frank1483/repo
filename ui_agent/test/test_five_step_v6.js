@@ -24,10 +24,13 @@ function setup(realExecutor=false){
   shell:{agentGoTo(page,section){stats.navigation.push(page);if(page===stats.failPage)return false;loc.page=page;loc.section=section;return true;}},
   executeSteps:(steps,from)=>calls.push({steps:plain(steps),from})};
  O.root=O;vm.createContext(O);
- const names=['sameContext','clearConfirmation','requestExecution','confirmationSummary','confirmIntent'];
+    O._candidateScope=[]; O.recordChange=function(){};
+ const names=['recordGate','checkSelection','checkSteps','sameContext','clearConfirmation','requestExecution','confirmationSummary','confirmIntent'];
  if(realExecutor)names.push('executeSteps','failSteps','navigateStep','beginLayoutStep','advanceSteps');
  vm.runInContext(names.map(extract).join('\n'),O);
  vm.runInContext('String.prototype.arg=function(v){return String(this).replace(/%[1-9]/,String(v));}',O);
+ const requestWithTrustedFixture=O.requestExecution;
+ O.requestExecution=function(steps,source,policy){O._candidateScope=plain(steps);return requestWithTrustedFixture(steps,source,Object.assign({},policy,{candidates:plain(steps)}));};
  function drain(){let n=0;while(queue.length){assert(++n<=30,'scheduler budget');queue.shift()();}}
  return {O,calls,events,loc,stats,drain};
 }

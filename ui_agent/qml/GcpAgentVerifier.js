@@ -23,6 +23,16 @@ function verify(snapshot, expected, extensions) {
         fail("INVALID_EXPECTATION", "", "expected.modules must be an array")
         targets = []
     }
+    // Same-page locked geometry still goes through all ordinary bounds,
+    // readability, collision and occlusion checks even if not explicitly targeted.
+    var lockedBefore = e.before && e.before.modules || {}
+    for (var geometryId in lockedBefore) {
+        if (!Object.prototype.hasOwnProperty.call(lockedBefore,geometryId) || lockedBefore[geometryId].locked !== true) continue
+        var currentLocked = modules[geometryId]
+        if (shown(currentLocked) && (currentLocked.page === undefined || currentLocked.page === s.page) &&
+            !targets.some(function(t) { return t && t.id === geometryId }))
+            targets = targets.concat([{id: geometryId, minWidth: currentLocked.minWidth, minHeight: currentLocked.minHeight}])
+    }
     for (var i=0; i<targets.length; ++i) {
         var t = targets[i], id = t && t.id, m = modules[id]
         if (!id) { fail("INVALID_EXPECTATION", "", "Every target needs an id"); continue }
@@ -70,13 +80,9 @@ function verify(snapshot, expected, extensions) {
     for (var lockedId in before) {
         if (!Object.prototype.hasOwnProperty.call(before,lockedId) || before[lockedId].locked !== true) continue
         var old = before[lockedId], now = modules[lockedId]
-        var changed = !now || old.visible !== now.visible || old.page !== now.page || old.opacity !== now.opacity ||
-                      old.scale !== now.scale || old.locked !== now.locked
-        if (!valid(rect(old)) || !valid(rect(now))) changed = true
-        else for (var j=0; j<4; ++j) {
-            var key = ["x","y","w","h"][j]
-            if (!same(old.rect[key],now.rect[key])) changed = true
-        }
+        // User option B: same-page movement/scaling is legal. Visibility,
+        // opacity and module ownership page remain invariant.
+        var changed = !now || old.visible !== now.visible || old.page !== now.page || old.opacity !== now.opacity
         if (changed) fail("LOCKED_VIOLATION", lockedId, "Locked module differs from pre-transaction snapshot")
     }
     // Future situation checks (required components, data source, control target) are opt-in.

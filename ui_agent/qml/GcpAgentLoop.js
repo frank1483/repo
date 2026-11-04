@@ -32,7 +32,7 @@ function create(spec, ports) {
     for (k = 0; k < initial.length; ++k)
         requireValue(typeof initial[k] === "string" && Object.prototype.hasOwnProperty.call(catalog, initial[k]) &&
             !catalog[initial[k]].repairFor, "initial candidate not in catalog or is repair-only")
-    var required = ["begin", "commit", "rollback", "snapshot", "checkpoint", "restore", "execute", "verify"]
+    var required = ["begin", "commit", "rollback", "snapshot", "checkpoint", "restore", "execute", "verify", "gateSelection"]
     for (k = 0; k < required.length; ++k) requireValue(typeof ports[required[k]] === "function", "missing port " + required[k])
 
     var phase = "ready", group = null, baseline = null, round = 1, index = 0, epoch = 0
@@ -56,6 +56,13 @@ function create(spec, ports) {
         }
         emit({phase: phase, reason: reason, round: round, index: index, alternatives: ok ? [] : initial.slice()})
         if (typeof ports.finished === "function") { try { ports.finished(state()) } catch (_) {} }
+    }
+    function selectionGate(ids, scope, stage) {
+        var result = ports.gateSelection({decision:"SELECT", steps:ids.map(function(id) {return {choice_id:id}})}, copy(scope), copy(ports.snapshot()))
+        requireValue(result && typeof result.ok === "boolean" && Array.isArray(result.failures) &&
+            result.ok === (result.failures.length === 0), "invalid shared gate result")
+        emit({gate:"post", stage:stage, ok:result.ok, failures:copy(result.failures), checks:copy(result.checks || [])})
+        return result.ok
     }
     function check(expected) {
         var target = copy(expected)
@@ -115,6 +122,7 @@ function create(spec, ports) {
                         allowed.indexOf(s.choice_id) >= 0, "repair candidate outside trusted scope")
                     return s.choice_id
                 })
+                requireValue(selectionGate(ids, config.catalog.filter(function(c) {return allowed.indexOf(c.id)>=0}), "loop_repair"), "shared gate rejected repair")
                 plan = ids; planIndex = 0
                 emit({phase: "repair_selected", round: round, index: index, ids: ids,
                     reason: String(response.reason_zh || "").slice(0, 300)})
@@ -145,6 +153,8 @@ function create(spec, ports) {
         if (planIndex === plan.length) { finishLogical(); return }
         if (executions >= 25) { end(false, "STEP_BUDGET"); return }
         var id = plan[planIndex], candidate = catalog[id], token = ++epoch, consumed = false
+        if (!selectionGate([id], config.catalog, "loop_step")) { end(false, "POST_GATE_REJECTED"); return }
+        if (phase !== "running") return
         ++executions
         emit({phase: "execute", round: round, index: index, id: id, action: copy(candidate.action)})
         if (phase !== "running") return
@@ -166,6 +176,7 @@ function create(spec, ports) {
             requireValue(phase === "ready", "loop already started")
             requireValue(confirmed === true, "explicit host confirmation required")
             // No ports are touched until confirmation. A failed begin cannot be rolled back with an unknown token.
+            requireValue(selectionGate(initial, config.catalog, "loop_initial"), "shared gate rejected initial plan")
             baseline = copy(ports.snapshot())
             group = ports.begin(); phase = "running"
             safe(function() {

@@ -15,7 +15,7 @@ const sandbox={Core,JSON,Object,Array,Number,isFinite,Error,Math,console:{warn:s
     shell:{agentLocation:()=>({...loc}),agentGoTo:(page,section)=>{loc={page,section};return true}},
     qsTr:s=>s};
 Object.defineProperty(sandbox,'textScale',{get(){return sandbox.GcpTheme.font.textScale}});
-vm.createContext(sandbox);vm.runInContext(names.map(extract).join('\n'),sandbox);
+require('./theme_fixture_v6').install(sandbox);vm.createContext(sandbox);vm.runInContext(names.map(extract).join('\n'),sandbox);
 const S=sandbox,plain=x=>JSON.parse(JSON.stringify(x));
 const dirty=()=>S.layoutFingerprint()!==S._savedFingerprint;
 const cp=S.beginGroup();S.beginChange('navigation','navigation');S.shell.agentGoTo(1,-1);S.beginChange('wind','layout');
