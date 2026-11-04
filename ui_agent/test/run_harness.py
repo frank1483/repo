@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
+from harness_wait_v6 import wait_agent_idle
 from PySide6.QtCore import QMetaObject, QObject, Q_ARG, QUrl  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtQml import QQmlApplicationEngine  # noqa: E402
@@ -111,14 +112,14 @@ CARDS = []  # v6：模型／多步動作先顯示確認卡，測試代按「對�
 
 def say(text, ms=500, confirm=True):
     QMetaObject.invokeMethod(agent, "submit", Q_ARG("QVariant", text))
-    wait(ms)
+    wait_agent_idle(app, agent, max(ms, 5000), "submit: " + text)
     pending = agent.property("_confirmation")
     if hasattr(pending, "toVariant"):
         pending = pending.toVariant()
     if confirm and pending:
         CARDS.append((text, agent.property("confirmationSummary") or ""))
         QMetaObject.invokeMethod(agent, "confirmIntent")
-        wait(ms)
+        wait_agent_idle(app, agent, max(ms, 5000), "confirm: " + text)
 
 
 def prop(obj, name):
