@@ -52,7 +52,8 @@ def main():
     (agent / "qml").mkdir()
     inputs = []
     pairs = [(HERE.parent / "qml" / name, agent / "qml" / name) for name in (
-        "GcpAgentState.qml", "GcpAgentCore.js", "GcpAgentSnapshot.js")]
+        "GcpAgentState.qml", "GcpAgentCore.js", "GcpAgentSnapshot.js",
+        "GcpAgentThemePalette.js", "GcpAgentThemeColorMath.js", "GcpAgentThemeHostPolicy.js", "GcpAgentHost.js")]
     pairs += [(HERE / "OwnedGroupCheck.js", agent / "test" / "OwnedGroupCheck.js")]
     pairs += [(HERE / "harness" / "GcpTheme.qml", module / "GcpTheme.qml"),
               (HERE / "harness" / "OwnedGroupV6.qml", fixtures / "OwnedGroupV6.qml")]
