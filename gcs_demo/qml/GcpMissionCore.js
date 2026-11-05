@@ -1027,6 +1027,7 @@ function applyReportLlm(rep, text, metadata) {
 
 // node 測試用
 if (typeof module !== "undefined") module.exports = {
+    createTypedFullMissionOrchestrator:createTypedFullMissionOrchestrator,
     estimateForBounds:estimateForBounds, bounds:bounds, transitionEstimate:transitionEstimate, rtlEnergy:rtlEnergy, estimateRouteEnergy:estimateRouteEnergy,
     turnEstimate:turnEstimate, loiterEstimate:loiterEstimate,
     windArcEstimate:windArcEstimate, windLoiterEstimate:windLoiterEstimate,
@@ -1897,8 +1898,8 @@ function createTypedWindTrendPredictor(v,options,raiseTicks,clearTicks) {
     if(raiseTicks===undefined)raiseTicks=3
     if(clearTicks===undefined)clearTicks=10
     typedPredictorInteger(raiseTicks,"raise_ticks",1,10000);typedPredictorInteger(clearTicks,"clear_ticks",1,10000)
-    var lastSequence=-1,lastTime=-1,version=null,history=[],active=null,severity=null,raising=0,clearing=0
-    return {tick:function(sequence,rec,missionVersion){
+    function branch(lastSequence,lastTime,version,history,active,severity,raising,clearing) {
+    return {fork:function(){return branch(lastSequence,lastTime,version,geographicAlertSnapshot(history),active,severity,raising,clearing)},tick:function(sequence,rec,missionVersion){
         typedPredictorInteger(sequence,"sequence",0,9007199254740991)
         if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
         if(typeof missionVersion!=="string"||missionVersion.length<1||missionVersion.length>128||/[^A-Za-z0-9._:-]/.test(missionVersion))
@@ -1932,6 +1933,8 @@ function createTypedWindTrendPredictor(v,options,raiseTicks,clearTicks) {
         lastSequence=sequence;lastTime=tm.t_s;version=missionVersion;history=nextHistory;active=nextActive;severity=nextSeverity;raising=nextRaise;clearing=nextClear
         return detached
     }}
+    }
+    return branch(-1,-1,null,[],null,null,0,0)
 }
 
 // T5b2h1: independent measured P4; explicit distances/probes, no route or action.
@@ -2029,8 +2032,8 @@ function createTypedLinkDistancePredictor(v,referenceId,options,raiseTicks,clear
     if(raiseTicks===undefined)raiseTicks=3
     if(clearTicks===undefined)clearTicks=10
     typedPredictorInteger(raiseTicks,"raise_ticks",1,10000);typedPredictorInteger(clearTicks,"clear_ticks",1,10000)
-    var lastSequence=-1,lastTime=-1,version=null,history=[],active=null,severity=null,raising=0,clearing=0
-    return {tick:function(sequence,rec,probes,missionVersion){
+    function branch(lastSequence,lastTime,version,history,active,severity,raising,clearing) {
+    return {fork:function(){return branch(lastSequence,lastTime,version,geographicAlertSnapshot(history),active,severity,raising,clearing)},tick:function(sequence,rec,probes,missionVersion){
         typedPredictorInteger(sequence,"sequence",0,9007199254740991)
         if(sequence<=lastSequence)throw new Error("sequence must increase strictly")
         typedLinkIdentity(missionVersion,"mission_version")
@@ -2064,6 +2067,8 @@ function createTypedLinkDistancePredictor(v,referenceId,options,raiseTicks,clear
         lastSequence=sequence;lastTime=tm.t_s;version=missionVersion;history=nextHistory;active=nextActive;severity=nextSeverity;raising=nextRaise;clearing=nextClear
         return detached
     }}
+    }
+    return branch(-1,-1,null,[],null,null,0,0)
 }
 // Additive P2: explicit ordered outbound-prefix/return samples, no action.
 function typedReturnKeys(obj,keys,name) {
@@ -2349,8 +2354,8 @@ function createTypedCapacityFeed(v, options, raiseTicks, clearTicks, maxSamples)
 function createTypedMissionOrchestrator(v,capacityOptions,raiseTicks,clearTicks,maxGapS,maxSamples) {
     var mission=createTypedMissionSampleFeed(v,raiseTicks,clearTicks,maxGapS)
     var capacity=createTypedCapacityFeed(v,capacityOptions,raiseTicks,clearTicks,maxSamples)
-    var lastSession=null,lastVersion=null
-    return {tick:function(sequence,measurement,request){
+    function branch(mission,capacity,lastSession,lastVersion) {
+    return {fork:function(){return branch(mission.fork(),capacity.fork(),lastSession,lastVersion)},tick:function(sequence,measurement,request){
         var m=geographicAlertSnapshot(measurement),r=geographicAlertSnapshot(request)
         typedReturnKeys(m,["mission","capacity"],"orchestrator measurement")
         typedReturnKeys(r,["mission","capacity_session_id"],"orchestrator request")
@@ -2379,6 +2384,47 @@ function createTypedMissionOrchestrator(v,capacityOptions,raiseTicks,clearTicks,
             independent_window_evidence:false,energy_correction_applied:false,landing_modeled:false,
             feasible:false,executable:false,candidates:[],rule_choice:null})
         mission=nextMission;capacity=nextCapacity;lastSession=session;lastVersion=a.mission_version
+        return output
+    }}
+    }
+    return branch(mission,capacity,null,null)
+}
+
+// Opt-in atomic measured P1-P5; no geometry, route, action or policy inference.
+function createTypedFullMissionOrchestrator(v,capacityOptions,linkReferenceId,linkOptions,windOptions,raiseTicks,clearTicks,maxGapS,maxSamples) {
+    var reference=typedLinkIdentity(linkReferenceId,"link_reference_id")
+    var mission=createTypedMissionOrchestrator(v,capacityOptions,raiseTicks,clearTicks,maxGapS,maxSamples)
+    var link=createTypedLinkDistancePredictor(v,reference,linkOptions,raiseTicks,clearTicks)
+    var wind=createTypedWindTrendPredictor(v,windOptions,raiseTicks,clearTicks)
+    return {tick:function(sequence,measurement,request){
+        var m=geographicAlertSnapshot(measurement),r=geographicAlertSnapshot(request)
+        typedReturnKeys(m,["mission","capacity","link","wind"],"full measurement")
+        typedReturnKeys(r,["mission","capacity_session_id","link"],"full request")
+        function object(x){return x!==null&&typeof x==="object"&&!Array.isArray(x)}
+        if(!Object.keys(m).every(function(k){return object(m[k])})||!object(r.mission)||!object(r.link))throw new Error("full members must be objects")
+        typedReturnKeys(r.link,["reference_id","probes"],"full link request")
+        if(typedLinkIdentity(r.link.reference_id,"reference_id")!==reference)throw new Error("link reference change requires a new caller")
+        if(!Object.keys(m).every(function(k){return Object.prototype.hasOwnProperty.call(m[k],"t_s")&&m[k].t_s===m.mission.t_s}))throw new Error("all predictors require identical measured t_s")
+        if(!Object.prototype.hasOwnProperty.call(m.mission,"wind_mps")||!Object.prototype.hasOwnProperty.call(m.wind,"wind_mps")||m.mission.wind_mps!==m.wind.wind_mps)throw new Error("mission and P5 require identical measured wind_mps")
+        var nextMission=mission.fork(),nextLink=link.fork(),nextWind=wind.fork()
+        var a=nextMission.tick(sequence,{mission:m.mission,capacity:m.capacity},{mission:r.mission,capacity_session_id:r.capacity_session_id})
+        var version=a.mission_version,p4=nextLink.tick(sequence,m.link,r.link.probes,version),p5=nextWind.tick(sequence,m.wind,version)
+        var predictors=Object.assign({},a.predictors,{P4:p4,P5:p5}),events=a.events.slice(),resets=Object.assign({},a.reset_reasons_by_predictor)
+        ;[["P4",p4],["P5",p5]].forEach(function(pair){
+            var name=pair[0],result=pair[1]
+            result.events.forEach(function(event){var e=Object.assign({},event,{predictor_id:name,mission_version:version,recovery_reference_id:a.recovery_reference_id,session_id:a.session_id,battery_id:a.battery_id});if(name==="P4")e.reference_id=reference;events.push(e)})
+            resets[name]=result.reset_reason?[result.reset_reason]:[]
+        })
+        var output=geographicAlertSnapshot(Object.assign({},a,{
+            caller_scope:"atomic_measured_P1_P2_P3_P4_P5_only",
+            status:Object.keys(predictors).every(function(k){return predictors[k].status==="ok"})?"ok":"unknown",
+            link_reference_id:reference,predictors:predictors,events:events,reset_reasons_by_predictor:resets,
+            evaluated_predictors:["P1","P2","P3","P4","P5"],unassessed_predictors:[],
+            continuous_boundary_known:false,latest_return_deadline_s:null,return_now_evaluated:false,
+            recovery_reference_verified:false,telemetry_freshness_verified:false,measured_capacity:false,sensor_validated:false,
+            independent_window_evidence:false,energy_correction_applied:false,landing_modeled:false,
+            feasible:false,executable:false,candidates:[],rule_choice:null}))
+        mission=nextMission;link=nextLink;wind=nextWind
         return output
     }}
 }

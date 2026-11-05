@@ -1,0 +1,11 @@
+# Opt-in JS atomic measured P1-P5 caller
+
+`createTypedFullMissionOrchestrator(vehicle, capacityOptions, linkReferenceId, linkOptions, windOptions, raiseTicks, clearTicks, maxGapS, maxSamples)` mirrors the Python full caller. It adds no server/UI/report wiring. Input and output contracts match TYPED_FULL_ORCHESTRATION.md. Child option defaults stay unchanged; no integration policy is selected.
+
+P4, P5 and the P1-P3 orchestrator expose `fork()` returning detached state. The full caller ticks forks, validates the final finite JSON output, then commits all three child references. Late rejection consumes no original sequence/history/latch/session. The existing standalone tick signatures and behavior remain unchanged. Unknown commits unknown; it never becomes clearance. Evaluated P1-P5 does not establish feasibility or executability.
+
+New JS entrypoint: `node gcs_demo/qml/test/test_typed_full_orchestration.js --controls-only` (14 groups). Real cross-language parity: generate a NEW file with `PYTHONDONTWRITEBYTECODE=1 python3 -m gcs_demo.full_orchestration_vectors /new/path/full_vectors.json`, then `node gcs_demo/qml/test/test_typed_full_orchestration.js /new/path/full_vectors.json`. The latter also runs the new 14 groups; do not rerun any old successful suite. Preserve the first stdout/stderr/exit and vector file.
+
+Vectors cover 13 streams / 71 attempts / 6 intentional refusals, including refusal followed by the same valid tick, version/session changes, gap, unknown link/return support, and fixed-wing/hybrid inputs. The exporter imports existing fixture helpers only; it never runs old unittest entrypoints. Expected refusals are declared before execution; unexpected errors propagate. Numeric comparison uses relative tolerance 1e-8, exact keys/types and exact nonnumeric values. Full P4/P5 results, provenance, resets, events and all safe flags are compared. Existing P1 verbose comparison and P2 bounds/scenario prose are excluded by the established Python summary helper and the matching JS projection; this is explicitly limited parity, not every legacy verbose field.
+
+All fixtures are synthetic engineering inputs. This is neither sensor validation nor model accuracy, physical feasibility, board validation or permission to act. Candidates/geometry, endpoint/landing, typed UI/report and T6/T7 remain later batches.
