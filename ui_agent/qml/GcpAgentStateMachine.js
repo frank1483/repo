@@ -13,7 +13,7 @@
 //         step.type === "done" -> step.decision is v6-compatible: {decision, choice_id, steps, reason_zh, ...}
 //   s.fail(reason) records a transport error/timeout for the outstanding ask (counts as invalid answer).
 
-var VERSION = "sm-v0"
+var VERSION = "sm-v1"
 var MAX_MODEL_CALLS = 4      // classify + up to two slots + one repair
 
 var SYSTEM_PROMPT = "你是無人機地面站介面助理流程中的一個步驟，只負責填一格。" +
@@ -26,6 +26,7 @@ var KINDS = [
     { code: "TEXT", zh: "調整全系統文字大小" },
     { code: "HISTORY", zh: "復原、重做或全部還原介面變更" },
     { code: "OUT_OF_SCOPE", zh: "控制飛機、修改參數數值，或與介面無關" },
+    { code: "AMBIGUOUS", zh: "太模糊，要問使用者想做什麼" },
     { code: "UNKNOWN", zh: "不知道" }
 ]
 
@@ -85,6 +86,7 @@ function create(core, options) {
             if (decision.decision === "SELECT" && !decision.steps)
                 decision.steps = [{ choice_id: decision.choice_id }]
             decision.source = source
+            decision.model_errors = st.trace.filter(function(e) { return e.event === "invalid" }).map(function(e) { return e.why })
             st.state = "END"
             st.done = decision
             log({ event: "done", decision: decision.decision, ids: (decision.steps || []).map(function(s) { return s.choice_id }),
@@ -138,7 +140,8 @@ function create(core, options) {
                 st.need = "最符合句子的一個動作"
                 st.allowed = result.candidates.map(function(c) { return { code: c.id, zh: c.label_zh } })
                     .concat([{ code: "CLARIFY", zh: "兩個以上都說得通，要問使用者" },
-                             { code: "NONE", zh: "都不符合" }])
+                             { code: "OTHER", zh: "都不是，要重新判斷" },
+                             { code: "NONE", zh: "都不符合，而且不是介面操作" }])
             } else if (s === "S2_CLASSIFY") {
                 st.need = "這句話屬於哪一類"
                 st.allowed = copy(KINDS)
@@ -295,6 +298,13 @@ function create(core, options) {
             log({ event: "filled", value: code })
             if (s === "S4_PICK") {
                 if (code === "CLARIFY") { ruleFallback("模型判斷有多個可能"); st.done.source = "state_machine"; return }
+                if (code === "OTHER") {
+                    // sm-v1: rule candidates missed the target; re-enter classification once.
+                    if (st.reclassified) { ruleFallback("重新判斷已用過"); return }
+                    st.reclassified = true
+                    st.state = "S2_CLASSIFY"; st.last_observation = "規則候選都不對，重新分類"
+                    prepare(); return
+                }
                 if (code === "NONE") { finish({ decision: "HOLD", choice_id: "", reason_zh: "沒有對應的動作", candidates: [] }, "state_machine", "pick: none"); return }
                 var c = core.candidateById(result, code)
                 problem = selectCandidate(c, "pick")
@@ -303,6 +313,7 @@ function create(core, options) {
                 if (code === "OUT_OF_SCOPE") { finish({ decision: "HOLD", choice_id: "", candidates: [],
                     reason_zh: "介面助理只換頁與調整版面，不送飛行指令、不改參數" }, "state_machine", "classify: out of scope"); return }
                 if (code === "UNKNOWN") { ruleFallback("分類：不知道"); return }
+                if (code === "AMBIGUOUS") { escalate("請再說明想做什麼，例如要去哪個畫面或調整哪個模組"); return }
                 if (code === "LAYOUT" && !pageModules().length) { escalate("目前畫面沒有可調整的模組，請先切到要調整的畫面"); return }
                 st.state = { NAV: "S3_PAGE", LAYOUT: "S3_MODULE", TEXT: "S3_TEXT", HISTORY: "S3_HISTORY" }[code]
                 st.last_observation = "分類為 " + code

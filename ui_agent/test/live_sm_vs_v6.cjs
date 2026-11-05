@@ -10,7 +10,7 @@ const mode = arg('--mode');
 const C = require('./load_core'), SM = require('./load_sm');
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const FILES = ['../qml/GcpAgentCore.js', '../qml/GcpAgentStateMachine.js', 'load_core.js', 'load_sm.js',
-  'sm_heldout_v1.jsonl', 'regression_ui_agent.jsonl', 'live_sm_vs_v6.cjs'];
+  'sm_heldout_v2.jsonl', 'regression_ui_agent.jsonl', 'live_sm_vs_v6.cjs'];
 // Hash over LF-normalised text so a Windows CRLF checkout gives the same value.
 const norm = f => fs.readFileSync(path.join(__dirname, f), 'utf8').replace(/\r\n/g, '\n');
 const files = FILES.map(f => ({file: f, sha256: sha(norm(f))}));
@@ -21,7 +21,7 @@ const MODELS = [
 const WARMUP_TEXT = '幫我講個笑話';
 const SETTINGS = {stream: false, options: {temperature: 0}, think: false, timeout_ms: 60000};
 const read = f => norm(f).split('\n').filter(s => s.trim()).map(JSON.parse);
-const heldout = read('sm_heldout_v1.jsonl');
+const heldout = read('sm_heldout_v2.jsonl');
 const corpus3 = read('regression_ui_agent.jsonl').filter(r => ['UIV3-0001', 'UIV3-0244', 'UIV3-0246'].includes(r.id) && !r.turns);
 const rows = heldout.concat(corpus3);
 const route = r => { if (C.preGate(r.intent)) return 'rule'; const x = C.analyzeTurn(r.intent, r.ctx, '');
@@ -99,7 +99,7 @@ async function sm(model, r) {
   const s = SM.create(C).start(r.intent, r.ctx, '');
   for (let guard = 0; guard < 16; ++guard) {
     const step = s.next();
-    if (step.type === 'done') return {decision: step.decision, source: step.decision.source, calls: step.model_calls, trace: step.trace};
+    if (step.type === 'done') return {decision: step.decision, source: step.decision.source, calls: step.model_calls, trace: step.trace, model_error: (step.decision.model_errors || []).join(' | ')};
     try { s.answer(await callModel(model, {pipe: 'sm', id: r.id}, step.call)); } catch (e) { s.fail(String(e.message || e)); }
   }
   throw Error('no termination');

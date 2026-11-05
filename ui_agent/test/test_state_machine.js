@@ -23,7 +23,7 @@ test('no-target nav: classify, page, section', () => {
   assert.deepEqual(m.seen.map(c => c.state), ['S2_CLASSIFY', 'S3_PAGE', 'S3_SECTION']); });
 test('every prompt carries only the current slot enum', () => {
   const m = script([v('NAV'), v('P3'), v('S5')]); SM.runSync(C, '我想看看飛機能飛多高的上限', A, '', m);
-  assert.equal(m.seen[0].codes.length, 6); assert.equal(m.seen[1].codes.length, 15); assert.equal(m.seen[2].codes.length, 10);
+  assert.equal(m.seen[0].codes.length, 7); assert.equal(m.seen[1].codes.length, 15); assert.equal(m.seen[2].codes.length, 10);
   for (const c of m.seen) assert.deepEqual(c.schema.properties.value.enum, c.codes); });
 test('out of scope holds after one call', () => {
   const m = script([v('OUT_OF_SCOPE')]); const r = SM.runSync(C, '今天午餐吃什麼', A, '', m);
@@ -74,4 +74,11 @@ test('prompt carries no earlier model replies (state rebuilt each step)', () => 
   const m = script([v('NAV'), v('P3'), v('S5')]); SM.runSync(C, '我想看看飛機能飛多高的上限', A, '', m);
   assert(!m.seen[2].messages[1].content.includes('"value"') || m.seen[2].messages[1].content.endsWith('{"value":"代碼"}'));
   assert(m.seen[2].messages[1].content.includes('頁面=安全設定')); assert.equal(m.seen[2].messages.length, 2); });
-console.log('state machine v0: ' + n + ' cases PASS');
+test('v1: OTHER in pick re-enters classification once', () => {
+  const m = script([v('OTHER'), v('LAYOUT'), v('windGauge'), v('MOVE_TR')]); const r = SM.runSync(C, '風的那個儀表放到右上', B, '', m);
+  assert.deepEqual(m.seen.map(c => c.state), ['S4_PICK', 'S2_CLASSIFY', 'S3_MODULE', 'S3_ACTION']); assert.equal(r.decision.choice_id, 'LAY_windGauge_MOVE_TR'); });
+test('v1: AMBIGUOUS classify asks the user', () => {
+  const m = script([v('AMBIGUOUS')]); const r = SM.runSync(C, '今天午餐吃什麼', A, '', m); assert.equal(r.decision.decision, 'CLARIFY'); });
+test('v1: model errors are recorded on the decision', () => {
+  const m = script(['bad', 'bad']); const r = SM.runSync(C, '今天午餐吃什麼', A, '', m); assert.equal(r.decision.model_errors.length, 2); });
+console.log('state machine: ' + n + ' cases PASS');

@@ -1,7 +1,7 @@
 'use strict';
 // Offline comparison: state-machine loop (sm-v0) vs v6 one-shot pipeline. No HTTP, Qt or devices.
 // Models here are PROGRAMS (oracle / fault injection / seeded random), not real LLMs.
-// Usage: node eval_sm_vs_v6.js OUT_DIR
+// Usage: node eval_sm_vs_v6.js OUT_DIR [HELDOUT_FILE]   (eval v2: held-out file argument, oracle knows OTHER/AMBIGUOUS)
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const C = require('./load_core'), SM = require('./load_sm');
 const out = process.argv[2]; if (!out) throw Error('usage: eval_sm_vs_v6.js OUT_DIR');
@@ -82,8 +82,8 @@ function oracleFor(row) {
     }
     const c = call.codes;
     switch (call.state) {
-      case 'S4_PICK': return pick(c, gid, ex.decision === 'HOLD' ? 'NONE' : 'CLARIFY');
-      case 'S2_CLASSIFY': return pick(c, g ? g.kind : (ex.decision === 'HOLD' ? 'OUT_OF_SCOPE' : 'UNKNOWN'), 'UNKNOWN');
+      case 'S4_PICK': return pick(c, gid, ex.decision === 'HOLD' ? 'NONE' : (ex.decision === 'SELECT' && c.includes('OTHER') ? 'OTHER' : 'CLARIFY'));
+      case 'S2_CLASSIFY': return pick(c, g ? g.kind : (ex.decision === 'HOLD' ? 'OUT_OF_SCOPE' : 'AMBIGUOUS'), 'UNKNOWN');
       case 'S3_PAGE': return pick(c, g ? 'P' + g.page : '', 'UNKNOWN');
       case 'S3_SECTION': return pick(c, g && g.section >= 0 ? 'S' + g.section : 'WHOLE', 'UNKNOWN');
       case 'S3_MODULE': return pick(c, g ? g.module : '', 'UNKNOWN');
@@ -109,12 +109,13 @@ const randomValid = seed => { const rnd = seeded(seed); return call => {
 const corpus = read('regression_ui_agent.jsonl').filter(r => typeof r.intent === 'string' && !r.turns);
 const textRows = read('text_regression_v6_0400.jsonl').filter(r => typeof r.text === 'string' && r.expect && r.expect.decision)
   .map(r => ({id: r.id, intent: r.text, ctx: r.ctx || {page: 0, section: -1}, expect: r.expect}));
-const heldout = read('sm_heldout_v1.jsonl');
+const HELDOUT = process.argv[3] || 'sm_heldout_v1.jsonl';
+const heldout = read(HELDOUT);
 const uncertainCorpus = corpus.filter(r => ['UIV3-0001', 'UIV3-0244', 'UIV3-0246'].includes(r.id));
 const modelSet = heldout.concat(uncertainCorpus);
 const manifest = {version: SM.VERSION, ran_at_utc: new Date().toISOString(),
   inputs: {regression_ui_agent: sha('regression_ui_agent.jsonl'), text_regression_v6_0400: sha('text_regression_v6_0400.jsonl'),
-    sm_heldout_v1: sha('sm_heldout_v1.jsonl')},
+    heldout_file: HELDOUT, heldout: sha(HELDOUT)},
   code: {core: sha('../qml/GcpAgentCore.js'), sm: sha('../qml/GcpAgentStateMachine.js'), eval: sha('eval_sm_vs_v6.js')}};
 
 // ---------------------------------------------------------------- E1 rule path, model disabled
@@ -152,7 +153,7 @@ for (const [mname, mk] of Object.entries(models)) {
       s.max_calls_one_sentence = Math.max(s.max_calls_one_sentence, run.calls.length);
       s.max_prompt_tokens_one_call = Math.max(s.max_prompt_tokens_one_call, ...toks, 0);
       if (/fallback/.test(run.source || '')) s.fallback++;
-      if (run.calls.some(c => c.repair) && ok) s.repaired_ok++;
+      if (run.calls.some(c => c.repair) && ok && !/fallback/.test(run.source || '')) s.repaired_ok++;
       if (unsafe(run, r.ctx)) s.unsafe++;
       perRow.push({model: mname, pipe, id: r.id, group: r.group || 'corpus', route: rt, expect: r.expect,
         got: {decision: run.decision.decision, ids: idsOf(run.decision)}, ok, source: run.source,
