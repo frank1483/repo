@@ -741,6 +741,60 @@ class DeadlineRace2Test(unittest.TestCase):
             gate.set(); fake.close()
 
 
+class DeadlinePhaseTest(unittest.TestCase):
+    """v0.4.3：Codex 0426 P2——回應已讀完後才取消，紀錄必須是「已送出」。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.log = os.path.join(self.tmp, "calls.jsonl")
+
+    def test_cancel_after_read_before_last_check_is_sent(self):
+        fake = FakeOllama()
+        up = G.make_upstream("ollama", fake.url, "m")
+        tok = G.CancelToken()
+        up._after_read_hook = tok.set
+        try:
+            with self.assertRaises(G.DeadlineExceeded) as cm:
+                up.chat({"messages": []}, 5.0, tok)
+            self.assertTrue(cm.exception.sent)
+            self.assertEqual(cm.exception.phase, "received")
+            self.assertEqual(len(fake.seen), 1)
+        finally:
+            fake.close()
+
+    def test_gateway_logs_sent_when_cancelled_after_read(self):
+        fake = FakeOllama()
+        up = G.make_upstream("ollama", fake.url, "m")
+        gw = G.Gateway(up, self.log, {"ui": 5.0})
+        jobs = []
+        up._after_read_hook = lambda: jobs[0].abandon("client_gone")
+        try:
+            st, body = gw.submit("ui", {"messages": []}, job_out=jobs)
+            self.assertEqual(st, 504)
+            rec = wait_for(lambda: read_log(self.log))[0]
+            self.assertTrue(rec["sent_upstream"])
+            self.assertEqual(rec["upstream_phase"], "received")
+            self.assertFalse(rec["claimed"])
+            self.assertEqual(len(fake.seen), 1)
+        finally:
+            fake.close()
+
+    def test_phase_before_send_is_not_sent(self):
+        fake = SlowOllama(delay=0.1)
+        up = G.make_upstream("ollama", fake.url, "m")
+        tok = G.CancelToken()
+        up._before_send_hook = tok.set
+        try:
+            with self.assertRaises(G.DeadlineExceeded) as cm:
+                up.chat({"messages": []}, 5.0, tok)
+            self.assertFalse(cm.exception.sent)
+            self.assertEqual(cm.exception.phase, "connected")
+            time.sleep(0.2)
+            self.assertNotIn("start", fake.kinds())
+        finally:
+            fake.close()
+
+
 def gw_job_remaining(clock):
     return 20.0 - (clock() - 1000.0)
 

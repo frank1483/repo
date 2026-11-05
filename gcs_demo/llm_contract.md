@@ -81,3 +81,7 @@ APK 內的 QML 不能 import Python，所以共用介面以 **HTTP 層** 為準�
 
 - 成功結果在認領的同一刻就叫醒呼叫端；紀錄之後才寫，**交付不等紀錄**（呼叫端讀紀錄要自己等它落檔）。
 - 送出前的唯一同步點 `claim_send()`：與 `abort()` 用同一把鎖，且 shutdown 也在鎖內完成。取消先拿到鎖 → 0 個 POST；送出先通過 → 之後的取消以 shutdown 中斷傳輸與等待回應（此時上游可能已收到請求）。
+
+## 10. 修訂（v0.4.3，依 Codex 複審 GATEWAY_REVIEW_0426 的 P2）
+
+- 上游連線有明確階段：idle → connected（socket 已發布）→ sending（通過 claim_send，請求可能已到上游）→ received（回應已讀完）。被中斷時以當下階段判定，紀錄 `sent_upstream`（sending／received 為 true）與 `upstream_phase`，不再由錯誤字串推斷。回應讀完後才取消 → `sent_upstream=true`、`upstream_phase="received"`、`claimed=false`。

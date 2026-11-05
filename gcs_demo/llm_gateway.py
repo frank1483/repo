@@ -81,7 +81,15 @@ _NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class DeadlineExceeded(Exception):
-    """上游呼叫因期限到或呼叫端取消而被強制中斷。"""
+    """上游呼叫因期限到或呼叫端取消而被強制中斷。
+
+    phase：中斷時所在階段（_ConnGuard.PHASES）；sent：請求是否已通過 claim_send（可能已送到上游）。
+    """
+
+    def __init__(self, msg, phase="unknown", sent=False):
+        super().__init__(msg)
+        self.phase = phase
+        self.sent = sent
 
 
 class UpstreamHTTPError(Exception):
@@ -102,6 +110,7 @@ class Upstream:
     # 測試用掛鉤：連線建立後、發布 socket 與送出前呼叫（可放屏障模擬「連線中被取消」）
     _after_connect_hook = None
     _before_send_hook = None   # 測試用：socket 已發布、尚未 claim_send
+    _after_read_hook = None    # 測試用：回應已讀完、最後一次 check 之前
 
     def _post(self, path, body, timeout_s, cancel: "CancelToken | None" = None):
         """送出並在期限到或被取消時強制關閉上游連線（v0.4.1）。
@@ -134,7 +143,10 @@ class Upstream:
                          headers={"Content-Type": "application/json"})
             resp = conn.getresponse()
             data = resp.read()
-            g.check()                      # 讀完才發現已 abort：當作期限到
+            g.mark("received")
+            if self._after_read_hook:
+                self._after_read_hook()
+            g.check()                      # 讀完才發現已 abort：當作期限到（sent=True）
             if resp.status >= 400:
                 raise UpstreamHTTPError(f"HTTP {resp.status}: {data[:200]!r}")
             return json.loads(data.decode("utf-8"))
@@ -142,7 +154,8 @@ class Upstream:
             raise
         except (OSError, http.client.HTTPException) as exc:
             if g.aborted:
-                raise DeadlineExceeded("upstream aborted at deadline/cancel") from exc
+                raise DeadlineExceeded(f"upstream aborted at deadline/cancel (phase {g.phase})",
+                                       g.phase, g.sent) from exc
             raise
         finally:
             timer.cancel()
@@ -151,13 +164,22 @@ class Upstream:
 
 
 class _ConnGuard:
-    """上游連線的 abort 與 socket 發布同步。"""
+    """上游連線的階段、abort 與 socket 發布同步（v0.4.3）。
+
+    階段：idle → connected（socket 已發布）→ sending（已通過 claim_send，請求可能已到上游）
+          → received（回應已讀完）。中斷時以「當下階段」判定 sent，不再用錯誤字串猜。
+    """
+    PHASES = ("idle", "connected", "sending", "received")
 
     def __init__(self):
         self._lock = threading.Lock()
         self.aborted = False
-        self.sending = False
+        self.phase = "idle"
         self._sock = None
+
+    @property
+    def sent(self):
+        return self.phase in ("sending", "received")
 
     def abort(self):
         # 在鎖內 shutdown（非阻塞）：與 claim_send 互斥，沒有「已標記 abort 但還沒關」的空窗
@@ -170,10 +192,13 @@ class _ConnGuard:
                 except OSError:
                     pass
 
+    def _raise(self, msg):
+        raise DeadlineExceeded(f"{msg} (phase {self.phase})", self.phase, self.sent)
+
     def check(self):
         with self._lock:
             if self.aborted:
-                raise DeadlineExceeded("cancelled before send")
+                self._raise("cancelled before send" if not self.sent else "cancelled after send")
 
     def publish(self, sock):
         with self._lock:
@@ -181,16 +206,21 @@ class _ConnGuard:
                 try:
                     sock.close()
                 finally:
-                    raise DeadlineExceeded("cancelled during connect; socket closed, not sent")
+                    self._raise("cancelled during connect; socket closed, not sent")
             self._sock = sock
+            self.phase = "connected"
 
     def claim_send(self):
         """送出前的唯一同步點：abort 先拿到鎖 → 這裡丟例外、0 個 POST；
-        這裡先通過 → 送出開始，之後的 abort 以 shutdown 中斷傳輸與等待回應。"""
+        這裡先通過 → phase=sending，之後的 abort 以 shutdown 中斷傳輸與等待回應。"""
         with self._lock:
             if self.aborted:
-                raise DeadlineExceeded("cancelled before send; not sent")
-            self.sending = True
+                self._raise("cancelled before send; not sent")
+            self.phase = "sending"
+
+    def mark(self, phase):
+        with self._lock:
+            self.phase = phase
 
 
 class CancelToken:
@@ -467,7 +497,7 @@ class Gateway:
             lat = time.time() - t_start
             rec.update(ok=False, error=f"deadline: {exc} ({job.cancel_reason or 'deadline'})",
                        latency_s=round(lat, 3), content="",
-                       sent_upstream="not sent" not in str(exc) and "cancelled before send" not in str(exc))
+                       sent_upstream=exc.sent, upstream_phase=exc.phase)
             self.stats["error"] += 1
             result = (504, {"error": {"message": rec["error"], "type": "deadline"}})
         except (urllib.error.URLError, TimeoutError, OSError, KeyError, IndexError,
