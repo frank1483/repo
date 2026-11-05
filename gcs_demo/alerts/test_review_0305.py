@@ -133,8 +133,10 @@ class FeasibilityContract(unittest.TestCase):      # 審查第 4、6 項
 
     def test_feasibility_uses_unrounded_value(self):
         eng = PredictiveAlertEngine(ROUTE5, (0, 0, 0), default_vehicle())
-        self.assertFalse(eng._is_feasible(19.96))
-        self.assertTrue(eng._is_feasible(20.0))
+        self.assertFalse(eng._is_feasible(19.96, "C1"))
+        self.assertFalse(eng._is_feasible(20.0, "C1"))  # lost: regain at 22 (5.2)
+        self.assertTrue(eng._is_feasible(22.0, "C1"))
+        self.assertTrue(eng._is_feasible(20.0, "C4"))  # independent first qualification
 
 
 class CompletionAfterReroute(unittest.TestCase):   # 審查第 5 項

@@ -17,6 +17,8 @@ import math
 from collections import deque
 from dataclasses import dataclass, field, replace
 
+from .display import landing_pct_text
+
 from .energy_api import (Vehicle, Wind, air_power_w, leg_energy, rtl_energy,
                          with_calib, profile_limits)
 
@@ -103,6 +105,7 @@ class PredictiveAlertEngine:
         self._cell_hist = deque()             # (t, used_wh, 補償後單芯電壓)，僅留 600 秒
         self._link_hist = deque(maxlen=900)    # (離家距離, 品質)
         self._wind_hist = deque(maxlen=180)    # (t, 風速)
+        self._option_energy_ok: dict[str, bool] = {}  # option identity, independent of alerts
         self._streak: dict[str, int] = {}
         self._active: dict[str, Finding] = {}
         self._announced: dict[str, tuple] = {}   # key -> (severity, choice) 最後一次說明時
@@ -138,9 +141,24 @@ class PredictiveAlertEngine:
         """已到達 ∪ 計畫會到達的原索引；不把被刪除的航點當成已完成。"""
         return len(self._reached | set(planned)) / self.total_wps * 100.0 if self.total_wps else 0.0
 
-    def _is_feasible(self, end_pct_raw):
-        need = self.cfg.reserve_pct + (2.0 if "battery_route" in self._active else 0.0)
-        return self._finite(end_pct_raw) and end_pct_raw >= need
+    def _is_feasible(self, end_pct_raw, option_id="C1"):
+        """Energy qualification, contract 5.2; this is not joint feasibility.
+
+        First qualification and retention use reserve (normally 20%). Once an
+        option loses qualification it needs reserve + 2 (normally 22%) to regain
+        it. Alert state and rounding never affect this per-option memory.
+        Invalid/missing estimates reject this assessment without rewriting memory.
+        Advisory IDs are namespaced because their C1/C2 are different options.
+        """
+        if not isinstance(option_id, str) or not option_id:
+            raise ValueError("nonempty option identity required")
+        if not self._finite(end_pct_raw):
+            return False
+        previous = self._option_energy_ok.get(option_id)
+        threshold = self.cfg.reserve_pct + (2.0 if previous is False else 0.0)
+        qualified = end_pct_raw >= threshold
+        self._option_energy_ok[option_id] = qualified
+        return qualified
 
     @staticmethod
     def _finite(value):
@@ -279,7 +297,8 @@ class PredictiveAlertEngine:
         feasible = end_pct >= self.cfg.reserve_pct + (2.0 if was else -0.5)
 
         ev = [
-            {"id": "E1", "text": "預估完成航線並返航後的落地電量", "value": f"{end_pct:.1f}%"},
+            {"id": "E1", "text": "預估完成航線並返航後的落地電量", "value": f"{end_pct:.1f}%",
+             "display_value": landing_pct_text(end_pct)},
             {"id": "E2", "text": "落地保留電量設定", "value": f"{self.cfg.reserve_pct:.0f}%"},
             {"id": "E3", "text": "目前可用能量（依據）", "value": f"{avail_wh:.0f} Wh（{'電壓趨勢' if basis == 'voltage' else '飛控電量%'}）"},
             {"id": "E4", "text": "實測耗電 / 模型耗電", "value": f"{self.calib:.2f} 倍"},
@@ -296,7 +315,7 @@ class PredictiveAlertEngine:
             short = self.cfg.reserve_pct - end_pct
             f1.severity = SEV_WARNING if end_pct > 5 else SEV_CRITICAL
             f1.title = "電量不足以飛完航線" if n_rem > 0 else "返航落地電量將低於保留值"
-            f1.value = f"預估落地 {end_pct:.0f}%（保留 {self.cfg.reserve_pct:.0f}%，差 {max(0.0, short):.0f}%）"
+            f1.value = f"預估落地 {landing_pct_text(end_pct)}（保留 {self.cfg.reserve_pct:.0f}%，差 {max(0.0, short):.0f}%）"
             f1.rule_choice = self._rule_pick(cands, self.cfg.emergency_rtl_min_pct)
         out.append(f1)
 
@@ -370,9 +389,9 @@ class PredictiveAlertEngine:
             raw = pct(energy)
             if not self._finite(raw):
                 raise ValueError("候選電量估計非有限數值")
-            energy_ok = self._is_feasible(raw)
+            energy_ok = self._is_feasible(raw, ident)
             c = {"id": ident, "action": action, "label": label, "end_pct_raw": raw,
-                 "end_pct": round(raw, 1), "completion_pct": round(self._completion(planned), 1),
+                 "end_pct": round(raw, 1), "end_pct_zh": landing_pct_text(raw), "completion_pct": round(self._completion(planned), 1),
                  "energy_feasible": energy_ok, "feasible": energy_ok, **extra}
             if action == "A_LAND_NOW":
                 c.update(operational_status="unknown", feasible=False)
@@ -606,8 +625,10 @@ class PredictiveAlertEngine:
             raw = (avail - walk[-1][1] - walk[-1][3]) / self.v.battery_wh * 100.0
             if not self._finite(raw):
                 raise ValueError("返航候選能量非有限數值")
-            c.update(end_pct_raw=raw, end_pct=round(raw, 1), energy_feasible=self._is_feasible(raw),
-                     feasible=self._is_feasible(raw), completion_pct=round(self._completion(self.route_idx[tm.next_wp:pos + 1]), 1))
+            energy_ok = self._is_feasible(raw, f"{f.key}:{c['id']}")
+            c.update(end_pct_raw=raw, end_pct=round(raw, 1), end_pct_zh=landing_pct_text(raw),
+                     energy_feasible=energy_ok, feasible=energy_ok,
+                     completion_pct=round(self._completion(self.route_idx[tm.next_wp:pos + 1]), 1))
         pick = next((c for c in f.candidates if c["id"] == f.rule_choice), None)
         if pick is None or not pick.get("feasible"):
             f.rule_choice = self._rule_pick(f.candidates, self.cfg.emergency_rtl_min_pct)

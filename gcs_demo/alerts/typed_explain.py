@@ -15,6 +15,7 @@ from copy import deepcopy
 
 from gcs_demo import llm
 from .core import contract
+from .display import landing_pct_text
 from .explain import ALERTS_TIMEOUT_S, get_backend
 
 MAX_SENTENCE_CHARS = 60
@@ -85,6 +86,10 @@ def typed_view(event: dict) -> dict | None:
                              "unit": unit.strip(), "segment": block.get("segment"),
                              "relation": block.get("relation", "observed"),
                              "metric_label": label})
+            if key == "first_sampled_infeasible_id":
+                evidence[-1]["value_kind"] = "categorical_id"
+            if key in ("nominal_end_pct", "low_pct", "high_pct") and isinstance(raw, (int, float)):
+                evidence[-1]["display_value"] = landing_pct_text(raw)
     if not evidence:
         return None
     pred = event.get("predictor")
@@ -101,17 +106,21 @@ def _facts(view):
 
 def rule_text(view: dict) -> dict:
     ev = {e["_key"]: e for e in view["evidence"]}
+    used = view["evidence"][0]
     first = f"{view['severity_zh']}：{view['title_zh']}"
     if "nominal_end_pct" in ev:
-        first += f"，{ev['nominal_end_pct']['text']} {ev['nominal_end_pct']['value']}"
+        used = ev["nominal_end_pct"]
+        first += f"，{ev['nominal_end_pct']['text']} {ev['nominal_end_pct'].get('display_value', ev['nominal_end_pct']['value'])}"
     elif "first_sampled_infeasible_id" in ev:
-        first += f"，探查點 {ev['first_sampled_infeasible_id']['value']} 的回程電量不足"
+        used = ev["first_sampled_infeasible_id"]
+        first += f"，{used['text']} {used['value']} 的回程電量不足"
     elif "capacity_ratio" in ev:
+        used = ev["capacity_ratio"]
         first += f"，{ev['capacity_ratio']['text']} {ev['capacity_ratio']['value']}"
     first += "。"
     second = "目前沒有已驗證可執行的處置選項，請人工判斷。"
     return {"alert_version": view["alert_version"], "selected_id": None,
-            "sentences": [first, second], "evidence_ids": [view["evidence"][0]["id"]]}
+            "sentences": [first, second], "evidence_ids": [used["id"]]}
 
 
 def validate(d, view, current=None) -> str | None:

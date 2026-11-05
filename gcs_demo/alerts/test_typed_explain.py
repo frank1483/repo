@@ -63,7 +63,12 @@ class TypedViewTests(unittest.TestCase):
         self.assertIsNone(tx.typed_view(dict(self.events[0], active=False)))
 
     def test_rule_text_passes_own_validator(self):
-        self.assertIsNone(tx.validate(tx.rule_text(self.view), self.view))
+        self.assertGreaterEqual(len(self.events), 2)
+        for event in self.events:
+            view = tx.typed_view(event)
+            with self.subTest(predictor=event.get("predictor"), key=event["key"]):
+                self.assertIsNotNone(view)
+                self.assertIsNone(tx.validate(tx.rule_text(view), view))
 
     def test_valid_model_reply_used(self):
         r = tx.explain_typed(self.view, FakeBackend(good_reply(self.view)))

@@ -56,9 +56,11 @@ class Round2Extra(unittest.TestCase):
         rtl = next(c for c in cands if c["action"] == "A_RTL_NOW")
         self.assertEqual(rtl["end_pct"], 20.0)
         self.assertFalse(rtl["energy_feasible"])
+        # C4 lost its own qualification above; alert activity is irrelevant (5.2).
+        self.assertFalse(eng._is_feasible(21.96, "C4"))
+        self.assertTrue(eng._is_feasible(22.0, "C4"))
         eng._active["battery_route"] = Finding("battery_route", active=True)
-        self.assertFalse(eng._is_feasible(21.96))
-        self.assertTrue(eng._is_feasible(22.0))
+        self.assertTrue(eng._is_feasible(20.0, "new-option"))
 
     def test_voltage_reset_and_time_window(self):
         eng = engine()

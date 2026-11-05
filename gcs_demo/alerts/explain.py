@@ -10,6 +10,7 @@ import os
 from copy import deepcopy
 
 from .core import contract
+from .display import landing_pct_text
 
 from gcs_demo import llm
 
@@ -87,7 +88,7 @@ def rule_text(ev: dict) -> dict:
                 s += "地面作業條件未知。"
         reason = "規則：候選全部不可行，暫停選擇並請人工判斷。"
     else:
-        tail = f"（預估落地 {pick['end_pct']:.1f}%）" if "end_pct" in pick else ""
+        tail = f"（預估落地 {landing_pct_text(pick.get('end_pct_raw', pick['end_pct']))}）" if "end_pct" in pick else ""
         s += f"建議「{pick['label']}」{tail}。"
         reason = "規則：從可行候選中選擇；飛行操作仍須操作員確認。"
     selected = pick["id"] if pick and decision == "SELECT" else None

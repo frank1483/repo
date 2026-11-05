@@ -48,13 +48,13 @@ def _value_token(e):
 def _mask_cited_probe_ids(text, cited):
     """Mask only exact categorical probe IDs alongside their cited metric label.
 
-    A typed P2 probe may be named A rather than WP3. It is a source value,
+    An evidence producer may declare a categorical ID, such as A. It is a source value,
     never a unit or a blanket permission for arbitrary Latin words/numbers.
     Preserve offsets so numeric coverage can share this mask.
     """
     for e in cited:
         value = e.get("value")
-        if (e.get("metric") != "first_sampled_infeasible_id"
+        if (e.get("value_kind") != "categorical_id"
                 or e.get("option_id") is not None or e.get("unit") != ""
                 or not isinstance(value, str)
                 or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{0,31}", value)):
@@ -65,6 +65,41 @@ def _mask_cited_probe_ids(text, cited):
         pattern = r"(?<![A-Za-z0-9_-])" + re.escape(value) + r"(?![A-Za-z0-9_-])"
         text = re.sub(pattern, lambda m: " " * len(m.group()), text)
     return text
+
+
+def _mask_bound_display_values(sentence, cited, selected):
+    """Bind a complete shortage display to one cited option/metric, never its parts.
+
+    The producer retains the canonical signed value. Only its exact shortage
+    display may cover extra digits (zero and magnitude); scalar binding below
+    remains unchanged for canonical values and every other numeric claim.
+    """
+    displays = {e.get("display_value") for e in cited
+                if isinstance(e.get("display_value"), str)
+                and e.get("unit") == "%"
+                and re.fullmatch(r"[-−]\d+(?:\.\d+)?%", _value_token(e) or "")
+                and re.fullmatch(r"低於 0%（短缺 (?:小於 )?\d+(?:\.\d+)?%）",
+                                 e["display_value"])}
+    masked = list(sentence)
+    for display in displays:
+        for match in re.finditer(re.escape(display), sentence):
+            before = sentence[:match.start()]
+            clause = re.split(r"[，,；;：:]", before)[-1]
+            options = list(_OPTION.finditer(before))
+            option = options[-1].group() if options else selected
+            bindings = set()
+            for e in cited:
+                if e.get("display_value") != display or e["option_id"] != option:
+                    continue
+                aliases = list(_METRIC_LABELS.get(e["metric"], ()))
+                aliases += [e.get("metric_label", ""), e.get("text", ""), e["metric"]]
+                aliases += e.get("metric_labels", [])
+                if any(isinstance(a, str) and a and a in clause for a in aliases):
+                    bindings.add((e["option_id"], e["metric"]))
+            if len(bindings) != 1:
+                return sentence, "顯示值無法綁定同一選項與指標"
+            masked[match.start():match.end()] = " " * (match.end() - match.start())
+    return "".join(masked), None
 
 
 def validate(output, facts, current):
@@ -142,9 +177,12 @@ def validate(output, facts, current):
     if re.search(r"[A-Za-z_]", public):
         return "說明含未允許的內部識別字"
     for sentence in sentences:
-        # Preserve offsets while excluding digits in C/E/WP identifiers.
+        display_text, display_reason = _mask_bound_display_values(sentence, cited, selected)
+        if display_reason:
+            return display_reason
+        # All masks preserve offsets into the original sentence.
         numeric_text = _IDENTIFIER.sub(lambda m: " " * len(m.group()),
-                                       _mask_cited_probe_ids(sentence, cited))
+                                       _mask_cited_probe_ids(display_text, cited))
         matches = list(_NUMBER.finditer(numeric_text))
         covered = {i for match in matches for i in range(match.start(), match.end())}
         # Malformed numbers must not vanish between token boundaries (.5, 1.2.3).
