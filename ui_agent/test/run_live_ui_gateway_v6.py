@@ -26,6 +26,7 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
+os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")  # 避免 Windows 原生樣式不支援自訂背景的警告
 
 from PySide6.QtCore import QMetaObject, QObject, Q_ARG, QUrl, qVersion  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
@@ -57,7 +58,7 @@ INTENTS = [
     {"id": "L04", "text": "重做", "expect": "redo", "note": "重做"},
     {"id": "L05", "text": "去設定", "expect": "clarify", "note": "泛稱設定 → CLARIFY"},
     {"id": "L06", "text": "先回首頁再打開告警中心", "expect": "multi", "note": "多步，出確認卡"},
-    {"id": "L07", "text": "我想調整飛行畫面相關的東西", "expect": "model", "note": "規則不確定，交給模型挑"},
+    {"id": "L07", "text": "我想看遙控器失聯的保護設定", "expect": "model", "note": "規則 CLARIFY（RC 設備頁 vs 通訊與遙控失效保護），交給模型挑；預期 NAV_3_2"},
     {"id": "L08", "text": "把小地圖移到右上角", "expect": "layout", "note": "移動版面"},
     {"id": "L09", "text": "全部復原", "expect": "reset", "note": "整串還原"},
     {"id": "L10", "text": "幫我起飛", "expect": "hold", "note": "飛行指令，必須拒絕"},
