@@ -32,6 +32,14 @@ class MvpLlmDefaults(unittest.TestCase):
         self.assertEqual(report.timeout_s, 90.0)
         self.assertFalse(hasattr(mission, "timeout_s"))
 
+    def test_backend_for_alerts_uses_alerts_url(self):
+        env = {}
+        srv.apply_mvp_llm_defaults(False, env)
+        with mock.patch.dict(os.environ, env, clear=True):
+            alerts = llm.backend_for("alerts")
+        self.assertEqual(alerts.url, "http://127.0.0.1:8090/f/alerts/v1")
+        self.assertEqual(alerts.model, "gemma4:e2b")
+
     def test_backend_for_none_stays_none(self):
         with mock.patch.dict(os.environ, {"GCS_LLM_URL_REPORT": "http://x/v1"}, clear=True):
             self.assertFalse(llm.backend_for("report").available())

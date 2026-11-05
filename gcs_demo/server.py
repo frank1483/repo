@@ -18,6 +18,7 @@ from .planner_t3 import replan_context
 from .report import make_report
 from .sim import MissionRun
 from .alert_bridge import AlertFeed, battery_raise
+from .alerts.typed_explain import LegacyAlertExplainer
 
 WEB = os.path.join(os.path.dirname(__file__), "web")
 
@@ -113,7 +114,8 @@ def handle(path, body):
             s.chosen = chosen
             s.run = MissionRun(s.vehicle(), s.wind, S.TRUE_CALIB, S.WIND_EVENTS)
             s.replans, s.alerts = [], []
-            feed = AlertFeed(s.mission["home"], s.chosen["path"], s.vehicle())
+            feed = AlertFeed(s.mission["home"], s.chosen["path"], s.vehicle(),
+                             explain_fn=LegacyAlertExplainer(backend=backend_for("alerts")))
             s.feed = feed
             # 飛到告警引擎發出「電量不足以飛完／即將到最晚返航點」的預測告警為止
             state = s.run.fly(s.chosen, on_tick=lambda rec, i: battery_raise(feed.tick(rec, i)) is not None)
@@ -220,6 +222,7 @@ MVP_LLM_DEFAULTS = {
     "GCS_LLM_BACKEND": "openai",
     "GCS_LLM_URL": GATEWAY + "/f/mission/v1",
     "GCS_LLM_URL_REPORT": GATEWAY + "/f/report/v1",
+    "GCS_LLM_URL_ALERTS": GATEWAY + "/f/alerts/v1",
     "GCS_LLM_MODEL": "gemma4:e2b",
     "GCS_LLM_TIMEOUT": "60",
     "GCS_LLM_TIMEOUT_REPORT": "90",
