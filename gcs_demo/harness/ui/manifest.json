@@ -1,0 +1,27 @@
+{
+  "feature": "ui",
+  "version": "ui-harness-v1",
+  "components": {
+    "system_prompt": {
+      "path": null,
+      "sha256": null,
+      "note": "Feature-specific component is not available in this gateway branch snapshot; no placeholder implementation or client wiring is claimed."
+    },
+    "schema": {
+      "path": null,
+      "sha256": null,
+      "note": "Feature-specific component is not available in this gateway branch snapshot; no placeholder implementation or client wiring is claimed."
+    },
+    "guard": {
+      "path": null,
+      "sha256": null,
+      "note": "Feature-specific component is not available in this gateway branch snapshot; no placeholder implementation or client wiring is claimed."
+    },
+    "fallback": {
+      "path": null,
+      "sha256": null,
+      "note": "Feature-specific component is not available in this gateway branch snapshot; no placeholder implementation or client wiring is claimed."
+    }
+  },
+  "harness_sha256": "41fecd0bef886994e797462689e3d739384cf97a3b4fcd2df78c1fb37805eb56"
+}

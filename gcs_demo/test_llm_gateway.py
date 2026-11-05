@@ -8,10 +8,15 @@ import tempfile
 import threading
 import time
 import unittest
+import hashlib
+from pathlib import Path
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import llm
 from . import llm_gateway as G
+from . import harness_manifest as HM
+from . import harness_report as HR
 
 
 class FakeOllama:
@@ -165,6 +170,160 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(G.feature_of("/v1/chat/completions", {"X-GCS-Feature": "alerts"}),
                          ("alerts", "/v1/chat/completions"))
         self.assertEqual(G.feature_of("/v1/models", {}), ("unknown", "/v1/models"))
+
+
+class HarnessHTTPTest(unittest.TestCase):
+    def test_headers_and_schema_on_both_protocols(self):
+        import urllib.request
+        with tempfile.TemporaryDirectory() as tmp:
+            log = str(Path(tmp) / "calls.jsonl")
+            fake = FakeOllama()
+            _, srv, url = start_gateway(G.make_upstream("ollama", fake.url, "m"), log)
+            schema = {"type": "object", "properties": {"id": {"enum": ["甲"]}}}
+            try:
+                for protocol in ("openai", "ollama"):
+                    for label in (None, "ui@harness-v1#12345678", ""):
+                        req = {"messages": []}
+                        endpoint = "/f/ui/v1/chat/completions"
+                        if protocol == "ollama":
+                            endpoint = "/f/ui/api/chat"
+                            req["format"] = schema
+                        elif label is not None:
+                            req["response_format"] = {"type": "json_schema", "json_schema": {"schema": schema}}
+                        headers = {"Content-Type": "application/json"}
+                        if label is not None:
+                            headers["X-GCS-Harness"] = label
+                        request = urllib.request.Request(url + endpoint,
+                                    data=json.dumps(req).encode(), headers=headers)
+                        with G._NO_PROXY.open(request) as response:
+                            self.assertEqual(response.status, 200)
+                        record = read_log(log)[-1]
+                        self.assertEqual(record["harness"], "unversioned" if label is None else label)
+                        expected = hashlib.sha256(json.dumps(schema, ensure_ascii=False,
+                                                  sort_keys=True).encode()).hexdigest()[:16]
+                        self.assertEqual(record["schema_hash"], expected if protocol == "ollama"
+                                         or label is not None else None)
+                        self.assertNotIn("harness", fake.seen[-1])
+                request = urllib.request.Request(url, method="OPTIONS")
+                with G._NO_PROXY.open(request) as response:
+                    self.assertIn("X-GCS-Harness", response.headers["Access-Control-Allow-Headers"])
+            finally:
+                srv.shutdown()
+                srv.server_close()
+                fake.close()
+                fake.srv.server_close()
+
+    def test_expired_and_failed_calls_keep_labels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = str(Path(tmp) / "calls.jsonl")
+            gw = G.Gateway(G.Upstream("", "m"), log)
+            for budget, label, expected in ((0, "expired-label", 504), (2, "failure-label", 502)):
+                job = G._Job("alerts", {"messages": []}, budget, harness=label)
+                gw._serve(job)
+                self.assertEqual(job.result[0], expected)
+                self.assertEqual(read_log(log)[-1]["harness"], label)
+                self.assertIsNone(read_log(log)[-1]["schema_hash"])
+
+
+class HarnessManifestTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.component = self.root / "component.txt"
+        self.component.write_bytes(b"alpha\nbeta\n")
+        self.manifest_path = self.root / "gcs_demo/harness/ui/manifest.json"
+        self.manifest_path.parent.mkdir(parents=True)
+        self.manifest = {"feature": "ui", "version": "test-v1", "components": {
+            name: {"path": None, "sha256": None, "note": "not available in fixture"}
+            for name in HM.COMPONENTS}}
+        self.manifest["components"]["guard"] = {"path": "component.txt",
+            "sha256": hashlib.sha256(self.component.read_bytes()).hexdigest()}
+        self.write_manifest()
+        patcher = patch.object(HM, "ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def write_manifest(self):
+        self.manifest["harness_sha256"] = HM.digest(self.manifest)
+        self.manifest_path.write_text(json.dumps(self.manifest, ensure_ascii=False), encoding="utf-8")
+
+    def test_header_and_deterministic_canonical_hash(self):
+        digest = HM.digest(self.manifest)
+        reordered = dict(reversed(list(self.manifest.items())))
+        self.assertEqual(HM.digest(reordered), digest)
+        payload = {k: v for k, v in self.manifest.items() if k != "harness_sha256"}
+        expected = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                                             separators=(",", ":")).encode("utf-8")).hexdigest()
+        self.assertEqual(digest, expected)
+        self.assertEqual(HM.header("ui"), f"ui@test-v1#{expected[:8]}")
+
+    def test_manifest_tamper_fails(self):
+        self.manifest["version"] = "changed"
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "harness_sha256"):
+            HM.load("ui")
+
+    def test_component_one_byte_tamper_fails(self):
+        self.component.write_bytes(b"Alpha\nbeta\n")
+        with self.assertRaisesRegex(ValueError, "component sha256"):
+            HM.load("ui")
+
+    def test_crlf_and_lf_hashes_differ(self):
+        self.component.write_bytes(b"alpha\r\nbeta\r\n")
+        self.assertNotEqual(hashlib.sha256(self.component.read_bytes()).hexdigest(),
+                            self.manifest["components"]["guard"]["sha256"])
+        with self.assertRaisesRegex(ValueError, "component sha256"):
+            HM.load("ui")
+        self.manifest["components"]["guard"]["sha256"] = hashlib.sha256(self.component.read_bytes()).hexdigest()
+        self.write_manifest()
+        self.assertEqual(HM.load("ui"), self.manifest)
+
+    def test_missing_component_and_invalid_feature_fail(self):
+        self.component.unlink()
+        with self.assertRaises(FileNotFoundError):
+            HM.load("ui")
+        with self.assertRaises(ValueError):
+            HM.load("../ui")
+
+    def test_repo_manifests_load(self):
+        with patch.object(HM, "ROOT", Path(__file__).resolve().parent.parent):
+            for feature in HM.FEATURES:
+                self.assertEqual(HM.load(feature)["feature"], feature)
+
+
+class HarnessReportTest(unittest.TestCase):
+    def test_grouping_rates_timeouts_and_percentiles(self):
+        records = [{"feature": "ui", "harness": "v1", "ok": True, "latency_s": n}
+                   for n in range(1, 21)]
+        records += [{"feature": "ui", "ok": False, "error": "expired in queue", "latency_s": 0},
+                    {"feature": "ui", "harness": "v2", "ok": False, "error": "TimeoutError: timed out"},
+                    {"feature": "alerts", "harness": "v1", "ok": False,
+                     "error": "connection refused", "latency_s": float("nan")}]
+        groups = {(g["feature"], g["harness"]): g for g in HR.summarize(records)["groups"]}
+        self.assertEqual(len(groups), 4)
+        group = groups[("ui", "v1")]
+        self.assertEqual((group["count"], group["ok_rate"], group["latency_median_s"],
+                          group["latency_p95_s"]), (20, 1.0, 10.5, 19))
+        self.assertEqual(groups[("ui", "unversioned")]["timeout_count"], 1)
+        self.assertEqual(groups[("ui", "v2")]["timeout_count"], 1)
+        self.assertIsNone(groups[("alerts", "v1")]["latency_p95_s"])
+        mixed = HR.summarize([{"ok": True, "latency_s": 1}, {"ok": False, "latency_s": 3}])["groups"][0]
+        self.assertEqual(mixed["ok_rate"], .5)
+
+    def test_report_preserves_input_and_refuses_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, output = Path(tmp) / "calls.jsonl", Path(tmp) / "summary.json"
+            original = b'{"feature":"ui","ok":true,"latency_s":1}\n'
+            source.write_bytes(original)
+            HR.report(source, output)
+            self.assertEqual(source.read_bytes(), original)
+            before = output.read_bytes()
+            with self.assertRaises(FileExistsError):
+                HR.report(source, output)
+            self.assertEqual(output.read_bytes(), before)
+            with self.assertRaises(ValueError):
+                HR.report(source, source)
 
 
 if __name__ == "__main__":

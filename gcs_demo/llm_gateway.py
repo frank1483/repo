@@ -145,10 +145,11 @@ def make_upstream(kind: str, url: str, model: str) -> Upstream:
 # ------------------------------------------------------------------ 排隊與紀錄
 
 class _Job:
-    def __init__(self, feature, req, budget_s):
+    def __init__(self, feature, req, budget_s, harness="unversioned"):
         self.feature = feature
         self.req = req
         self.budget_s = budget_s
+        self.harness = harness
         self.t_enq = time.time()
         self.done = threading.Event()
         self.result = None  # (http_status, body_dict)
@@ -173,8 +174,8 @@ class Gateway:
     def budget(self, feature: str) -> float:
         return float(self.budgets.get(feature, self.budgets["unknown"]))
 
-    def submit(self, feature: str, req: dict) -> tuple[int, dict]:
-        job = _Job(feature, req, self.budget(feature))
+    def submit(self, feature: str, req: dict, harness: str = "unversioned") -> tuple[int, dict]:
+        job = _Job(feature, req, self.budget(feature), harness)
         prio = PRIORITY.get(feature, UNKNOWN_PRIORITY)
         with self._cv:
             heapq.heappush(self._heap, (prio, next(self._seq), job))
@@ -199,6 +200,9 @@ class Gateway:
                "priority": PRIORITY.get(job.feature, UNKNOWN_PRIORITY),
                "upstream": self.upstream.name, "model": self.upstream.model,
                "prompt_hash": _sha16(job.req.get("messages", [])),
+               "harness": job.harness,
+               "schema_hash": _sha16(_json_format(job.req))
+                              if isinstance(_json_format(job.req), dict) else None,
                "queue_wait_s": round(wait_s, 3), "budget_s": job.budget_s,
                # 有沒有用到約束解碼：json_schema = 候選 ID 等 schema 已交給 Ollama format；json = 只要求 JSON
                "format_kind": "json_schema" if isinstance(_json_format(job.req), dict) else "json"}
@@ -260,7 +264,7 @@ def make_handler(gw: Gateway):
         def do_OPTIONS(self):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-GCS-Feature")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-GCS-Feature, X-GCS-Harness")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
 
@@ -278,13 +282,14 @@ def make_handler(gw: Gateway):
 
         def do_POST(self):
             feat, path = feature_of(self.path, self.headers)
+            harness = self.headers.get("X-GCS-Harness", "unversioned")
             try:
                 n = int(self.headers.get("Content-Length") or 0)
                 req = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
             except (ValueError, UnicodeDecodeError):
                 return self._send(400, {"error": {"message": "bad json"}})
             if path in ("/v1/chat/completions", "/chat/completions"):
-                code, body = gw.submit(feat, req)
+                code, body = gw.submit(feat, req, harness=harness)
                 return self._send(code, body)
             if path == "/api/chat":  # Ollama 原生格式也收，回 Ollama 形式
                 oreq = {"messages": req.get("messages", []),
@@ -292,7 +297,7 @@ def make_handler(gw: Gateway):
                 if isinstance(req.get("format"), dict):
                     oreq["response_format"] = {"type": "json_schema",
                                                "json_schema": {"schema": req["format"]}}
-                code, body = gw.submit(feat, oreq)
+                code, body = gw.submit(feat, oreq, harness=harness)
                 if code != 200:
                     return self._send(code, body)
                 return self._send(200, {"model": body["model"], "done": True,

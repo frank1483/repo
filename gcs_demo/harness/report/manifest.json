@@ -1,0 +1,27 @@
+{
+  "feature": "report",
+  "version": "report-harness-v1",
+  "components": {
+    "system_prompt": {
+      "path": "gcs_demo/report.py",
+      "sha256": "984300360bc4ee51e25ccb578e4641602b97af916ce9d6a1f8e1c1c4ad785710",
+      "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
+    },
+    "schema": {
+      "path": "gcs_demo/report.py",
+      "sha256": "984300360bc4ee51e25ccb578e4641602b97af916ce9d6a1f8e1c1c4ad785710",
+      "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
+    },
+    "guard": {
+      "path": "gcs_demo/report.py",
+      "sha256": "984300360bc4ee51e25ccb578e4641602b97af916ce9d6a1f8e1c1c4ad785710",
+      "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
+    },
+    "fallback": {
+      "path": "gcs_demo/report.py",
+      "sha256": "984300360bc4ee51e25ccb578e4641602b97af916ce9d6a1f8e1c1c4ad785710",
+      "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
+    }
+  },
+  "harness_sha256": "56b5e9398dc892d847ba83130b676d4be1e813a5175b3ac58edbac03155eaec7"
+}
