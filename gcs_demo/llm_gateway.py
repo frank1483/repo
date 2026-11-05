@@ -40,7 +40,11 @@ import json
 import os
 import threading
 import time
+import http.client
+import select
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -71,8 +75,18 @@ def _sha16(obj) -> str:
 
 # ------------------------------------------------------------------ 上游引擎
 
-# 上游是本機／板上服務：不走系統代理（Windows 登錄檔或 HTTP_PROXY 設定會讓 urllib 繞去代理）
+# 上游是本機／板上服務：直接用 http.client 連線，不經系統代理。
+# _NO_PROXY 保留給測試與工具當不走代理的本機用戶端（舊名相容）。
 _NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+class DeadlineExceeded(Exception):
+    """上游呼叫因期限到或呼叫端取消而被強制中斷。"""
+
+
+class UpstreamHTTPError(Exception):
+    pass
+
 
 class Upstream:
     """把 OpenAI 形式的請求送到真正的模型，回 (content 文字, 原始回覆 dict)。"""
@@ -82,14 +96,55 @@ class Upstream:
         self.url = url.rstrip("/")
         self.model = model
 
-    def chat(self, req: dict, timeout_s: float):
+    def chat(self, req: dict, timeout_s: float, cancel=None):
         raise RuntimeError("upstream none：沒有設定模型")
 
-    def _post(self, path, body, timeout_s):
-        r = urllib.request.Request(self.url + path, data=json.dumps(body).encode("utf-8"),
-                                   headers={"Content-Type": "application/json"})
-        with _NO_PROXY.open(r, timeout=timeout_s) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+    def _post(self, path, body, timeout_s, cancel: threading.Event | None = None):
+        """送出並在期限到或被取消時「強制關閉」上游連線。
+
+        urllib 的 timeout 只管單次 socket 動作，不是總時間；這裡用計時器在期限到時
+        shutdown socket，保證最晚在 timeout_s 結束。Ollama 偵測到連線中斷會停止推論。
+        """
+        u = urllib.parse.urlsplit(self.url + path)
+        cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
+        conn = cls(u.hostname, u.port, timeout=max(0.05, timeout_s))
+        aborted = threading.Event()
+
+        def _abort():
+            aborted.set()
+            sock = conn.sock
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        timer = threading.Timer(max(0.0, timeout_s), _abort)
+        timer.daemon = True
+        timer.start()
+        watcher = None
+        if cancel is not None:
+            def _watch():
+                if cancel.wait(timeout_s) and not aborted.is_set():
+                    _abort()
+            watcher = threading.Thread(target=_watch, daemon=True)
+            watcher.start()
+        try:
+            target = u.path + (("?" + u.query) if u.query else "")
+            conn.request("POST", target, body=json.dumps(body).encode("utf-8"),
+                         headers={"Content-Type": "application/json"})
+            resp = conn.getresponse()
+            data = resp.read()
+            if resp.status >= 400:
+                raise UpstreamHTTPError(f"HTTP {resp.status}: {data[:200]!r}")
+            return json.loads(data.decode("utf-8"))
+        except (OSError, http.client.HTTPException) as exc:
+            if aborted.is_set():
+                raise DeadlineExceeded("upstream aborted at deadline/cancel") from exc
+            raise
+        finally:
+            timer.cancel()
+            conn.close()
 
 
 def _json_format(req: dict):
@@ -105,13 +160,13 @@ def _json_format(req: dict):
 class OllamaUpstream(Upstream):
     name = "ollama"
 
-    def chat(self, req, timeout_s):
+    def chat(self, req, timeout_s, cancel=None):
         opts = {"temperature": 0, "seed": 17,
                 "num_predict": int(req.get("max_tokens") or 1024)}
         body = {"model": self.model or req.get("model"), "stream": False, "think": False,
                 "format": _json_format(req), "options": opts,
                 "messages": req.get("messages", [])}
-        out = self._post("/api/chat", body, timeout_s)
+        out = self._post("/api/chat", body, timeout_s, cancel)
         msg = out.get("message") or {}
         return msg.get("content") or "", out
 
@@ -120,7 +175,7 @@ class OpenAIUpstream(Upstream):
     """llama.cpp llama-server / vLLM（之後板上可用這種）。"""
     name = "openai"
 
-    def chat(self, req, timeout_s):
+    def chat(self, req, timeout_s, cancel=None):
         body = dict(req)
         body["model"] = self.model or req.get("model")
         body["temperature"] = 0
@@ -128,7 +183,7 @@ class OpenAIUpstream(Upstream):
         body.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         if "response_format" not in body:
             body["response_format"] = {"type": "json_object"}
-        out = self._post("/chat/completions", body, timeout_s)
+        out = self._post("/chat/completions", body, timeout_s, cancel)
         msg = out["choices"][0]["message"]
         return msg.get("content") or "", out
 
@@ -145,14 +200,45 @@ def make_upstream(kind: str, url: str, model: str) -> Upstream:
 # ------------------------------------------------------------------ 排隊與紀錄
 
 class _Job:
+    """一次呼叫。deadline 是絕對時間（monotonic）：佇列等待＋模型推論都算在內。"""
+
     def __init__(self, feature, req, budget_s, harness="unversioned"):
         self.feature = feature
         self.req = req
         self.budget_s = budget_s
         self.harness = harness
         self.t_enq = time.time()
+        self.t0 = time.monotonic()
+        self.deadline = self.t0 + budget_s
         self.done = threading.Event()
+        self.cancel = threading.Event()   # 期限到或呼叫端斷線 → 設定；worker 不再送出或強制中斷上游
+        self.cancel_reason = None
+        self.lock = threading.Lock()
         self.result = None  # (http_status, body_dict)
+
+    def remaining(self) -> float:
+        return self.deadline - time.monotonic()
+
+    def claim(self, result) -> bool:
+        """worker 認領結果；若呼叫端已收到 504（已取消）則丟棄，回 False。
+        認領後先寫紀錄、再呼叫 release() 叫醒呼叫端，讓回應送出時紀錄已落檔。"""
+        with self.lock:
+            if self.cancel.is_set():
+                return False
+            self.result = result
+            return True
+
+    def release(self):
+        self.done.set()
+
+    def abandon(self, reason: str):
+        """呼叫端放棄（期限到或斷線）。已被認領就不動（呼叫端改等 done）。"""
+        with self.lock:
+            if self.result is not None:
+                return False
+            self.cancel_reason = reason
+            self.cancel.set()
+            return True
 
 
 class Gateway:
@@ -174,16 +260,36 @@ class Gateway:
     def budget(self, feature: str) -> float:
         return float(self.budgets.get(feature, self.budgets["unknown"]))
 
-    def submit(self, feature: str, req: dict, harness: str = "unversioned") -> tuple[int, dict]:
-        job = _Job(feature, req, self.budget(feature), harness)
+    def submit(self, feature: str, req: dict, harness: str = "unversioned",
+               deadline_s: float | None = None, client_gone=None) -> tuple[int, dict]:
+        """期限／取消契約（v0.4）：
+        * 有效期限 = min(功能預算, 呼叫端 X-GCS-Deadline-Ms)；呼叫端只能縮短、不能放寬。
+        * HTTP 回應最晚在有效期限送出（不再有 +5 秒）；期限到回 504 type=deadline。
+        * 期限到或呼叫端斷線（client_gone() 為真）→ 取消：還在排隊的不送模型；
+          已送出的強制關閉上游連線（Ollama 會停止推論）；晚到的結果丟棄並記錄。
+        """
+        budget = self.budget(feature)
+        if deadline_s is not None and deadline_s > 0:
+            budget = min(budget, deadline_s)
+        job = _Job(feature, req, budget, harness)
         prio = PRIORITY.get(feature, UNKNOWN_PRIORITY)
         with self._cv:
             heapq.heappush(self._heap, (prio, next(self._seq), job))
             self._cv.notify()
-        # 多等 5 秒給已送進模型的呼叫收尾；真正的逾時由 worker 判斷
-        if not job.done.wait(job.budget_s + 5):
-            return 504, {"error": {"message": "gateway timeout", "type": "timeout"}}
-        return job.result
+        while True:
+            rem = job.remaining()
+            if rem <= 0:
+                reason = "deadline"
+                break
+            if job.done.wait(min(rem, 0.2)):
+                return job.result
+            if client_gone is not None and client_gone():
+                reason = "client_gone"
+                break
+        if not job.abandon(reason):  # 剛好在最後一刻被認領：等紀錄寫完（最多 1 秒）
+            job.done.wait(1.0)
+            return job.result
+        return 504, {"error": {"message": f"gateway {reason}", "type": "deadline"}}
 
     def _run(self):
         while True:
@@ -206,38 +312,50 @@ class Gateway:
                "queue_wait_s": round(wait_s, 3), "budget_s": job.budget_s,
                # 有沒有用到約束解碼：json_schema = 候選 ID 等 schema 已交給 Ollama format；json = 只要求 JSON
                "format_kind": "json_schema" if isinstance(_json_format(job.req), dict) else "json"}
-        remaining = job.budget_s - wait_s
-        if remaining <= 0.5:
-            rec.update(ok=False, error="expired in queue", latency_s=0.0, content="")
+        remaining = job.remaining()
+        if job.cancel.is_set() or remaining <= 0.5:
+            rec.update(ok=False, error=("cancelled before start: client_gone"
+                                        if job.cancel_reason == "client_gone" else "expired in queue"),
+                       cancel_reason=job.cancel_reason, latency_s=0.0, content="", delivered=False)
             self.stats["expired"] += 1
-            job.result = (504, {"error": {"message": "expired in gateway queue", "type": "timeout"}})
+            job.claim((504, {"error": {"message": "expired in gateway queue", "type": "deadline"}}))
             self._log(rec)
-            job.done.set()
+            job.release()
             return
+        rec["deadline_s"] = round(remaining, 3)
         try:
-            content, raw = self.upstream.chat(job.req, remaining)
+            content, raw = self.upstream.chat(job.req, remaining, job.cancel)
             lat = time.time() - t_start
             rec.update(ok=True, error=None, latency_s=round(lat, 3), content=content,
                        upstream_meta={k: raw.get(k) for k in ("eval_count", "prompt_eval_count",
                                                               "total_duration", "usage") if k in raw})
             self.stats["ok"] += 1
-            job.result = (200, {
+            result = (200, {
                 "id": "gcs-" + rec["prompt_hash"], "object": "chat.completion",
                 "created": int(t_start), "model": self.upstream.model,
                 "choices": [{"index": 0, "finish_reason": "stop",
                              "message": {"role": "assistant", "content": content}}],
                 "gcs_gateway": {"feature": job.feature, "queue_wait_s": rec["queue_wait_s"],
                                 "latency_s": rec["latency_s"]}})
+        except DeadlineExceeded as exc:
+            lat = time.time() - t_start
+            rec.update(ok=False, error=f"deadline: {exc} ({job.cancel_reason or 'deadline'})",
+                       latency_s=round(lat, 3), content="")
+            self.stats["error"] += 1
+            result = (504, {"error": {"message": rec["error"], "type": "deadline"}})
         except (urllib.error.URLError, TimeoutError, OSError, KeyError, IndexError,
-                ValueError, RuntimeError) as exc:
+                ValueError, RuntimeError, UpstreamHTTPError, http.client.HTTPException) as exc:
             lat = time.time() - t_start
             rec.update(ok=False, error=f"{type(exc).__name__}: {exc}", latency_s=round(lat, 3),
                        content="")
             self.stats["error"] += 1
-            job.result = (502, {"error": {"message": rec["error"], "type": "upstream"}})
+            result = (502, {"error": {"message": rec["error"], "type": "upstream"}})
         self.stats["calls"] += 1
+        rec["delivered"] = job.claim(result)
+        if not rec["delivered"]:
+            rec["late_discarded"] = True  # 呼叫端已收到 504；結果只留紀錄，不交付
         self._log(rec)
-        job.done.set()
+        job.release()
 
     def _log(self, rec: dict):
         with self._log_lock, open(self.log_path, "a", encoding="utf-8") as f:
@@ -264,7 +382,7 @@ def make_handler(gw: Gateway):
         def do_OPTIONS(self):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-GCS-Feature, X-GCS-Harness")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-GCS-Feature, X-GCS-Harness, X-GCS-Deadline-Ms")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
 
@@ -283,13 +401,30 @@ def make_handler(gw: Gateway):
         def do_POST(self):
             feat, path = feature_of(self.path, self.headers)
             harness = self.headers.get("X-GCS-Harness", "unversioned")
+            deadline_s = None
+            raw_dl = self.headers.get("X-GCS-Deadline-Ms")
+            if raw_dl:
+                try:
+                    v = float(raw_dl) / 1000.0
+                    deadline_s = v if v > 0 and v == v else None
+                except ValueError:
+                    deadline_s = None  # 不認得就忽略，用功能預算
+            conn = self.connection
+
+            def client_gone():
+                try:
+                    r, _, _ = select.select([conn], [], [], 0)
+                    return bool(r) and conn.recv(1, socket.MSG_PEEK) == b""
+                except (OSError, ValueError):
+                    return True
             try:
                 n = int(self.headers.get("Content-Length") or 0)
                 req = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
             except (ValueError, UnicodeDecodeError):
                 return self._send(400, {"error": {"message": "bad json"}})
             if path in ("/v1/chat/completions", "/chat/completions"):
-                code, body = gw.submit(feat, req, harness=harness)
+                code, body = gw.submit(feat, req, harness=harness, deadline_s=deadline_s,
+                                       client_gone=client_gone)
                 return self._send(code, body)
             if path == "/api/chat":  # Ollama 原生格式也收，回 Ollama 形式
                 oreq = {"messages": req.get("messages", []),
@@ -297,7 +432,8 @@ def make_handler(gw: Gateway):
                 if isinstance(req.get("format"), dict):
                     oreq["response_format"] = {"type": "json_schema",
                                                "json_schema": {"schema": req["format"]}}
-                code, body = gw.submit(feat, oreq, harness=harness)
+                code, body = gw.submit(feat, oreq, harness=harness, deadline_s=deadline_s,
+                                       client_gone=client_gone)
                 if code != 200:
                     return self._send(code, body)
                 return self._send(200, {"model": body["model"], "done": True,

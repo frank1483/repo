@@ -61,3 +61,11 @@ APK 內的 QML 不能 import Python，所以共用介面以 **HTTP 層** 為準�
 - 閘道一律 temperature 0、think:false、要求 JSON（有 json_schema 就交給 Ollama format）；每次呼叫寫一行 JSONL（功能、排隊秒數、模型秒數、prompt hash、原始回覆全文、錯誤）。
 - 告警：**分級一律由演算法先出**（為達 <2 秒），模型說明與建議非同步後補。
 - 換到 Genio 520 板上推論時，只換閘道上游（`GCS_GATEWAY_UPSTREAM=openai` 接 llama-server 等），功能端不改。
+
+## 7. 補充（v0.4，閘道期限／取消契約，2026-11-06 台灣時間；因 Codex 指出 ui 20 s 預算與 HTTP 等待 25 s 不一致）
+
+- **有效期限** = min(功能預算, 呼叫端標頭 `X-GCS-Deadline-Ms`)。呼叫端只能縮短、不能放寬；無效值（非數字、≤0、NaN）忽略。功能預算不變：ui 20 s、alerts 30、mission 60、report 90、recognition 30。
+- **回應時間**：閘道最晚在有效期限送出 HTTP 回應（移除舊的「預算＋5 秒」），逾時回 `504`、`error.type = "deadline"`。
+- **取消**：期限到或呼叫端斷線 → 還在排隊的不送模型（紀錄 `expired in queue` 或 `cancelled before start: client_gone`）；已送出的由閘道**強制關閉上游連線**（計時器 shutdown socket，不依賴 urllib 的單次 socket timeout），Ollama 偵測斷線會停止推論。晚到的結果不交付，紀錄 `delivered=false`、`late_discarded=true`。
+- **UI 修復總上限 32 s**（動作 12 s＋修復最多 20 s）：UI 端每次呼叫帶 `X-GCS-Deadline-Ms = 剩餘總時間`，閘道保證不超過；UI 端自己的 abort 也會被閘道偵測為斷線而取消上游。
+- 新紀錄欄位：`deadline_s`（送出時剩餘秒數）、`delivered`、`late_discarded`、`cancel_reason`。

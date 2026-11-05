@@ -59,7 +59,19 @@ def start_gateway(upstream, log_path, budgets=None):
     return gw, srv, f"http://127.0.0.1:{srv.server_address[1]}"
 
 
+def wait_for(fn, timeout=5.0):
+    t_end = time.time() + timeout
+    while time.time() < t_end:
+        v = fn()
+        if v:
+            return v
+        time.sleep(0.05)
+    return fn()
+
+
 def read_log(path):
+    if not os.path.exists(path):
+        return []
     with open(path, encoding="utf-8") as f:
         return [json.loads(x) for x in f if x.strip()]
 
@@ -134,8 +146,10 @@ class GatewayTest(unittest.TestCase):
             st, body = gw.submit("ui", {"messages": []})
             t.join()
             self.assertEqual(st, 504)
+            # v0.4：ui 在 1.0 秒就收到 504（不再等 worker）；worker 之後才把它記成過期、不送模型
+            ui = wait_for(lambda: [r for r in read_log(self.log) if r["feature"] == "ui"])
             self.assertEqual(len(fake.seen), 1)
-            self.assertEqual(read_log(self.log)[-1]["error"], "expired in queue")
+            self.assertEqual(ui[0]["error"], "expired in queue")
         finally:
             fake.close()
 
@@ -324,6 +338,181 @@ class HarnessReportTest(unittest.TestCase):
             self.assertEqual(output.read_bytes(), before)
             with self.assertRaises(ValueError):
                 HR.report(source, source)
+
+
+class SlowOllama:
+    """假 Ollama：收到請求後慢慢「推論」，每 20 ms 檢查連線是否被對方關閉，記錄中斷時間。"""
+
+    def __init__(self, delay):
+        import select as _select
+        import socket as _socket
+        self.delay = delay
+        self.events = []  # (kind, t_monotonic)
+        fake = self
+
+        class H(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                fake.events.append(("start", time.monotonic()))
+                t_end = time.monotonic() + fake.delay
+                while time.monotonic() < t_end:
+                    r, _, _ = _select.select([self.connection], [], [], 0.02)
+                    if r:
+                        try:
+                            gone = self.connection.recv(1, _socket.MSG_PEEK) == b""
+                        except OSError:
+                            gone = True
+                        if gone:
+                            fake.events.append(("aborted", time.monotonic()))
+                            return
+                fake.events.append(("finished", time.monotonic()))
+                content = json.dumps({"decision": "SELECT", "choice_id": "C1",
+                                      "reason_zh": "慢", "evidence_ids": []})
+                b = json.dumps({"message": {"role": "assistant", "content": content}}).encode()
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(b)))
+                    self.end_headers()
+                    self.wfile.write(b)
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
+
+    def kinds(self):
+        return [k for k, _ in self.events]
+
+    def close(self):
+        self.srv.shutdown()
+
+
+def post(url, body, headers=None, timeout=30):
+    import urllib.request
+    req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with G._NO_PROXY.open(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+
+class DeadlineContractTest(unittest.TestCase):
+    """llm_contract v0.4 期限／取消契約：不放寬 ui 20 s，也不放寬呼叫端給的期限。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.log = os.path.join(self.tmp, "calls.jsonl")
+
+    def test_http_reply_at_budget_not_budget_plus_5_and_upstream_aborted(self):
+        fake = SlowOllama(delay=4.0)
+        gw, srv, url = start_gateway(G.make_upstream("ollama", fake.url, "m"), self.log, {"ui": 1.0})
+        try:
+            t0 = time.monotonic()
+            st, body = post(url + "/f/ui/v1/chat/completions", {"messages": []})
+            took = time.monotonic() - t0
+            self.assertEqual(st, 504)
+            self.assertEqual(body["error"]["type"], "deadline")
+            self.assertLess(took, 1.4)   # 舊版會等到 budget+5 = 6 秒
+            ev = wait_for(lambda: "aborted" in fake.kinds() and fake.events)
+            self.assertIn("aborted", fake.kinds())
+            self.assertNotIn("finished", fake.kinds())
+            aborted_at = dict(fake.events)["aborted"]
+            self.assertLess(aborted_at - t0, 1.5)  # 上游推論在期限附近被中斷
+            rec = wait_for(lambda: read_log(self.log))[0]
+            self.assertFalse(rec["ok"])
+            self.assertTrue(rec["error"].startswith("deadline"))
+        finally:
+            srv.shutdown(); fake.close()
+
+    def test_client_deadline_header_only_shortens(self):
+        fake = SlowOllama(delay=4.0)
+        gw, srv, url = start_gateway(G.make_upstream("ollama", fake.url, "m"), self.log, {"ui": 2.0})
+        try:
+            t0 = time.monotonic()
+            st, _ = post(url + "/f/ui/v1/chat/completions", {"messages": []},
+                         {"X-GCS-Deadline-Ms": "600"})
+            self.assertEqual(st, 504)
+            self.assertLess(time.monotonic() - t0, 1.0)  # 0.6 s，而不是預算 2 s
+            t1 = time.monotonic()
+            st, _ = post(url + "/f/ui/v1/chat/completions", {"messages": []},
+                         {"X-GCS-Deadline-Ms": "60000"})
+            self.assertEqual(st, 504)
+            self.assertLess(time.monotonic() - t1, 2.5)  # 60 s 被壓回 ui 預算 2 s
+        finally:
+            srv.shutdown(); fake.close()
+
+    def test_invalid_deadline_header_ignored(self):
+        fake = FakeOllama()
+        gw, srv, url = start_gateway(G.make_upstream("ollama", fake.url, "m"), self.log)
+        try:
+            for bad in ("abc", "-5", "0", "nan"):
+                st, _ = post(url + "/f/ui/v1/chat/completions", {"messages": []},
+                             {"X-GCS-Deadline-Ms": bad})
+                self.assertEqual(st, 200, bad)
+        finally:
+            srv.shutdown(); fake.close()
+
+    def test_queued_job_cancelled_at_deadline_never_sent(self):
+        fake = SlowOllama(delay=1.5)
+        gw = G.Gateway(G.make_upstream("ollama", fake.url, "m"), self.log, {"ui": 0.8, "report": 5})
+        try:
+            t = threading.Thread(target=gw.submit, args=("report", {"messages": []}))
+            t.start(); time.sleep(0.1)
+            t0 = time.monotonic()
+            st, body = gw.submit("ui", {"messages": []})
+            self.assertEqual(st, 504)
+            self.assertLess(time.monotonic() - t0, 1.0)
+            t.join()
+            ui = wait_for(lambda: [r for r in read_log(self.log) if r["feature"] == "ui"])
+            self.assertEqual(fake.kinds().count("start"), 1)  # 只有 report 送進模型
+            self.assertEqual(ui[0]["error"], "expired in queue")
+            self.assertFalse(ui[0]["delivered"])
+        finally:
+            fake.close()
+
+    def test_client_disconnect_cancels_upstream(self):
+        import socket as _socket
+        fake = SlowOllama(delay=4.0)
+        gw, srv, url = start_gateway(G.make_upstream("ollama", fake.url, "m"), self.log, {"ui": 20})
+        try:
+            host, port = srv.server_address
+            body = json.dumps({"messages": []}).encode()
+            c = _socket.create_connection((host, port))
+            c.sendall(b"POST /f/ui/v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+                      b"Content-Type: application/json\r\nContent-Length: "
+                      + str(len(body)).encode() + b"\r\n\r\n" + body)
+            wait_for(lambda: "start" in fake.kinds())
+            t0 = time.monotonic()
+            c.close()  # 呼叫端放棄（例如 UI 使用者按取消）
+            wait_for(lambda: "aborted" in fake.kinds())
+            self.assertIn("aborted", fake.kinds())
+            self.assertLess(time.monotonic() - t0, 1.5)
+            rec = wait_for(lambda: read_log(self.log))[0]
+            self.assertIn("client_gone", rec["error"])
+        finally:
+            srv.shutdown(); fake.close()
+
+    def test_ui_budget_is_still_20s(self):
+        self.assertEqual(G.DEFAULT_BUDGETS["ui"], 20.0)
+
+    def test_success_before_deadline_delivered(self):
+        fake = SlowOllama(delay=0.2)
+        gw, srv, url = start_gateway(G.make_upstream("ollama", fake.url, "m"), self.log, {"ui": 2.0})
+        try:
+            st, body = post(url + "/f/ui/v1/chat/completions", {"messages": []},
+                            {"X-GCS-Deadline-Ms": "1500"})
+            self.assertEqual(st, 200)
+            rec = read_log(self.log)[0]
+            self.assertTrue(rec["ok"]); self.assertTrue(rec["delivered"])
+            self.assertLessEqual(rec["deadline_s"], 1.5)
+        finally:
+            srv.shutdown(); fake.close()
 
 
 if __name__ == "__main__":
