@@ -59,6 +59,13 @@ def start_gateway(upstream, log_path, budgets=None):
     return gw, srv, f"http://127.0.0.1:{srv.server_address[1]}"
 
 
+def read_events(path):
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [r for r in (json.loads(x) for x in f if x.strip()) if "event" in r]
+
+
 def wait_for(fn, timeout=5.0):
     t_end = time.time() + timeout
     while time.time() < t_end:
@@ -73,7 +80,8 @@ def read_log(path):
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
-        return [json.loads(x) for x in f if x.strip()]
+        rows = [json.loads(x) for x in f if x.strip()]
+    return [r for r in rows if "event" not in r]  # http_write 事件另讀，見 read_events
 
 
 class GatewayTest(unittest.TestCase):
@@ -472,7 +480,7 @@ class DeadlineContractTest(unittest.TestCase):
             ui = wait_for(lambda: [r for r in read_log(self.log) if r["feature"] == "ui"])
             self.assertEqual(fake.kinds().count("start"), 1)  # 只有 report 送進模型
             self.assertEqual(ui[0]["error"], "expired in queue")
-            self.assertFalse(ui[0]["delivered"])
+            self.assertFalse(ui[0]["claimed"])
         finally:
             fake.close()
 
@@ -509,8 +517,155 @@ class DeadlineContractTest(unittest.TestCase):
                             {"X-GCS-Deadline-Ms": "1500"})
             self.assertEqual(st, 200)
             rec = read_log(self.log)[0]
-            self.assertTrue(rec["ok"]); self.assertTrue(rec["delivered"])
+            self.assertTrue(rec["ok"]); self.assertTrue(rec["claimed"])
             self.assertLessEqual(rec["deadline_s"], 1.5)
+        finally:
+            srv.shutdown(); fake.close()
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 1000.0
+        self.lock = threading.Lock()
+
+    def __call__(self):
+        with self.lock:
+            return self.t
+
+    def advance(self, dt):
+        with self.lock:
+            self.t += dt
+
+
+class ScriptedUpstream(G.Upstream):
+    """不連網的上游：執行指定動作後回固定內容（測期限與認領的交錯）。"""
+    name = "scripted"
+
+    def __init__(self, action):
+        super().__init__("", "m")
+        self.action = action
+        self.calls = 0
+
+    def chat(self, req, timeout_s, cancel=None):
+        self.calls += 1
+        self.action()
+        return '{"decision":"HOLD","choice_id":"","reason_zh":"x","evidence_ids":[]}', {}
+
+
+class DeadlineRaceTest(unittest.TestCase):
+    """v0.4.1：Codex 0417 的 P1 情境（認領與期限、取消與連線建立）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.log = os.path.join(self.tmp, "calls.jsonl")
+
+    def test_result_after_deadline_is_not_claimed(self):
+        clock = FakeClock()
+        up = ScriptedUpstream(lambda: clock.advance(5.0))  # 推論「花了」5 秒，超過 2 秒期限
+        gw = G.Gateway(up, self.log, {"ui": 2.0}, clock=clock)
+        st, body = gw.submit("ui", {"messages": []})
+        self.assertEqual(st, 504)
+        self.assertEqual(body["error"]["type"], "deadline")
+        rec = wait_for(lambda: read_log(self.log))[0]
+        self.assertFalse(rec["claimed"])
+        self.assertTrue(rec["late_discarded"])
+        self.assertTrue(rec["ok"])  # 模型其實回了，只是太晚，不交付
+
+    def test_result_just_before_deadline_is_claimed(self):
+        clock = FakeClock()
+        up = ScriptedUpstream(lambda: clock.advance(1.9))
+        gw = G.Gateway(up, self.log, {"ui": 2.0}, clock=clock)
+        st, _ = gw.submit("ui", {"messages": []})
+        self.assertEqual(st, 200)
+        self.assertTrue(wait_for(lambda: read_log(self.log))[0]["claimed"])
+
+    def test_blocked_log_does_not_delay_reply_past_deadline(self):
+        up = ScriptedUpstream(lambda: None)
+        gw = G.Gateway(up, self.log, {"ui": 1.0})
+        orig = gw._log
+        gw._log = lambda rec: (time.sleep(3.0), orig(rec))
+        t0 = time.monotonic()
+        st, _ = gw.submit("ui", {"messages": []})
+        took = time.monotonic() - t0
+        self.assertEqual(st, 200)          # 期限前已完成 → 照常交付
+        self.assertLess(took, 1.3)         # 不等 3 秒的紀錄、也不多等 1 秒
+
+    def test_deadline_vs_completion_race_invariant(self):
+        fake = SlowOllama(delay=0.0)
+        gw = G.Gateway(G.make_upstream("ollama", fake.url, "m"), self.log, {"ui": 0.6})
+        try:
+            outcomes = []
+            for i in range(30):
+                fake.delay = 0.6 + (i % 7 - 3) * 0.03   # 0.51 ~ 0.69 秒，跨越期限
+                jobs = []
+                t0 = time.monotonic()
+                st, _ = gw.submit("ui", {"messages": [{"role": "user", "content": str(i)}]},
+                                  job_out=jobs)
+                took = time.monotonic() - t0
+                outcomes.append(st)
+                self.assertLess(took, 0.6 + 0.35, i)
+                rec = wait_for(lambda: [r for r in read_log(self.log)
+                                        if r.get("job_id") == jobs[0].id])[0]
+                self.assertEqual(st == 200, rec["claimed"] is True, (i, st, rec))
+            self.assertIn(504, outcomes)
+        finally:
+            fake.close()
+
+    def test_cancel_while_connecting_never_sends(self):
+        fake = SlowOllama(delay=0.1)
+        up = G.make_upstream("ollama", fake.url, "m")
+        gate = threading.Event()
+        up._after_connect_hook = lambda: gate.wait(5)
+        gw = G.Gateway(up, self.log, {"ui": 0.8})
+        try:
+            res = {}
+            t = threading.Thread(target=lambda: res.setdefault("r", gw.submit("ui", {"messages": []})))
+            t.start()
+            t.join(2.0)                      # 期限 0.8 秒先到 → 取消；連線還卡在屏障
+            self.assertEqual(res["r"][0], 504)
+            gate.set()                       # 放行：此時發現已取消 → 關閉、不送
+            rec = wait_for(lambda: read_log(self.log))[0]
+            time.sleep(0.2)
+            self.assertNotIn("start", fake.kinds())
+            self.assertIn("cancelled during connect", rec["error"])
+            self.assertFalse(rec["sent_upstream"])
+        finally:
+            fake.close()
+
+    def test_cancel_set_before_post_never_connects(self):
+        fake = SlowOllama(delay=0.1)
+        up = G.make_upstream("ollama", fake.url, "m")
+        tok = G.CancelToken(); tok.set()
+        with self.assertRaises(G.DeadlineExceeded):
+            up.chat({"messages": []}, 5.0, tok)
+        time.sleep(0.2)
+        self.assertEqual(fake.kinds(), [])
+        fake.close()
+
+    def test_no_thread_growth_after_many_quick_calls(self):
+        fake = FakeOllama()
+        gw = G.Gateway(G.make_upstream("ollama", fake.url, "m"), self.log)
+        try:
+            gw.submit("ui", {"messages": []})
+            base = threading.active_count()
+            for _ in range(20):
+                self.assertEqual(gw.submit("ui", {"messages": []})[0], 200)
+            time.sleep(0.2)
+            self.assertLessEqual(threading.active_count(), base + 2)
+        finally:
+            fake.close()
+
+    def test_http_write_event_recorded(self):
+        fake = FakeOllama()
+        gw, srv, url = start_gateway(G.make_upstream("ollama", fake.url, "m"), self.log)
+        try:
+            st, _ = post(url + "/f/ui/v1/chat/completions", {"messages": []})
+            self.assertEqual(st, 200)
+            ev = wait_for(lambda: read_events(self.log))
+            self.assertEqual(ev[0]["event"], "http_write")
+            self.assertEqual(ev[0]["status"], 200)
+            self.assertTrue(ev[0]["write_ok"])
+            self.assertEqual(ev[0]["job_id"], read_log(self.log)[0]["job_id"])
         finally:
             srv.shutdown(); fake.close()
 

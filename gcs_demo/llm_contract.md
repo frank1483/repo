@@ -69,3 +69,10 @@ APK 內的 QML 不能 import Python，所以共用介面以 **HTTP 層** 為準�
 - **取消**：期限到或呼叫端斷線 → 還在排隊的不送模型（紀錄 `expired in queue` 或 `cancelled before start: client_gone`）；已送出的由閘道**強制關閉上游連線**（計時器 shutdown socket，不依賴 urllib 的單次 socket timeout），Ollama 偵測斷線會停止推論。晚到的結果不交付，紀錄 `delivered=false`、`late_discarded=true`。
 - **UI 修復總上限 32 s**（動作 12 s＋修復最多 20 s）：UI 端每次呼叫帶 `X-GCS-Deadline-Ms = 剩餘總時間`，閘道保證不超過；UI 端自己的 abort 也會被閘道偵測為斷線而取消上游。
 - 新紀錄欄位：`deadline_s`（送出時剩餘秒數）、`delivered`、`late_discarded`、`cancel_reason`。
+
+## 8. 修訂（v0.4.1，依 Codex 審查 GATEWAY_REVIEW_0417，2026-11-06 台灣時間）
+
+- **終態同鎖判定**：每次呼叫是一個狀態機（queued → running → completed／cancelled），開始送模型、交回結果、呼叫端放棄都在同一把鎖內對照同一個時鐘判定。**期限後才回來的結果一律不認領、不交付**（記 `claimed=false`、`late_discarded=true`）；移除 v0.4 的「最後一刻再多等 1 秒」。期限前已完成的照常交付，呼叫端不必等紀錄寫完。
+- **取消與連線建立同步**：已取消就不連線；連線建立後才發現已取消 → 立刻關閉、不送出（`sent_upstream=false`，錯誤 `cancelled during connect`）；送出中取消 → shutdown 該 socket。取消改用回呼，不再為每次呼叫開等待執行緒。
+- **欄位語意**：`claimed` = 期限前完成、可交給 HTTP 層；另記一行 `{"event":"http_write","job_id","status","write_ok"}` 表示回應有沒有寫進 socket（`write_ok=true` 不保證對方已讀取）。取代 v0.4 的 `delivered`。
+- **部署假設（待驗證）**：「上游連線被關閉後，Ollama／llama-server 會停止推論」目前只在假上游驗證過，**尚未在真模型上證實**；第 7 節的對應說法降為假設。
