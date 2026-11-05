@@ -171,18 +171,25 @@ class AlertFeedDefaultTests(unittest.TestCase):
         f = AlertFeed(home, path, load_airframe("x500"))
         self.assertIsInstance(f.explain_fn, tx.LegacyAlertExplainer)
         self.assertIsNone(AlertFeed(home, path, load_airframe("x500"), explain_fn=None).explain_fn)
-        ev = {"key": "battery_route", "t": 3, "type": "raise", "title": "電量", "value": "預估落地 5%",
-              "evidence": [{"id": "E1", "text": "預估落地", "value": "5%"}],
-              "candidates": [{"id": "C1", "label": "立即返航", "feasible": True}], "rule_choice": "C1"}
-        ev = event(ev)
-        reply = answer(ev, "C1")
-        f.explain_fn = tx.LegacyAlertExplainer(FakeBackend(reply))
-        ev["explain"] = f.explain_fn(ev)
-        f.events.append(ev)
-        self.assertEqual(ev["explain"]["source"], "rule_pending")
+        from copy import deepcopy
+        from .test_bridge_v5_0421 import arm, rec
+        # Use real engine outputs, not an event detached from live engine state.
+        emitted = arm(f.engine)
+        emitted[0]["allowed_ids"] = ["C1"]  # explicit structured fixture, not production inference
+        reply = answer(emitted[0], "C1", ["請評估 C1。", "請操作員確認。"], ["E1"])
+        f.explain_fn.close(wait=True)
+        f.explain_fn = tx.LegacyAlertExplainer(FakeBackend(reply), current_state=f.engine.current_state)
+        self.addCleanup(f.explain_fn.close, True)
+        with mock.patch.object(f.engine, "update", return_value=emitted):
+            f.tick(rec(0), 0)
+        original = deepcopy(f.events[0])
+        self.assertEqual(original["explain"]["source"], "rule_pending")
         f.explain_fn.close(wait=True)
         self.assertEqual(len(f.poll_explanations()), 1)
-        self.assertEqual(ev["explain"]["source"], "llm")
+        self.assertEqual(f.events[0], original)
+        self.assertEqual(f.events[-1]["explain"]["source"], "llm")
+        self.assertGreater(f.events[-1]["engine_seq"], original["engine_seq"])
+        self.assertEqual(f.poll_explanations(), [])
 
 
 class DefaultBackendTests(unittest.TestCase):

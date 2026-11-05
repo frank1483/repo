@@ -17,6 +17,7 @@ import math
 import json
 from collections import deque
 from dataclasses import dataclass, field, replace
+from copy import deepcopy
 
 from .display import landing_pct_text
 from .core.state_machine import AlertEngine
@@ -725,6 +726,7 @@ class PredictiveAlertEngine:
         previous = self._active.get(f.key)
         payload = f if f.active or previous is None else previous
         facts = self._state_facts(self._event(t, "update", payload))
+        facts["route_version"] = self._route_revision
         selected = next((c for c in f.candidates if c["id"] == f.rule_choice), None)
         recommendation = self._recommendation_key(selected) if selected else None
         rows = self._states.step(
@@ -744,6 +746,55 @@ class PredictiveAlertEngine:
                 "value": f.value, "lead_s": f.lead_s, "evidence": f.evidence,
                 "candidates": f.candidates, "rule_choice": f.rule_choice,
                 "rule_decision": PredictiveAlertEngine._rule_decision(f)}
+
+    def current_state(self, key):
+        """Live explainer gate, including changes that emitted no rule event."""
+        state = self._states.states.get(key)
+        finding = self._active.get(key)
+        if state is None:
+            return None
+        return {"active": bool(state.active and not state.prediction_expired
+                               and state.facts.get("route_version") == self._route_revision),
+                "alert_version": state.version,
+                "feasible_ids": [c["id"] for c in finding.candidates
+                                 if c.get("feasible") is True] if finding else []}
+
+    def apply_explanation(self, key, expected_version, result):
+        """Recheck the live state; append a new engine output, never edit history."""
+        current = self.current_state(key)
+        if (current is None or current["active"] is not True
+                or current["alert_version"] != expected_version
+                or not isinstance(result, dict)
+                or result.get("source") not in ("llm", "rule")
+                or not isinstance(result.get("text"), dict)):
+            return None
+        state = self._states.states[key]
+        finding = self._active.get(key)
+        if finding is None:
+            return None
+        from .explain import validate, rule_text
+        event = {**deepcopy(state.facts), "key": key, "active": True,
+                 "alert_version": state.version, "severity": state.severity}
+        if result["source"] == "llm":
+            if validate(result.get("text"), event, current):
+                return None
+        else:
+            # A completed fallback must use today's rule choice, not the
+            # request's possibly obsolete feasible set or numeric predictions.
+            event.update(rule_choice=finding.rule_choice,
+                         rule_decision="SELECT" if finding.rule_choice in current["feasible_ids"] else "HOLD")
+            result = {**deepcopy(result), "text": rule_text(event)}
+        row = self._states.explanation_update(key, expected_version, state.last_t, result)
+        if row is None:
+            return None
+        return self._sync_state(key, finding, [row])[0]
+
+    def close_explanation(self, original, reason):
+        """Allocate a terminal journal row for an invalidated request only."""
+        state = self._states.states.get(original["key"])
+        when = max(original["output_t"], state.last_t if state and state.last_t is not None
+                   else original["output_t"])
+        return self._states.explanation_closed(original, when, reason)
 
     def active(self):
         return dict(self._active)

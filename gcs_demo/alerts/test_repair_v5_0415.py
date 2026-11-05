@@ -107,18 +107,17 @@ class Pending0415(unittest.TestCase):
 
     def test_bridge_resolve_notifies_retire(self):
         from gcs_demo.alert_bridge import AlertFeed
-        feed = object.__new__(AlertFeed)
-        feed._typed_feed = None
-        feed.home = (0, 0)
-        feed.events = []
-        class FakeEngine:
-            def update(self, tm):
-                return [{"key": "battery", "type": "resolve"}]
+        from .test_bridge_v5_0421 import feed as make_feed, rec
+        from .core.freshness import TRUE, FALSE
         worker, gate = self.worker()
+        feed = make_feed(worker)
         pending = worker(event())
-        feed.engine, feed.explain_fn = FakeEngine(), worker
-        feed.tick({"battery_pct": 50, "power_w": 100, "t_s": 1,
-                   "lat": 0, "lon": 0, "alt": 0, "wind_mps": 0, "wind_from": 0}, 0)
+        feed.engine._states.step("battery", 0, TRUE, severity=2)
+        for t in range(1, 12):
+            resolved = feed.engine._states.step("battery", t, FALSE)
+        self.assertEqual(resolved[0]["type"], "resolve")
+        with patch.object(feed.engine, "update", return_value=resolved):
+            feed.tick(rec(11), 0)
         self.assertEqual(pending["source"], "rule")
         self.assertEqual(pending["fallback_reason"], "alert_retired")
 

@@ -157,6 +157,48 @@ class AlertEngine:
                     changed = True
         return [self._event(key, s, "update", t, sensed_t, recv_t)] if changed else []
 
+    def explanation_update(self, key, expected_version, t, result):
+        """Issue a presentation update without advancing assessment continuity.
+
+        The caller validates the explanation and current feasibility. The engine
+        owns sequence/version allocation; no sample timestamp is fabricated.
+        """
+        s = self.states.get(key)
+        if (s is None or not s.active or s.prediction_expired
+                or s.version != expected_version or not finite(t)
+                or s.last_t is None or t < s.last_t
+                or not isinstance(result, dict)
+                or result.get("source") not in ("llm", "rule")
+                or not isinstance(result.get("text"), dict)):
+            return None
+        row = self._event(key, s, "update", t, s.last_sensed_t, s.last_recv_t)
+        row.update(source=result["source"], explain=deepcopy(result),
+                   explanation_for_version=expected_version,
+                   model_selection=(result.get("text") or {}).get("selected_id")
+                   if result["source"] == "llm" else None)
+        return row
+
+    def explanation_closed(self, original, t, reason):
+        """Journal a request terminal state, without changing a live alert version.
+
+        This row belongs to the ORIGINAL episode/version. A late closure cannot
+        replace a newer version in a presentation projection.
+        """
+        if not finite(t) or not isinstance(reason, str) or not reason:
+            raise ValueError("valid explanation closure required")
+        self.engine_seq += 1
+        text = {"summary_zh": "此筆告警說明已結案，未套用模型結果。",
+                "selected_id": None, "sentences": [], "evidence_ids": []}
+        return {**deepcopy(original), "engine_seq": self.engine_seq,
+                "type": "update", "status": "update", "t": t, "output_t": t,
+                "active": False, "source": "rule", "model_selection": None,
+                "recommendation": None, "recommendation_identity": None,
+                "rule_choice": None, "rule_decision": "HOLD", "candidates": [],
+                "allowed_ids": [], "closure_only": True,
+                "explanation_status": "closed",
+                "explanation_for_version": original["alert_version"],
+                "explain": {"source": "rule", "text": text, "fallback_reason": reason}}
+
     def snapshot(self):
         return {k: {"active": s.active, "severity": s.severity,
                     "recommendation": s.recommendation, "alert_version": s.version,

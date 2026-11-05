@@ -40,6 +40,7 @@ class MvpLlmDefaults(unittest.TestCase):
 class AlertExplanationsArriveLater(unittest.TestCase):
     def test_start_shows_pending_then_poll_fills_in(self):
         import time
+        from copy import deepcopy
         with mock.patch.dict(os.environ, {"GCS_LLM_BACKEND": "none"}):
             srv.SESSION.reset()
             try:
@@ -48,6 +49,7 @@ class AlertExplanationsArriveLater(unittest.TestCase):
                                               "mission_version": p["mission_version"]})
                 self.assertTrue(r["alerts"])
                 self.assertTrue(all(a["source"] in ("rule_pending", "rule") for a in r["alerts"]))
+                original = deepcopy(srv.SESSION.feed.events)
                 for _ in range(50):
                     out = srv.handle("/api/alerts", {})
                     if not out["pending"]:
@@ -55,6 +57,10 @@ class AlertExplanationsArriveLater(unittest.TestCase):
                     time.sleep(0.1)
                 self.assertFalse(out["pending"])
                 self.assertEqual({a["source"] for a in out["alerts"]}, {"rule"})
+                ids = [a["alert_id"] for a in out["alerts"]]
+                self.assertTrue(all(ids))
+                self.assertEqual(len(ids), len(set(ids)))
+                self.assertEqual(srv.SESSION.feed.events[:len(original)], original)
             finally:
                 srv.SESSION.reset()
 
