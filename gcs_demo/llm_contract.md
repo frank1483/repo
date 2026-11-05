@@ -76,3 +76,8 @@ APK 內的 QML 不能 import Python，所以共用介面以 **HTTP 層** 為準�
 - **取消與連線建立同步**：已取消就不連線；連線建立後才發現已取消 → 立刻關閉、不送出（`sent_upstream=false`，錯誤 `cancelled during connect`）；送出中取消 → shutdown 該 socket。取消改用回呼，不再為每次呼叫開等待執行緒。
 - **欄位語意**：`claimed` = 期限前完成、可交給 HTTP 層；另記一行 `{"event":"http_write","job_id","status","write_ok"}` 表示回應有沒有寫進 socket（`write_ok=true` 不保證對方已讀取）。取代 v0.4 的 `delivered`。
 - **部署假設（待驗證）**：「上游連線被關閉後，Ollama／llama-server 會停止推論」目前只在假上游驗證過，**尚未在真模型上證實**；第 7 節的對應說法降為假設。
+
+## 9. 修訂（v0.4.2，依 Codex 複審 GATEWAY_REVIEW_0423）
+
+- 成功結果在認領的同一刻就叫醒呼叫端；紀錄之後才寫，**交付不等紀錄**（呼叫端讀紀錄要自己等它落檔）。
+- 送出前的唯一同步點 `claim_send()`：與 `abort()` 用同一把鎖，且 shutdown 也在鎖內完成。取消先拿到鎖 → 0 個 POST；送出先通過 → 之後的取消以 shutdown 中斷傳輸與等待回應（此時上游可能已收到請求）。

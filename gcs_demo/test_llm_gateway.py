@@ -76,7 +76,21 @@ def wait_for(fn, timeout=5.0):
     return fn()
 
 
+def _settle(path, timeout=3.0, quiet=0.15):
+    """v0.4.2 起回應不等紀錄落檔：讀紀錄前等檔案出現且 quiet 秒內沒有再變動。"""
+    t_end = time.time() + timeout
+    last, t_last = None, time.time()
+    while time.time() < t_end:
+        size = os.path.getsize(path) if os.path.exists(path) else -1
+        if size != last:
+            last, t_last = size, time.time()
+        elif size > 0 and time.time() - t_last >= quiet:
+            return
+        time.sleep(0.02)
+
+
 def read_log(path):
+    _settle(path)
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
@@ -668,6 +682,67 @@ class DeadlineRaceTest(unittest.TestCase):
             self.assertEqual(ev[0]["job_id"], read_log(self.log)[0]["job_id"])
         finally:
             srv.shutdown(); fake.close()
+
+
+class DeadlineRace2Test(unittest.TestCase):
+    """v0.4.2：Codex 0423 指定的兩個交錯。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.log = os.path.join(self.tmp, "calls.jsonl")
+
+    def test_submit_returns_while_log_barrier_held_before_deadline(self):
+        clock = FakeClock()            # 時間不前進：期限（20 s）絕不會到
+        up = ScriptedUpstream(lambda: None)
+        gw = G.Gateway(up, self.log, {"ui": 20.0}, clock=clock)
+        barrier = threading.Event()
+        orig = gw._log
+        gw._log = lambda rec: (barrier.wait(10), orig(rec))
+        res = {}
+        t = threading.Thread(target=lambda: res.setdefault("r", gw.submit("ui", {"messages": []})))
+        t.start()
+        t.join(2.0)
+        try:
+            self.assertFalse(t.is_alive(), "submit 仍被紀錄屏障擋住")
+            self.assertEqual(res["r"][0], 200)
+            self.assertFalse(barrier.is_set())          # 紀錄還沒放行
+            self.assertGreater(gw_job_remaining(clock), 0)
+        finally:
+            barrier.set()
+            t.join(2.0)
+
+    def test_cancel_wins_after_publish_zero_post(self):
+        fake = SlowOllama(delay=0.1)
+        up = G.make_upstream("ollama", fake.url, "m")
+        published = threading.Event()
+        gate = threading.Event()
+        up._before_send_hook = lambda: (published.set(), gate.wait(5))
+        tok = G.CancelToken()
+        res = {}
+
+        def run():
+            try:
+                up.chat({"messages": []}, 5.0, tok)
+                res["r"] = "sent"
+            except G.DeadlineExceeded as exc:
+                res["r"] = str(exc)
+
+        t = threading.Thread(target=run)
+        t.start()
+        try:
+            self.assertTrue(published.wait(2))  # socket 已發布、尚未送出
+            tok.set()                           # 取消先拿到鎖：shutdown 也在鎖內完成
+            gate.set()
+            t.join(3)
+            self.assertIn("not sent", res["r"])
+            time.sleep(0.3)
+            self.assertNotIn("start", fake.kinds())     # 0 個 POST
+        finally:
+            gate.set(); fake.close()
+
+
+def gw_job_remaining(clock):
+    return 20.0 - (clock() - 1000.0)
 
 
 if __name__ == "__main__":

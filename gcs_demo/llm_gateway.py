@@ -101,6 +101,7 @@ class Upstream:
 
     # 測試用掛鉤：連線建立後、發布 socket 與送出前呼叫（可放屏障模擬「連線中被取消」）
     _after_connect_hook = None
+    _before_send_hook = None   # 測試用：socket 已發布、尚未 claim_send
 
     def _post(self, path, body, timeout_s, cancel: "CancelToken | None" = None):
         """送出並在期限到或被取消時強制關閉上游連線（v0.4.1）。
@@ -125,7 +126,11 @@ class Upstream:
                 self._after_connect_hook()
             g.publish(conn.sock)           # 同鎖檢查：若期間已 abort → 關閉並丟 DeadlineExceeded
             target = u.path + (("?" + u.query) if u.query else "")
-            conn.request("POST", target, body=json.dumps(body).encode("utf-8"),
+            payload = json.dumps(body).encode("utf-8")
+            if self._before_send_hook:
+                self._before_send_hook()
+            g.claim_send()                 # 取消與送出的唯一判定點
+            conn.request("POST", target, body=payload,
                          headers={"Content-Type": "application/json"})
             resp = conn.getresponse()
             data = resp.read()
@@ -151,17 +156,19 @@ class _ConnGuard:
     def __init__(self):
         self._lock = threading.Lock()
         self.aborted = False
+        self.sending = False
         self._sock = None
 
     def abort(self):
+        # 在鎖內 shutdown（非阻塞）：與 claim_send 互斥，沒有「已標記 abort 但還沒關」的空窗
         with self._lock:
             self.aborted = True
             sock = self._sock
-        if sock is not None:
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
 
     def check(self):
         with self._lock:
@@ -176,6 +183,14 @@ class _ConnGuard:
                 finally:
                     raise DeadlineExceeded("cancelled during connect; socket closed, not sent")
             self._sock = sock
+
+    def claim_send(self):
+        """送出前的唯一同步點：abort 先拿到鎖 → 這裡丟例外、0 個 POST；
+        這裡先通過 → 送出開始，之後的 abort 以 shutdown 中斷傳輸與等待回應。"""
+        with self._lock:
+            if self.aborted:
+                raise DeadlineExceeded("cancelled before send; not sent")
+            self.sending = True
 
 
 class CancelToken:
@@ -283,6 +298,7 @@ class _Job:
         self.t0 = clock()
         self.deadline = self.t0 + budget_s
         self.done = threading.Event()      # 有可交付結果，或已取消
+        self.log_written = threading.Event()  # worker 的紀錄已落檔（只供觀察，不擋交付）
         self.cancel = CancelToken()
         self.cancel_reason = None
         self.state = "queued"
@@ -319,12 +335,12 @@ class _Job:
                 if self.state != "cancelled":
                     self._cancel_locked("deadline")
                 ok = False
-        if not ok:
-            self.done.set()
-        return ok   # ok=True：worker 寫完紀錄後呼叫 release()；期限先到的呼叫端不等紀錄、直接取 result
+        self.done.set()   # 成功或取消都立刻叫醒呼叫端；紀錄之後才寫，與交付分開
+        return ok
 
     def release(self):
-        self.done.set()
+        """相容舊呼叫：紀錄寫完後呼叫；不影響交付。"""
+        self.log_written.set()
 
     def abandon(self, reason: str) -> bool:
         """呼叫端放棄（期限到或斷線）。已完成 → False（照常交付，一定在期限前完成）。"""
@@ -379,6 +395,8 @@ class Gateway:
             self._cv.notify()
         reason = "deadline"
         while not job.done.is_set():
+            if job.state == "completed":   # 已成功認領：不等 done／紀錄
+                break
             rem = job.remaining()
             if rem <= 0:
                 break
@@ -449,7 +467,7 @@ class Gateway:
             lat = time.time() - t_start
             rec.update(ok=False, error=f"deadline: {exc} ({job.cancel_reason or 'deadline'})",
                        latency_s=round(lat, 3), content="",
-                       sent_upstream=not str(exc).startswith("cancelled"))
+                       sent_upstream="not sent" not in str(exc) and "cancelled before send" not in str(exc))
             self.stats["error"] += 1
             result = (504, {"error": {"message": rec["error"], "type": "deadline"}})
         except (urllib.error.URLError, TimeoutError, OSError, KeyError, IndexError,
