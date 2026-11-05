@@ -16,7 +16,7 @@ _FIELD_NAMES = ("end_pct", "end_pct_raw", "missed_required", "feasible", "energy
                 "completion_pct", "choice_id", "evidence_ids", "operational_status", "rule_decision")
 _IDENTIFIER = re.compile(r"(?<![A-Za-z0-9_])(?:E\d+|C\d+|RTL|WP\d+)(?![A-Za-z0-9_])")
 _OPTION = re.compile(r"(?<![A-Za-z0-9_])C\d+(?![A-Za-z0-9_])")
-_NUMBER = re.compile(r"(?<![0-9A-Za-z_.])[+-]?\d+(?:\.\d+)?%?(?![\d.])")
+_NUMBER = re.compile(r"(?<![0-9A-Za-z_.])[+\-−]?(?:\d+(?:\.\d+)?|\.\d+)%?(?![\d.])")
 _METRIC_LABELS = {"end_pct": ("落地電量", "落地"),
                   "nominal_end_pct": ("落地電量", "落地"),
                   "completion_pct": ("任務完成度", "完成度"),
@@ -43,6 +43,28 @@ def _value_token(e):
     if not tokens and unit and text.endswith(unit):
         tokens = list(_NUMBER.finditer(text[:-len(unit)].strip()))
     return tokens[0].group() if len(tokens) == 1 else None
+
+
+def _mask_cited_probe_ids(text, cited):
+    """Mask only exact categorical probe IDs alongside their cited metric label.
+
+    A typed P2 probe may be named A rather than WP3. It is a source value,
+    never a unit or a blanket permission for arbitrary Latin words/numbers.
+    Preserve offsets so numeric coverage can share this mask.
+    """
+    for e in cited:
+        value = e.get("value")
+        if (e.get("metric") != "first_sampled_infeasible_id"
+                or e.get("option_id") is not None or e.get("unit") != ""
+                or not isinstance(value, str)
+                or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{0,31}", value)):
+            continue
+        labels = [e.get("metric_label"), e.get("text")]
+        if not any(isinstance(label, str) and label and label in text for label in labels):
+            continue
+        pattern = r"(?<![A-Za-z0-9_-])" + re.escape(value) + r"(?![A-Za-z0-9_-])"
+        text = re.sub(pattern, lambda m: " " * len(m.group()), text)
+    return text
 
 
 def validate(output, facts, current):
@@ -100,13 +122,20 @@ def validate(output, facts, current):
         return "說明寫出內部欄位名稱"
     if any(ch in _SIMPLIFIED for ch in text):
         return "說明用了簡體字"
-    if re.search(r"百分之[零〇一二兩三四五六七八九十百千萬億]+|[零〇一二兩三四五六七八九十百千萬億]+(?:%|秒|安培|伏特|公尺|瓦時|成|個|筆)", text):
+    # Only cited, exact evidence labels may contain ordinal words such as 第一個.
+    # Keep the original text for all other checks, including numeric binding.
+    quantity_text = text
+    labels = {e.get(key) for e in cited for key in ("metric_label", "text")
+              if isinstance(e.get(key), str) and e.get(key)}
+    for label in sorted(labels, key=len, reverse=True):
+        quantity_text = quantity_text.replace(label, " " * len(label))
+    if re.search(r"百分之[零〇一二兩三四五六七八九十百千萬億]+|[零〇一二兩三四五六七八九十百千萬億]+(?:%|秒|安培|伏特|公尺|瓦時|成|個|筆)", quantity_text):
         return "數字須使用依據的原樣數字，不接受中文數字換寫"
     assertions = {a for e in cited for a in e.get("assertions", []) if isinstance(a, str)}
     if any(b in text and b not in assertions for b in _BANNED):
         return "說明含沒有依據的斷言"
     # Latin identifiers are restricted to public IDs and units actually in evidence.
-    public = _IDENTIFIER.sub("", text)
+    public = _IDENTIFIER.sub("", "\n".join(_mask_cited_probe_ids(s, cited) for s in sentences))
     units = {e["unit"] for e in cited if isinstance(e["unit"], str) and e["unit"]}
     for unit in sorted(units, key=len, reverse=True):
         public = public.replace(unit, "")
@@ -114,8 +143,14 @@ def validate(output, facts, current):
         return "說明含未允許的內部識別字"
     for sentence in sentences:
         # Preserve offsets while excluding digits in C/E/WP identifiers.
-        numeric_text = _IDENTIFIER.sub(lambda m: " " * len(m.group()), sentence)
-        for match in _NUMBER.finditer(numeric_text):
+        numeric_text = _IDENTIFIER.sub(lambda m: " " * len(m.group()),
+                                       _mask_cited_probe_ids(sentence, cited))
+        matches = list(_NUMBER.finditer(numeric_text))
+        covered = {i for match in matches for i in range(match.start(), match.end())}
+        # Malformed numbers must not vanish between token boundaries (.5, 1.2.3).
+        if any(ch.isdecimal() and i not in covered for i, ch in enumerate(numeric_text)):
+            return "說明含無法辨識或綁定的數字"
+        for match in matches:
             number = match.group()
             before = sentence[:match.start()]
             # Commas delimit claims, but an earlier C ID can scope later clauses.

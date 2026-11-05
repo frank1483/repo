@@ -11,8 +11,11 @@ import math
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+from copy import deepcopy
+
 from gcs_demo import llm
-from .explain import ALERTS_TIMEOUT_S, _SIMPLIFIED, _number_tokens, get_backend
+from .core import contract
+from .explain import ALERTS_TIMEOUT_S, get_backend
 
 MAX_SENTENCE_CHARS = 60
 
@@ -33,8 +36,6 @@ EVIDENCE_LABELS = {
     "soc_overestimate_pct": ("飛控剩餘量可能高估", "%"),
 }
 _RATIO_KEYS = {"capacity_ratio"}   # 0–1 比值，顯示成百分比
-
-_BANNED = ("一定", "保證", "絕對", "完全安全", "確定安全", "所有必要目標都能完成")
 
 SYSTEM_TYPED = (
     "你是無人機地面站的告警助理。告警等級已由演算法決定，你不能更改，也不能提出新的處置動作。"
@@ -79,7 +80,11 @@ def typed_view(event: dict) -> dict | None:
             if text is None:
                 continue
             label, unit = EVIDENCE_LABELS[key]
-            evidence.append({"id": f"E{len(evidence) + 1}", "text": label, "value": text + unit, "_key": key})
+            evidence.append({"id": f"E{len(evidence) + 1}", "text": label, "value": text + unit,
+                             "_key": key, "option_id": None, "metric": key,
+                             "unit": unit.strip(), "segment": block.get("segment"),
+                             "relation": block.get("relation", "observed"),
+                             "metric_label": label})
     if not evidence:
         return None
     pred = event.get("predictor")
@@ -91,7 +96,7 @@ def typed_view(event: dict) -> dict | None:
 def _facts(view):
     return {"alert_version": view["alert_version"], "level": view["severity_zh"],
             "title": view["title_zh"], "allowed_ids": view["allowed_ids"],
-            "evidence": [{k: e[k] for k in ("id", "text", "value")} for e in view["evidence"]]}
+            "evidence": [{k: v for k, v in e.items() if k != "_key"} for e in view["evidence"]]}
 
 
 def rule_text(view: dict) -> dict:
@@ -109,37 +114,12 @@ def rule_text(view: dict) -> dict:
             "sentences": [first, second], "evidence_ids": [view["evidence"][0]["id"]]}
 
 
-def validate(d, view) -> str | None:
-    if not isinstance(d, dict):
-        return "模型輸出必須是物件"
-    if d.get("alert_version") != view["alert_version"]:
-        return "alert_version 不符"
-    sel = d.get("selected_id")
-    if view["allowed_ids"]:
-        if sel not in view["allowed_ids"]:
-            return "selected_id 不在允許集合"
-    elif sel is not None:
-        return "沒有允許選項時 selected_id 必須是 null"
-    s = d.get("sentences")
-    if (not isinstance(s, list) or len(s) != 2
-            or any(not isinstance(x, str) or not x.strip() or len(x) > MAX_SENTENCE_CHARS for x in s)):
-        return f"sentences 必須剛好兩句、非空且每句不超過 {MAX_SENTENCE_CHARS} 字"
-    ids = d.get("evidence_ids")
-    known = {e["id"] for e in view["evidence"]}
-    if not isinstance(ids, list) or not ids or any(x not in known for x in ids):
-        return "evidence_ids 必須非空且全部存在"
-    text = "\n".join(s)
-    if any(e["_key"] in text for e in view["evidence"]) or "_pct" in text or "_id" in text:
-        return "說明寫出內部欄位名稱"
-    if sum(ch in _SIMPLIFIED for ch in text) >= 2:
-        return "說明用了簡體字"
-    if any(b in text for b in _BANNED):
-        return "說明含沒有依據的斷言"
-    allowed = set().union(*(_number_tokens(e["text"] + " " + e["value"]) for e in view["evidence"]))
-    for num in sorted(_number_tokens(text)):
-        if num not in allowed:
-            return f"說明出現事實裡沒有的數字 {num}"
-    return None
+def validate(d, view, current=None) -> str | None:
+    """Delegate v5 schema, binding, language and version checks to the shared core."""
+    state = current() if callable(current) else current
+    if state is None:
+        state = {"active": True, "alert_version": view["alert_version"], "feasible_ids": []}
+    return contract.validate(d, _facts(view), state)
 
 
 def explain_typed(view: dict, backend=None, timeout_s=ALERTS_TIMEOUT_S) -> dict:
@@ -188,7 +168,7 @@ class AsyncExplainer:
         """登記新版本並排入背景；回傳規則結果給呼叫端立刻顯示。"""
         with self._lock:
             self._current[key] = version
-        fut = self._pool.submit(self._fn, *args)
+        fut = self._pool.submit(self._fn, *deepcopy(args))
         fut.add_done_callback(lambda f: self._done(key, version, f))
         return rule_result
 
@@ -211,7 +191,13 @@ class AsyncExplainer:
     def poll(self):
         with self._lock:
             out, self._ready = self._ready, []
-        return out
+            accepted = []
+            for item in out:
+                if self._current.get(item["key"]) == item["version"]:
+                    accepted.append(item)
+                else:
+                    self.discarded.append(item)
+        return accepted
 
     def close(self, wait=True):
         self._pool.shutdown(wait=wait)
@@ -220,7 +206,9 @@ class AsyncExplainer:
 class TypedAlertExplainer:
     """接在 TypedMissionOrchestrator.tick() 後面：事件先用規則顯示，模型說明非同步補上。"""
 
-    def __init__(self, backend=None, timeout_s=ALERTS_TIMEOUT_S):
+    def __init__(self, backend=None, timeout_s=ALERTS_TIMEOUT_S, current_state=None):
+        self._current_state = current_state
+        self._views = {}
         self._backend = backend
         self._timeout = timeout_s
         self.async_ = AsyncExplainer(self._run)
@@ -233,25 +221,48 @@ class TypedAlertExplainer:
         shown = []
         for event in output.get("events", []):
             if event.get("type") in ("resolve", "reset", "unknown") or event.get("active") is not True:
+                self._views.pop(event["key"], None)
                 self.async_.retire(event["key"])
                 continue
             view = typed_view(event)
             if view is None:
+                self._views.pop(event["key"], None)
+                self.async_.retire(event["key"])
                 continue
+            self._views[view["key"]] = deepcopy(view)
             rule = {"text": rule_text(view), "source": "rule_pending", "fallback_reason": None}
             shown.append({"key": view["key"], "version": view["alert_version"],
                           "result": self.async_.submit(view["key"], view["alert_version"], rule, view)})
         return shown
 
     def poll(self):
-        return self.async_.poll()
+        accepted = []
+        for item in self.async_.poll():
+            view = self._views.get(item["key"])
+            if view is None:
+                continue
+            if item["result"].get("source") == "llm":
+                try:
+                    current = self._current_state(item["key"]) if self._current_state else None
+                    if self._current_state and current is None:
+                        raise ValueError("current state unavailable")
+                    reason = validate(item["result"].get("text"), view, current)
+                except Exception as exc:
+                    reason = str(exc)
+                if reason:
+                    item["rejection_reason"] = reason
+                    self.async_.discarded.append(item)
+                    continue
+            accepted.append(item)
+        return accepted
 
     def close(self, wait=True):
         self.async_.close(wait)
 
 
 def legacy_version(ev: dict) -> str:
-    return f"{ev['key']}|{ev.get('t')}|{ev.get('type')}"
+    from .explain import event_version
+    return event_version(ev)
 
 
 class LegacyAlertExplainer:
@@ -260,7 +271,9 @@ class LegacyAlertExplainer:
     呼叫時立刻回傳規則結果（source=rule_pending），模型說明在背景補上，用 poll() 取回。
     """
 
-    def __init__(self, backend=None, timeout_s=ALERTS_TIMEOUT_S):
+    def __init__(self, backend=None, timeout_s=ALERTS_TIMEOUT_S, current_state=None):
+        self._current_state = current_state
+        self._events = {}
         from . import explain as _explain
         self._explain = _explain
         self._backend = backend
@@ -271,15 +284,35 @@ class LegacyAlertExplainer:
         return self._explain.explain(ev, self._backend or get_backend(), timeout_s=self._timeout)
 
     def __call__(self, ev):
-        if ev.get("type") == "resolve":
+        if ev.get("type") in ("resolve", "reset", "unknown") or ev.get("active") is False:
+            self._events.pop(ev["key"], None)
             self.async_.retire(ev["key"])
             return None
+        self._events[ev["key"]] = deepcopy(ev)
         version = legacy_version(ev)
         rule = {"text": self._explain.rule_text(ev), "source": "rule_pending", "fallback_reason": None}
         return self.async_.submit(ev["key"], version, rule, ev)
 
     def poll(self):
-        return self.async_.poll()
+        accepted = []
+        for item in self.async_.poll():
+            ev = self._events.get(item["key"])
+            if ev is None:
+                continue
+            if item["result"].get("source") == "llm":
+                try:
+                    current = self._current_state(item["key"]) if self._current_state else None
+                    if self._current_state and current is None:
+                        raise ValueError("current state unavailable")
+                    reason = self._explain.validate(item["result"].get("text"), ev, current)
+                except Exception as exc:
+                    reason = str(exc)
+                if reason:
+                    item["rejection_reason"] = reason
+                    self.async_.discarded.append(item)
+                    continue
+            accepted.append(item)
+        return accepted
 
     def close(self, wait=True):
         self.async_.close(wait)

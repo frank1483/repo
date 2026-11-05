@@ -1,29 +1,29 @@
 """LLM 說明層：只引用已提供的事實與可行候選；失敗時仍輸出規則說明。
 
-HOLD 的 choice_id 僅為緊急備選供顯示，不是可套用的飛行操作。
+模型使用 v5 固定格式；無允許選項時選擇為 null，緊急備選只在規則文字顯示。
 """
 from __future__ import annotations
 
 import json
 import math
 import os
-import re
+from copy import deepcopy
+
+from .core import contract
 
 from gcs_demo import llm
 
 SYSTEM_ZH = (
-    "你是無人機地面站的告警助理。只能使用提供的事實與數字，不可自行計算或編造數字。"
-    "有 feasible=true 的候選時，decision 必須 SELECT 且只選可行候選，優先保留必要目標與進度。"
-    "全部不可行時 decision 必須 HOLD，choice_id 只標示緊急備選，不可說成已核可的操作。"
-    "evidence_ids 必須非空且每一項都存在；summary_zh 和 reason_zh 的每個數字（含百分比）"
-    "都須逐字對應 facts 裡的完整數字 token，不可截取或四捨五入。"
-    "回覆只輸出 JSON：{\"decision\":\"SELECT或HOLD\",\"choice_id\":\"C?\","
-    "\"reason_zh\":\"一句話理由\",\"evidence_ids\":[\"E?\"],\"summary_zh\":\"兩句白話說明\"}。"
-    "一律使用台灣繁體中文，不寫出內部欄位名稱。"
+    "你是無人機地面站的告警助理。等級、允許集合與數字均由規則決定，不可更改。"
+    "只能從 allowed_ids 選 selected_id；集合為空時必須 null，不得把緊急備選當推薦。"
+    "alert_version 的值與型別必須照抄 facts。"
+    "每個數字須原樣引用 evidence 中同一 option_id、metric 的 value 與 unit，並引用其依據ID。"
+    "回覆只輸出 JSON：{\"alert_version\":\"照抄 facts\",\"selected_id\":null,"
+    "\"sentences\":[\"第一句\",\"第二句\"],\"evidence_ids\":[\"E1\"]}。"
+    "正好兩句、各不超過60字、不空白，使用台灣繁體中文，不寫內部欄位名稱或無依據斷言。"
 )
-
-SCHEMA = {"required": {"decision": "str", "choice_id": "str", "reason_zh": "str",
-                       "evidence_ids": "list", "summary_zh": "str"}}
+SCHEMA = {"required": {"alert_version": "any", "selected_id": "any",
+                       "sentences": "list", "evidence_ids": "list"}}
 
 
 # MVP（契約 v0.3）：告警預設經共用閘道接模型；設 GCS_LLM_BACKEND 時照環境變數（none 可關閉）
@@ -39,16 +39,36 @@ def get_backend():
                                    os.environ.get("GCS_LLM_MODEL") or ALERTS_MODEL)
 
 
+def event_version(ev):
+    """Prefer the v5 engine version; transitional identity never asserts engine sequencing."""
+    return ev.get("alert_version", f"{ev.get('key')}|{ev.get('t')}|{ev.get('type')}")
+
+
 def _facts(ev):
-    """模型實際可見的事實，也是 validate 的唯一數字白名單來源。"""
-    return {
-        "alert": {"title": ev["title"], "value": ev["value"], "lead_s": ev.get("lead_s")},
-        "rule_decision": "SELECT" if any(c.get("feasible") is True for c in ev.get("candidates", [])) else "HOLD",
-        "evidence": ev.get("evidence", []),
-        "candidates": [{k: c[k] for k in ("id", "label", "end_pct", "completion_pct", "missed_required",
-                                         "energy_feasible", "operational_status", "feasible") if k in c}
-                       for c in ev.get("candidates", [])],
-    }
+    """No inference of allowed IDs from feasibility or numeric semantics from text.
+
+    Legacy unstructured evidence is retained as received and fails core validation
+    until predict supplies v5 rows. That failure retains the immediate rule text.
+    """
+    return {"alert_version": event_version(ev), "level": ev.get("severity"),
+            "title": ev.get("title"), "allowed_ids": deepcopy(ev.get("allowed_ids", [])),
+            "evidence": deepcopy(ev.get("evidence", []))}
+
+
+def current_state(ev):
+    return {"active": ev.get("active", ev.get("type") in ("raise", "update")),
+            "alert_version": event_version(ev),
+            "feasible_ids": [c["id"] for c in ev.get("candidates", [])
+                             if c.get("feasible") is True]}
+
+
+def _display(d):
+    """Compatibility display fields are derived locally, never accepted from the model."""
+    out = dict(d)
+    out.update(decision="SELECT" if d["selected_id"] is not None else "HOLD",
+               choice_id=d["selected_id"], summary_zh="".join(d["sentences"]),
+               reason_zh=d["sentences"][1])
+    return out
 
 
 def rule_text(ev: dict) -> dict:
@@ -60,7 +80,7 @@ def rule_text(ev: dict) -> dict:
         pick = feasible[0]
     s = f"{ev['title']}：{ev['value']}。"
     if decision == "HOLD":
-        s += "沒有能保住保留電量且可確認可行的選項，請人工判斷。"
+        s += "無符合條件方案，請人工決策。"
         if pick:
             s += f"緊急備選「{pick['label']}」僅供顯示，尚未核可執行。"
             if pick.get("operational_status") == "unknown":
@@ -70,7 +90,10 @@ def rule_text(ev: dict) -> dict:
         tail = f"（預估落地 {pick['end_pct']:.1f}%）" if "end_pct" in pick else ""
         s += f"建議「{pick['label']}」{tail}。"
         reason = "規則：從可行候選中選擇；飛行操作仍須操作員確認。"
-    return {"decision": decision, "choice_id": pick["id"] if pick else None, "reason_zh": reason,
+    selected = pick["id"] if pick and decision == "SELECT" else None
+    return {"decision": decision, "choice_id": selected, "reason_zh": reason,
+            "alert_version": event_version(ev), "selected_id": selected,
+            "sentences": [f"{ev['title']}：{ev['value']}。", reason],
             "evidence_ids": [e["id"] for e in ev.get("evidence", [])][:2], "summary_zh": s}
 
 
@@ -105,8 +128,8 @@ def explain(ev: dict, backend=None, timeout_s=ALERTS_TIMEOUT_S) -> dict:
         reason = validate(data, ev)
         if reason:
             return fallback(reason)
-        d = dict(data)
-        d["rule_agrees"] = (d["decision"], d["choice_id"]) == (rule["decision"], rule["choice_id"])
+        d = _display(data)
+        d["rule_agrees"] = d["selected_id"] == rule["selected_id"]
         return {"text": d, "source": "llm", "fallback_reason": None, "llm": log}
     except Exception as exc:
         reason = f"{type(exc).__name__}: {exc}"
@@ -114,61 +137,11 @@ def explain(ev: dict, backend=None, timeout_s=ALERTS_TIMEOUT_S) -> dict:
         return fallback(reason)
 
 
-_FIELD_NAMES = ("end_pct", "end_pct_raw", "missed_required", "feasible", "energy_feasible",
-                "completion_pct", "choice_id", "evidence_ids", "operational_status", "rule_decision")
-_SIMPLIFIED = set("电线这为时还应发达变项预备点务议机险问题实际们没过")
-# 完整數字 token：保留正負號、小數位與 %；5% 不會被 15% 或 5.0% 放行。
-_NUMBER = re.compile(r"[-+−]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?(?:\s*[%％])?")
+def validate(d: dict, ev: dict, current=None) -> str | None:
+    """One validator for both callers; current may be a fresh state or zero-arg getter.
 
-
-def _number_tokens(text):
-    return {re.sub(r"\s+(?=[%％])", "", m.group(0)) for m in _NUMBER.finditer(text)}
-
-
-def _fact_numbers(value):
-    if isinstance(value, dict):
-        # E1/C1 等識別碼不是可引用的量測數字；WP13 等 label 中數字仍是事實。
-        return set().union(*(_fact_numbers(v) for k, v in value.items() if k != "id"))
-    if isinstance(value, list):
-        return set().union(*(_fact_numbers(v) for v in value))
-    if isinstance(value, str):
-        return _number_tokens(value)
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return _number_tokens(json.dumps(value, allow_nan=False))
-    return set()
-
-
-def validate(d: dict, ev: dict) -> str | None:
-    if not isinstance(d, dict):
-        return "模型輸出必須是物件"
-    if d.get("decision") not in ("SELECT", "HOLD"):
-        return "decision 必須為 SELECT 或 HOLD"
-    for k in ("choice_id", "summary_zh", "reason_zh"):
-        if not isinstance(d.get(k), str) or not d[k].strip():
-            return f"缺欄位 {k}"
-    cands = {c["id"]: c for c in ev.get("candidates", [])}
-    c = cands.get(d["choice_id"])
-    if c is None:
-        return f"choice_id {d['choice_id']} 不在候選清單"
-    any_ok = any(x.get("feasible") is True for x in cands.values())
-    if any_ok and d["decision"] != "SELECT":
-        return "有可行選項時不得 HOLD"
-    if not any_ok and d["decision"] != "HOLD":
-        return "全部不可行時必須 HOLD"
-    if any_ok and c.get("feasible") is not True:
-        return f"選了不可行的 {d['choice_id']}"
-    ids = d.get("evidence_ids")
-    ev_ids = {e["id"] for e in ev.get("evidence", [])}
-    if (not isinstance(ids, list) or not ids
-            or any(not isinstance(x, str) or x not in ev_ids for x in ids)):
-        return "evidence_ids 必須非空、全為字串且全部存在"
-    text = d["summary_zh"] + "\n" + d["reason_zh"]
-    if any(f in text for f in _FIELD_NAMES):
-        return "說明寫出內部欄位名稱"
-    if sum(ch in _SIMPLIFIED for ch in text) >= 2:
-        return "說明用了簡體字"
-    allowed = _fact_numbers(_facts(ev))
-    for num in sorted(_number_tokens(text)):
-        if num not in allowed:
-            return f"說明出現事實裡沒有的數字 {num}"
-    return None
+    With no getter this validates the supplied event only. Application callers must
+    use their current event/state, not the original model request snapshot.
+    """
+    state = current() if callable(current) else current
+    return contract.validate(d, _facts(ev), current_state(ev) if state is None else state)

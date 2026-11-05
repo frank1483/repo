@@ -6,6 +6,7 @@ import math
 import unittest
 
 from . import explain
+from .test_v5_explain_fixtures import event, answer
 from .energy_api import Wind, default_vehicle
 from .predict import Config, Finding, PredictiveAlertEngine, Telemetry
 
@@ -41,9 +42,15 @@ EV = {
 }
 
 
+EV = event(EV)
+
+
 def ok_answer(**kw):
-    d = {"decision": "SELECT", "choice_id": "C3", "reason_zh": "可行且保留最多進度。", "evidence_ids": ["E1"],
-         "summary_zh": "建議飛完 WP13 後返航。"}
+    d = answer(EV, "C3", ["建議飛完 WP13 後返航。", "請操作員評估。"])
+    if "summary_zh" in kw:
+        d["sentences"][0] = kw.pop("summary_zh")
+    if "reason_zh" in kw:
+        d["sentences"][1] = kw.pop("reason_zh")
     d.update(kw)
     return d
 
@@ -169,8 +176,8 @@ class ExplainContract(unittest.TestCase):          # 審查第 8、9 項
         self.assertEqual(self.fb(evidence_ids=[["E1"]])["source"], "rule")
 
     def test_decision_must_be_valid(self):
-        self.assertEqual(self.fb(decision="MAYBE")["source"], "rule")
-        self.assertEqual(self.fb(decision="HOLD")["source"], "rule")   # 有可行選項時不能 HOLD
+        self.assertEqual(self.fb(selected_id="MAYBE")["source"], "rule")
+        self.assertEqual(self.fb(selected_id=None)["source"], "rule")   # 有可行選項時不能 HOLD
 
     def test_numbers_must_match_exactly(self):
         self.assertEqual(self.fb(summary_zh="預估落地 5%，建議返航。")["source"], "rule")   # 只有 15%

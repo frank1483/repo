@@ -109,10 +109,17 @@ EV = {"title": "電量告警", "value": "預估落地 15%", "rule_choice": "C1",
       "candidates": [{"id": "C1", "label": "飛完 WP13 後返航", "end_pct": 22.0, "feasible": True}]}
 
 
+from .test_v5_explain_fixtures import event, answer
+EV = event(EV)
+
+
 class ExplainExtra(unittest.TestCase):
     def answer(self, **kw):
-        return {"decision": "SELECT", "choice_id": "C1", "summary_zh": "建議飛完 WP13 後返航。",
-                "reason_zh": "保留進度。", "evidence_ids": ["E1"], **kw}
+        d = answer(EV, "C1", ["建議飛完 WP13 後返航。", "請保留進度。"])
+        if "reason_zh" in kw:
+            d["sentences"][1] = kw.pop("reason_zh")
+        d.update(kw)
+        return d
 
     def test_fraction_signed_and_reason_numbers_are_exact(self):
         self.assertIsNone(explain.validate(self.answer(), EV))
@@ -120,11 +127,11 @@ class ExplainExtra(unittest.TestCase):
             self.assertIsNotNone(explain.validate(self.answer(reason_zh=text), EV))
 
     def test_all_infeasible_rule_and_model_must_hold(self):
-        ev = {**EV, "candidates": [{**EV["candidates"][0], "feasible": False}]}
+        ev = {**EV, "allowed_ids": [], "candidates": [{**EV["candidates"][0], "feasible": False}]}
         self.assertEqual(explain.rule_text(ev)["decision"], "HOLD")
-        self.assertIn("請人工判斷", explain.rule_text(ev)["summary_zh"])
+        self.assertIn("無符合條件方案，請人工決策", explain.rule_text(ev)["summary_zh"])
         self.assertIsNotNone(explain.validate(self.answer(), ev))
-        self.assertIsNone(explain.validate(self.answer(decision="HOLD"), ev))
+        self.assertIsNone(explain.validate(self.answer(selected_id=None), ev))
 
     def test_backend_construction_and_malformed_result_fall_back(self):
         with patch.object(explain, "get_backend", side_effect=RuntimeError("injected")):

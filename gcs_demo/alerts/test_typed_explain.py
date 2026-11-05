@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 from gcs_demo import llm
+from .test_v5_explain_fixtures import event, answer
 from gcs_demo.alerts import explain, typed_explain as tx
 from gcs_demo.test_typed_orchestration import feed, measurement, request
 
@@ -49,9 +50,11 @@ class TypedViewTests(unittest.TestCase):
         self.assertTrue(self.view["evidence"])
         facts = tx._facts(self.view)
         text = str(facts)
-        for key in ("nominal_end_pct", "low_pct", "reserve_pct", "_key"):
+        for key in ("_key",):
             self.assertNotIn(key, text)
         self.assertEqual(facts["allowed_ids"], [])
+        self.assertEqual(facts["evidence"][0]["metric"], self.view["evidence"][0]["_key"])
+        self.assertIn("option_id", facts["evidence"][0])
         self.assertIn(self.view["severity_zh"], ("注意", "警告", "嚴重"))
 
     def test_resolve_and_inactive_not_explained(self):
@@ -143,8 +146,8 @@ class AsyncTests(unittest.TestCase):
               "evidence": [{"id": "E1", "text": "預估落地", "value": "5%"}],
               "candidates": [{"id": "C1", "label": "立即返航", "feasible": True, "end_pct": 25.0}],
               "rule_choice": "C1"}
-        reply = {"decision": "SELECT", "choice_id": "C1", "reason_zh": "可行。", "evidence_ids": ["E1"],
-                 "summary_zh": "預估落地 5%，建議立即返航。"}
+        ev = event(ev)
+        reply = answer(ev, "C1")
         ex = tx.LegacyAlertExplainer(FakeBackend(reply, delay=0.3))
         t0 = time.perf_counter()
         r = ex(ev)
@@ -166,8 +169,8 @@ class AlertFeedDefaultTests(unittest.TestCase):
         ev = {"key": "battery_route", "t": 3, "type": "raise", "title": "電量", "value": "預估落地 5%",
               "evidence": [{"id": "E1", "text": "預估落地", "value": "5%"}],
               "candidates": [{"id": "C1", "label": "立即返航", "feasible": True}], "rule_choice": "C1"}
-        reply = {"decision": "SELECT", "choice_id": "C1", "reason_zh": "可行。", "evidence_ids": ["E1"],
-                 "summary_zh": "預估落地 5%，建議立即返航。"}
+        ev = event(ev)
+        reply = answer(ev, "C1")
         f.explain_fn = tx.LegacyAlertExplainer(FakeBackend(reply))
         ev["explain"] = f.explain_fn(ev)
         f.events.append(ev)
