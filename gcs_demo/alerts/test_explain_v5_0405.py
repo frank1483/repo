@@ -12,16 +12,16 @@ class Contract0405Tests(unittest.TestCase):
             for index in (0, 1):
                 with self.subTest(value=value, index=index):
                     sentences = ["請操作員評估。", "請持續留意。"]
-                    sentences[index] = f"C1 落地 {value}。"
+                    sentences[index] = f"C1 落地電量 {value}。"
                     self.assertIsNotNone(explain.validate(
                         answer(ev, "C1", sentences, ["E1"]), ev))
 
     def test_exact_bound_leading_decimal_is_accepted(self):
         ev = event()
         ev["evidence"][0]["value"] = ".5"
-        d = answer(ev, "C1", ["C1 落地 .5%。", "請操作員評估。"], ["E1"])
+        d = answer(ev, "C1", ["C1 落地電量 .5%。", "請操作員評估。"], ["E1"])
         self.assertIsNone(explain.validate(d, ev))
-        d["sentences"][0] = "C1 落地 0.5%。"
+        d["sentences"][0] = "C1 落地電量 0.5%。"
         self.assertIsNotNone(explain.validate(d, ev))
 
     def test_malformed_numbers_cannot_disappear_from_binding(self):
@@ -29,11 +29,11 @@ class Contract0405Tests(unittest.TestCase):
         for value in ("..5%", "1.2.3%", "15.%", "15.0.0%"):
             with self.subTest(value=value):
                 self.assertIsNotNone(explain.validate(answer(
-                    ev, "C1", [f"C1 落地 {value}。", "請操作員評估。"], ["E1"]), ev))
+                    ev, "C1", [f"C1 落地電量 {value}。", "請操作員評估。"], ["E1"]), ev))
 
     def test_unicode_minus_cannot_borrow_positive_evidence(self):
         ev = event()
-        d = answer(ev, "C1", ["C1 落地 −15.0%。", "請操作員評估。"], ["E1"])
+        d = answer(ev, "C1", ["C1 落地電量 −15.0%。", "請操作員評估。"], ["E1"])
         self.assertIsNotNone(explain.validate(d, ev))
 
     def test_cited_first_probe_label_is_accepted(self):

@@ -76,17 +76,19 @@ def rule_text(ev: dict) -> dict:
     cands = {c["id"]: c for c in ev.get("candidates", [])}
     feasible = [c for c in cands.values() if c.get("feasible") is True]
     pick = cands.get(ev.get("rule_choice"))
-    decision = "SELECT" if feasible else "HOLD"
-    if feasible and (pick is None or pick.get("feasible") is not True):
+    decision = "SELECT" if feasible and ev.get("rule_decision") != "HOLD" else "HOLD"
+    if decision == "SELECT" and (pick is None or pick.get("feasible") is not True):
         pick = feasible[0]
     s = f"{ev['title']}：{ev['value']}。"
     if decision == "HOLD":
-        s += "無符合條件方案，請人工決策。"
-        if pick:
+        s += ("建議尚待穩定確認，請人工決策。" if feasible else
+              "無符合條件方案，請人工決策。")
+        if pick and not feasible:
             s += f"緊急備選「{pick['label']}」僅供顯示，尚未核可執行。"
             if pick.get("operational_status") == "unknown":
                 s += "地面作業條件未知。"
-        reason = "規則：候選全部不可行，暫停選擇並請人工判斷。"
+        reason = ("規則：建議尚待穩定確認，暫停選擇並請人工判斷。" if feasible else
+                  "規則：候選全部不可行，暫停選擇並請人工判斷。")
     else:
         tail = f"（預估落地 {landing_pct_text(pick.get('end_pct_raw', pick['end_pct']))}）" if "end_pct" in pick else ""
         s += f"建議「{pick['label']}」{tail}。"

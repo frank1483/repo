@@ -80,6 +80,10 @@ class AlertFeed:
         # 模擬電壓只是 soc 的線性函數、沒有老化資訊，容量告警在此情境不可信，略過
         new = [e for e in self.engine.update(tm) if e["key"] != "battery_capacity"]
         for ev in new:
+            if ev["type"] == "resolve":
+                retire = getattr(self.explain_fn, "retire", None)
+                if retire is not None:
+                    retire(ev["key"])
             if ev["type"] != "resolve" and self.explain_fn:
                 ev["explain"] = self.explain_fn(ev)
             self.events.append(ev)

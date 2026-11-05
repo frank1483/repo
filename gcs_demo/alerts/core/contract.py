@@ -17,12 +17,42 @@ _FIELD_NAMES = ("end_pct", "end_pct_raw", "missed_required", "feasible", "energy
 _IDENTIFIER = re.compile(r"(?<![A-Za-z0-9_])(?:E\d+|C\d+|RTL|WP\d+)(?![A-Za-z0-9_])")
 _OPTION = re.compile(r"(?<![A-Za-z0-9_])C\d+(?![A-Za-z0-9_])")
 _NUMBER = re.compile(r"(?<![0-9A-Za-z_.])[+\-−]?(?:\d+(?:\.\d+)?|\.\d+)%?(?![\d.])")
-_METRIC_LABELS = {"end_pct": ("落地電量", "落地"),
-                  "nominal_end_pct": ("落地電量", "落地"),
-                  "completion_pct": ("任務完成度", "完成度"),
-                  "reserve_pct": ("保留電量", "保留"),
+_METRIC_LABELS = {"end_pct": ("落地電量",),
+                  "nominal_end_pct": ("落地電量",),
+                  "completion_pct": ("任務完成度",),
+                  "reserve_pct": ("保留電量",),
                   "wind_speed": ("風速",), "current_a": ("電流",),
                   "voltage_v": ("電壓",), "eta_s": ("所需時間", "抵達時間")}
+
+
+def _metric_family(metric):
+    return "end_pct" if metric == "nominal_end_pct" else metric
+
+
+def _metric_aliases(e):
+    aliases = list(_METRIC_LABELS.get(e["metric"], ()))
+    aliases += [e.get("metric_label", ""), e.get("text", ""), e["metric"]]
+    aliases += e.get("metric_labels", [])
+    # Exclude only known ambiguous aliases, including producer-supplied aliases.
+    # 風速/電流/電壓 and short custom metric names remain valid full labels.
+    ambiguous = {"落地", "保留", "完成度"}
+    return [a.strip() for a in aliases
+            if isinstance(a, str) and a.strip() and a.strip() not in ambiguous]
+
+
+def _claim_clause(sentence, start, end):
+    # Inspect the whole claim, including metric names AFTER the numeric value.
+    return (re.split(r"[，,；;：:。！？!?]", sentence[:start])[-1]
+            + sentence[start:end]
+            + re.split(r"[，,；;：:。！？!?]", sentence[end:])[0])
+
+
+def _mentioned_metrics(clause, evidence):
+    # Inspect uncited rows and known labels too: citing only one metric cannot
+    # conceal a second measurement in the same clause.
+    rows = [{"metric": metric} for metric in _METRIC_LABELS] + list(evidence)
+    return {_metric_family(e["metric"]) for e in rows
+            if any(alias in clause for alias in _metric_aliases(e))}
 
 
 def _value_token(e):
@@ -67,7 +97,7 @@ def _mask_cited_probe_ids(text, cited):
     return text
 
 
-def _mask_bound_display_values(sentence, cited, selected):
+def _mask_bound_display_values(sentence, cited, selected, evidence):
     """Bind a complete shortage display to one cited option/metric, never its parts.
 
     The producer retains the canonical signed value. Only its exact shortage
@@ -84,17 +114,15 @@ def _mask_bound_display_values(sentence, cited, selected):
     for display in displays:
         for match in re.finditer(re.escape(display), sentence):
             before = sentence[:match.start()]
-            clause = re.split(r"[，,；;：:]", before)[-1]
+            clause = _claim_clause(sentence, match.start(), match.end())
+            metrics = _mentioned_metrics(clause, evidence)
             options = list(_OPTION.finditer(before))
             option = options[-1].group() if options else selected
             bindings = set()
             for e in cited:
                 if e.get("display_value") != display or e["option_id"] != option:
                     continue
-                aliases = list(_METRIC_LABELS.get(e["metric"], ()))
-                aliases += [e.get("metric_label", ""), e.get("text", ""), e["metric"]]
-                aliases += e.get("metric_labels", [])
-                if any(isinstance(a, str) and a and a in clause for a in aliases):
+                if metrics == {_metric_family(e["metric"])}:
                     bindings.add((e["option_id"], e["metric"]))
             if len(bindings) != 1:
                 return sentence, "顯示值無法綁定同一選項與指標"
@@ -177,7 +205,7 @@ def validate(output, facts, current):
     if re.search(r"[A-Za-z_]", public):
         return "說明含未允許的內部識別字"
     for sentence in sentences:
-        display_text, display_reason = _mask_bound_display_values(sentence, cited, selected)
+        display_text, display_reason = _mask_bound_display_values(sentence, cited, selected, facts["evidence"])
         if display_reason:
             return display_reason
         # All masks preserve offsets into the original sentence.
@@ -192,17 +220,15 @@ def validate(output, facts, current):
             number = match.group()
             before = sentence[:match.start()]
             # Commas delimit claims, but an earlier C ID can scope later clauses.
-            clause = re.split(r"[，,；;：:]", before)[-1]
+            clause = _claim_clause(sentence, match.start(), match.end())
+            metrics = _mentioned_metrics(clause, facts["evidence"])
             option_matches = list(_OPTION.finditer(before))
             option = option_matches[-1].group() if option_matches else selected
             candidates = []
             for e in cited:
                 if e["option_id"] != option or _value_token(e) != number:
                     continue
-                aliases = list(_METRIC_LABELS.get(e["metric"], ()))
-                aliases += [e.get("metric_label", ""), e.get("text", ""), e["metric"]]
-                aliases += e.get("metric_labels", [])
-                if not any(isinstance(a, str) and a and a in clause for a in aliases):
+                if metrics != {_metric_family(e["metric"])}:
                     continue
                 unit = e["unit"]
                 after = sentence[match.end():].lstrip()

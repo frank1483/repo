@@ -127,6 +127,10 @@ def run(scenario="gusty", policy="ignore", dt=1.0, seed=7, explain_fn=None, max_
         if phase in ("cruise", "home"):
             new = eng.update(tm)
             for ev in new:
+                if ev["type"] == "resolve":
+                    retire = getattr(explain_fn, "retire", None)
+                    if retire is not None:
+                        retire(ev["key"])
                 if explain_fn and ev["type"] != "resolve":
                     ev["explain"] = explain_fn(ev)
                 events.append(ev)

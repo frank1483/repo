@@ -14,10 +14,13 @@
 from __future__ import annotations
 
 import math
+import json
 from collections import deque
 from dataclasses import dataclass, field, replace
 
 from .display import landing_pct_text
+from .core.state_machine import AlertEngine
+from .core.freshness import TRUE, FALSE, UNKNOWN
 
 from .energy_api import (Vehicle, Wind, air_power_w, leg_energy, rtl_energy,
                          with_calib, profile_limits)
@@ -43,6 +46,7 @@ class Telemetry:
 
 @dataclass
 class Config:
+    """raise_ticks/clear_ticks are compatibility fields; v5 uses seconds."""
     reserve_pct: float = 20.0
     wind_limit_mps: float = 12.0
     link_min_pct: float = 35.0
@@ -83,6 +87,7 @@ class Finding:
     candidates: list = field(default_factory=list)   # [{"id","action","label","end_pct","completion_pct","feasible"}]
     rule_choice: str | None = None
     lead_s: float | None = None                       # 距離問題發生還有多久
+    prediction_expired: bool = False
 
 
 class PredictiveAlertEngine:
@@ -105,8 +110,11 @@ class PredictiveAlertEngine:
         self._cell_hist = deque()             # (t, used_wh, 補償後單芯電壓)，僅留 600 秒
         self._link_hist = deque(maxlen=900)    # (離家距離, 品質)
         self._wind_hist = deque(maxlen=180)    # (t, 風速)
+        self._route_revision = 0
         self._option_energy_ok: dict[str, bool] = {}  # option identity, independent of alerts
-        self._streak: dict[str, int] = {}
+        self._states = AlertEngine()
+        self._last_tm_t = None
+        self._streak: dict[str, int] = {}  # compatibility only; never used for timing
         self._active: dict[str, Finding] = {}
         self._announced: dict[str, tuple] = {}   # key -> (severity, choice) 最後一次說明時
         self._pending_choice: dict[str, tuple] = {}
@@ -123,6 +131,9 @@ class PredictiveAlertEngine:
                        or not 0 <= k < self.total_wps for k in new_idx)
                 or any(len(p) != 3 or not all(self._finite(x) for x in p) for p in new_route)):
             raise ValueError("航線須為有限三維座標，並逐點對應有效的原航點索引")
+        if new_route != self.route or new_idx != self.route_idx:
+            self._route_revision += 1
+            self._option_energy_ok.clear()
         self.route, self.route_idx = new_route, new_idx
 
     def _orig(self, pos_in_route: int) -> int:
@@ -140,6 +151,18 @@ class PredictiveAlertEngine:
     def _completion(self, planned=()):
         """已到達 ∪ 計畫會到達的原索引；不把被刪除的航點當成已完成。"""
         return len(self._reached | set(planned)) / self.total_wps * 100.0 if self.total_wps else 0.0
+
+    def _option_identity(self, ident, action, param=None, scope="battery"):
+        # Numeric predictions change each sample; only execution parameters and
+        # route revision distinguish options. Do not round parameters together.
+        if scope == "battery" and param is None and self._route_revision == 0:
+            return ident
+        return json.dumps([scope, self._route_revision, ident, action, param],
+                          ensure_ascii=True, separators=(",", ":"), allow_nan=False)
+
+    @staticmethod
+    def _recommendation_key(candidate):
+        return candidate.get("option_identity", candidate["id"])
 
     def _is_feasible(self, end_pct_raw, option_id="C1"):
         """Energy qualification, contract 5.2; this is not joint feasibility.
@@ -189,8 +212,7 @@ class PredictiveAlertEngine:
                     or not 0 <= tm.link_pct <= 100 or tm.voltage <= 0
                     or tm.used_wh < 0 or tm.wind.speed_mps < 0):
                 return "遙測超出有效範圍"
-            if (self.cfg.raise_ticks < 1 or self.cfg.clear_ticks < 1
-                    or self.cfg.wind_limit_mps <= 0 or self.cfg.horizon_s < 0
+            if (self.cfg.wind_limit_mps <= 0 or self.cfg.horizon_s < 0
                     or not 0 <= self.cfg.reserve_pct <= 100
                     or not 0 <= self.cfg.emergency_rtl_min_pct <= 100):
                 return "告警設定超出有效範圍"
@@ -288,7 +310,13 @@ class PredictiveAlertEngine:
         pnr = None
         unsafe = False
         for i, cum_e, cum_t, rtl_e in walk:
-            if avail_wh - cum_e - rtl_e - reserve_wh < 0:
+            ident = (self._option_identity("C4", "A_RTL_NOW") if i == 0 else
+                     self._option_identity("C3", "A_RTL_AFTER_WP",
+                                           self._orig(tm.next_wp + i - 1)))
+            raw = (avail_wh - cum_e - rtl_e) / self.v.battery_wh * 100.0
+            # Apply each physical return point's 20/22 memory BEFORE selection.
+            # Stop at the first disqualified point; never leap over an unsafe leg.
+            if not self._is_feasible(raw, ident):
                 unsafe = True
                 break
             pnr = (i, cum_e, cum_t, rtl_e)
@@ -389,8 +417,9 @@ class PredictiveAlertEngine:
             raw = pct(energy)
             if not self._finite(raw):
                 raise ValueError("候選電量估計非有限數值")
-            energy_ok = self._is_feasible(raw, ident)
-            c = {"id": ident, "action": action, "label": label, "end_pct_raw": raw,
+            identity = self._option_identity(ident, action, extra.get("param"))
+            energy_ok = self._is_feasible(raw, identity)
+            c = {"id": ident, "option_identity": identity, "action": action, "label": label, "end_pct_raw": raw,
                  "end_pct": round(raw, 1), "end_pct_zh": landing_pct_text(raw), "completion_pct": round(self._completion(planned), 1),
                  "energy_feasible": energy_ok, "feasible": energy_ok, **extra}
             if action == "A_LAND_NOW":
@@ -538,6 +567,10 @@ class PredictiveAlertEngine:
     # ---------- 主流程 ----------
     def update(self, tm: Telemetry) -> list[dict]:
         """吃一筆遙測，回傳這一刻的告警事件（raise / update / resolve）。"""
+        if isinstance(tm, Telemetry) and self._finite(tm.t):
+            if self._last_tm_t is not None and tm.t <= self._last_tm_t:
+                return []  # duplicate/out-of-order snapshots never mutate histories
+            self._last_tm_t = tm.t
         error = self._input_error(tm)
         self.last_state.update({"data_status": "insufficient" if error else "ok", "input_error": error,
                                 "predictor_errors": {}, "end_pct": None, "pnr_wp": None,
@@ -547,7 +580,8 @@ class PredictiveAlertEngine:
         if error:
             self._pending_choice.clear()       # 資料缺口不算建議連續成立
             self._streak.clear()
-            return []                          # 不把缺資料當成 finding=False 而解除告警
+            return (self._unknown_all(tm.t) if isinstance(tm, Telemetry)
+                    and self._finite(tm.t) else [])
         tm = replace(tm, next_wp=max(0, min(int(tm.next_wp), len(self.route))))
         self._reached.update(self.route_idx[:tm.next_wp])
 
@@ -602,14 +636,15 @@ class PredictiveAlertEngine:
                 pick = next((c for c in f.candidates if c["id"] == f.rule_choice), None)
                 if pick is None or pick.get("feasible") is not True:
                     f.rule_choice = self._rule_pick(f.candidates, self.cfg.emergency_rtl_min_pct)
+        events = []
         seen = {f.key for f in findings}
         for key in ("battery_route", "rtl_point", "battery_capacity", "link_route", "wind_trend"):
             if key not in seen:               # 預測器缺資料／例外不跨缺口累積遲滯
                 self._pending_choice.pop(key, None)
                 self._streak.pop(key, None)
+                events.extend(self._unknown(tm.t, key))
         if self.last_state["predictor_errors"]:
             self.last_state["data_status"] = "partial"
-        events = []
         for f in findings:
             events.extend(self._debounce(tm.t, f))
         return events
@@ -625,7 +660,9 @@ class PredictiveAlertEngine:
             raw = (avail - walk[-1][1] - walk[-1][3]) / self.v.battery_wh * 100.0
             if not self._finite(raw):
                 raise ValueError("返航候選能量非有限數值")
-            energy_ok = self._is_feasible(raw, f"{f.key}:{c['id']}")
+            identity = self._option_identity(c["id"], c["action"], c.get("param"), scope=f.key)
+            c["option_identity"] = identity
+            energy_ok = self._is_feasible(raw, identity)
             c.update(end_pct_raw=raw, end_pct=round(raw, 1), end_pct_zh=landing_pct_text(raw),
                      energy_feasible=energy_ok, feasible=energy_ok,
                      completion_pct=round(self._completion(self.route_idx[tm.next_wp:pos + 1]), 1))
@@ -633,41 +670,69 @@ class PredictiveAlertEngine:
         if pick is None or not pick.get("feasible"):
             f.rule_choice = self._rule_pick(f.candidates, self.cfg.emergency_rtl_min_pct)
 
+    def _unknown_all(self, t):
+        events = []
+        for key in list(self._states.states):
+            events.extend(self._unknown(t, key))
+        return events
+
+    def _unknown(self, t, key):
+        if key not in self._states.states:
+            return []
+        previous = self._active.get(key)
+        facts = self._event(t, "update", previous) if previous else {}
+        rows = self._states.step(key, t, UNKNOWN, **self._state_facts(facts))
+        return self._sync_state(key, previous, rows)
+
+    @staticmethod
+    def _state_facts(facts):
+        # step owns these explicit arguments and event metadata.
+        return {k: v for k, v in facts.items()
+                if k not in ("key", "t", "type", "severity")}
+
+    def _sync_state(self, key, finding, rows):
+        state = self._states.states[key]
+        candidates = finding.candidates if finding is not None else []
+        choice = next((c["id"] for c in candidates
+                       if self._recommendation_key(c) == state.recommendation), None)
+        if state.active and finding is not None:
+            self._active[key] = replace(finding, severity=state.severity,
+                                        rule_choice=choice,
+                                        prediction_expired=state.prediction_expired)
+        elif not state.active:
+            self._active.pop(key, None)
+        for row in rows:
+            row["t"] = row["output_t"]
+            identity = row["recommendation"]
+            row["recommendation_identity"] = identity
+            row["rule_choice"] = row["recommendation"] = next(
+                (c["id"] for c in row.get("candidates", [])
+                 if self._recommendation_key(c) == identity), None)
+            row["rule_decision"] = "SELECT" if any(
+                c["id"] == row["rule_choice"] and c.get("feasible") is True
+                for c in row.get("candidates", [])) else "HOLD"
+        return rows
+
     def _debounce(self, t, f: Finding):
-        """連續成立 raise_ticks 次才發、連續不成立 clear_ticks 次才解除；
-        持續中只有「嚴重度升級」或「建議改變且維持 raise_ticks 次」才重新說明。"""
-        k = f.key
-        if not f.active:
-            self._pending_choice.pop(k, None)
-        prev = self._active.get(k)
-        s = self._streak.get(k, 0)
-        s = (s + 1 if s >= 0 else 1) if f.active else (s - 1 if s <= 0 else -1)
-        self._streak[k] = s
-        ev = []
-        if prev is None and f.active and s >= self.cfg.raise_ticks:
-            self._active[k] = f
-            self._announced[k] = (f.severity, (f.rule_choice, self._rule_decision(f)))
-            ev.append(self._event(t, "raise", f))
-        elif prev is not None and f.active:
-            self._active[k] = f
-            sev0, ch0 = self._announced[k]
-            choice = (f.rule_choice, self._rule_decision(f))
-            if choice != ch0:
-                pc = self._pending_choice.get(k)
-                n = pc[1] + 1 if pc and pc[0] == choice else 1
-                self._pending_choice[k] = (choice, n)
-            else:
-                self._pending_choice.pop(k, None)
-                n = 0
-            if f.severity < sev0 or n >= self.cfg.raise_ticks:
-                self._announced[k] = (min(sev0, f.severity), choice)
-                self._pending_choice.pop(k, None)
-                ev.append(self._event(t, "update", f))
-        elif prev is not None and not f.active and -s >= self.cfg.clear_ticks:
-            del self._active[k]
-            self._announced.pop(k, None)
-            ev.append(self._event(t, "resolve", prev))
-        return ev
+        """Contract v5 seconds, cooling, downgrade and recommendation timing.
+
+        This adapter still receives legacy complete snapshots. Per-source TTL,
+        separate sensed/recv timestamps and battery merging are the next batch.
+        """
+        state = self._states.states.get(f.key)
+        if state is not None and state.last_t is not None and t <= state.last_t:
+            return []
+        previous = self._active.get(f.key)
+        payload = f if f.active or previous is None else previous
+        facts = self._state_facts(self._event(t, "update", payload))
+        selected = next((c for c in f.candidates if c["id"] == f.rule_choice), None)
+        recommendation = self._recommendation_key(selected) if selected else None
+        rows = self._states.step(
+            f.key, t, TRUE if f.active else FALSE, f.severity, recommendation,
+            {self._recommendation_key(c) for c in f.candidates if c.get("feasible") is True},
+            max_gap_s=10.0 if f.key == "wind_trend" else 3.0,
+            **facts)
+        return self._sync_state(f.key, payload, rows)
 
     @staticmethod
     def _rule_decision(f):

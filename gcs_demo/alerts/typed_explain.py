@@ -283,6 +283,7 @@ class LegacyAlertExplainer:
     def __init__(self, backend=None, timeout_s=ALERTS_TIMEOUT_S, current_state=None):
         self._current_state = current_state
         self._events = {}
+        self._pending_results = {}
         from . import explain as _explain
         self._explain = _explain
         self._backend = backend
@@ -292,14 +293,27 @@ class LegacyAlertExplainer:
     def _run(self, ev):
         return self._explain.explain(ev, self._backend or get_backend(), timeout_s=self._timeout)
 
+    def _settle_pending(self, key, reason):
+        # This is the exact rule-result object returned to the event owner.
+        # Keep its original text; never apply a stale model result to history.
+        pending = self._pending_results.pop(key, None)
+        if pending is not None and pending.get("source") == "rule_pending":
+            pending.update(source="rule", fallback_reason=reason)
+
+    def retire(self, key):
+        self._settle_pending(key, "alert_retired")
+        self._events.pop(key, None)
+        self.async_.retire(key)
+
     def __call__(self, ev):
         if ev.get("type") in ("resolve", "reset", "unknown") or ev.get("active") is False:
-            self._events.pop(ev["key"], None)
-            self.async_.retire(ev["key"])
+            self.retire(ev["key"])
             return None
+        self._settle_pending(ev["key"], "version_superseded")
         self._events[ev["key"]] = deepcopy(ev)
         version = legacy_version(ev)
         rule = {"text": self._explain.rule_text(ev), "source": "rule_pending", "fallback_reason": None}
+        self._pending_results[ev["key"]] = rule
         return self.async_.submit(ev["key"], version, rule, ev)
 
     def poll(self):
@@ -319,7 +333,12 @@ class LegacyAlertExplainer:
                 if reason:
                     item["rejection_reason"] = reason
                     self.async_.discarded.append(item)
+                    self._settle_pending(item["key"], reason)
                     continue
+            pending = self._pending_results.pop(item["key"], None)
+            if pending is not None:
+                pending.clear()
+                pending.update(item["result"])
             accepted.append(item)
         return accepted
 

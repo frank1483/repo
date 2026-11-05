@@ -43,9 +43,9 @@ class V5ExplanationWiringTests(unittest.TestCase):
 
     def test_option_value_cannot_be_borrowed_from_other_option(self):
         ev = event()
-        d = answer(ev, "C1", ["C1 落地 40.0%。", "請操作員評估。"], ["E1", "E2"])
+        d = answer(ev, "C1", ["C1 落地電量 40.0%。", "請操作員評估。"], ["E1", "E2"])
         self.assertIsNotNone(explain.validate(d, ev))
-        d["sentences"][0] = "C1 落地 15.0%。"
+        d["sentences"][0] = "C1 落地電量 15.0%。"
         self.assertIsNone(explain.validate(d, ev))
 
     def test_feasible_but_not_allowed_is_rejected(self):
