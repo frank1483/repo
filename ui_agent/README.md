@@ -12,8 +12,8 @@ agent 只換頁與調整版面，**不送飛行或相機指令、不修改任何
 
 1. 規則把意圖轉成候選動作（每個有固定 ID，如 `NAV_8_11`、`LAY_windGauge_MOVE_TL`、`UNDO`）與證據（目前畫面、比對分數）。
 2. 規則有把握（分數夠高且明顯領先）就直接執行，不呼叫模型。
-3. 規則不確定時才問模型；模型只能回 `{"decision":"SELECT|HOLD|CLARIFY","choice_id":"候選ID","reason_zh":"…","evidence_ids":[…]}`（與三功能共用格式相同）。規則完全對不到時，把全部畫面當候選讓模型用語意挑。
-4. 模型回覆不是 JSON、ID 不在候選內、引用不存在的證據、逾時 → 一律退回規則結果。
+3. 規則不確定時才問模型，走狀態機（sm-v2，2026-11-06 起取代 v6 的一次性挑選）：程式決定每一步要填哪一格（分類 → 頁面／子頁／模組／動作／文字比例／復原），模型每次只回 `{"value":"代碼"}`，代碼只能從當步清單選；提示詞每步由外部狀態重建，不帶對話歷史。每句最多 4 次呼叫，同一個等待上限（≤32 秒）涵蓋全部步驟。引擎 `qml/GcpAgentSlotLoop.js` 與告警、任務規劃共用（Python 版 `gcs_demo/agent_loop.py`，兩邊跑同一份一致性測試）。
+4. 回覆不是 JSON、多欄位、代碼不在清單、方法前置條件不符（如鎖定模組要隱藏）→ 修正一次；仍無效 → 退回規則結果。逾時 → 不套用任何動作。模型組出的動作一樣要過第二層安全關卡、確認卡與 Verifier。
 5. 安全界線（像「起飛」「返航」這類指令）與「已經在這個畫面」由規則直接回答，不交給模型。
 
 每次決策在 log 印一行 `[GcpAgent] {...}`（意圖、規則結果、模型結果、最後決定、延遲），之後可以拿來統計。
@@ -25,7 +25,9 @@ agent 只換頁與調整版面，**不送飛行或相機指令、不修改任何
 | `qml/GcpAgentCore.js` | 畫面目錄、模組目錄、意圖→候選、規則決策、模型提示與驗證、版面幾何（純 JS） |
 | `qml/GcpAgentState.qml` | 單例：模組登記、版面覆寫（Scale＋Translate，不動原本 anchors）、復原／重做堆疊 |
 | `qml/GcpAgentModule.qml` | 在畫面裡登記一個可調整模組 |
-| `qml/GcpAgentOverlay.qml` | AI 按鈕、面板、復原提示列、模型呼叫（OpenAI 相容或 Ollama） |
+| `qml/GcpAgentOverlay.qml` | AI 按鈕、面板、復原提示列、狀態機的模型傳輸（OpenAI 相容或 Ollama） |
+| `qml/GcpAgentStateMachine.js` | UI 的狀態與方法庫（sm-v2） |
+| `qml/GcpAgentSlotLoop.js` | 共用狀態機引擎（外部狀態、單格提示、修正一次、上限、退回規則） |
 | `patch/elan_gcp_ui_agent.patch` | 對正式 UI 的修改：CMakeLists 加檔案、GcpMainShell 加兩個函式與疊層、即時飛行補 id 並登記 12 個模組 |
 | `patch/elan_gcp_home_modules.patch` | 首頁 6 個模組（狀態列、天氣、系統詳情、三塊啟動磚）登記；agent 掛外層，原進場動畫留內層 |
 | `install_into_ui.sh` | 把上面裝進 UI **副本** |
