@@ -30,9 +30,9 @@ function fixture(){
   setOverride(id,next){assert.equal(id,'miniView');assert(this._groupActive);stats.apply++;Object.assign(ov,next);this.revision++;}};
  const tick={onFire:null,interval:0,restart(){queue=[{fn:this.onFire,delay:this.interval}];},stop(){queue=[];}};
  const O={Core,ReadableHost:Host,ReadableCatalog:Catalog,ReadableLoop:Loop,ReadableVerifier:Verifier,ReadableSession:Session,
-  GcpAgentState:State,JSON,Array,Date:{now:()=>clock},qsTr:s=>s,readableTick:tick,
+  GcpAgentState:State,JSON,Array,Date:class extends Date {constructor(...args){super(...(args.length?args:[clock]));}static now(){return clock;}},qsTr:s=>s,readableTick:tick,themeEditor:{cancel(){}},
   readableViewport:viewport,readableGoalPolicy:{kind:'readable',minWidth:160,minHeight:80,allowMove:true,allowShrink:false,allowNavigate:false},
-  busy:false,_transaction:null,_readableSession:null,_destroying:false,_confirmation:null,_pending:null,_choiceGuard:null,
+  busy:false,_transaction:null,_readableSession:null,readableScheduler:null,_destroying:false,_confirmation:null,_pending:null,_choiceGuard:null,
   pendingText:'',choices:[],messageText:'',statusText:'',modelNotice:'',_cancelModel:null,_modelGeneration:0,
   context:()=>({...loc,modules:{miniView:{registered:true,visible:true}}}),
   executeSteps(){throw Error('legacy execution forbidden');},finish(){throw Error('goal escaped to ordinary model path');},
@@ -49,7 +49,7 @@ function fixture(){
   queued:()=>queue.length,backend:()=>backendCalls,card(){O.submit('讓小地圖看得清楚一點');}};
 }
 let count=0;function test(name,work){work();count++;console.log('PASS '+name);}
-test('actual confirmation binding contains host minimum and every permission',()=>{const f=fixture();f.card();assert(f.O._confirmation.readable);const s=f.O.confirmationSummary();for(const t of ['160','80','移動允許','降尺寸不允許','回所在畫面不允許','尚未接模型修補'])assert(s.includes(t),t);assert(source.includes('text: root.confirmationSummary()'));assert.equal(f.stats.apply,0);assert.equal(f.backend(),0);});
+test('actual confirmation binding contains host minimum and every permission',()=>{const f=fixture();f.card();assert(f.O._confirmation.readable);const s=f.O.confirmationSummary();for(const t of ['160','80','移動允許','降尺寸不允許','回所在畫面不允許','最多請模型修正一次','32 秒'])assert(s.includes(t),t);assert(source.includes('text: root.confirmationSummary()'));assert.equal(f.stats.apply,0);assert.equal(f.backend(),0);});
 test('submit intercepts goal before model analysis',()=>{const f=fixture();f.card();assert.equal(f.backend(),0);assert.equal(f.stats.begin,0);});
 test('reserved goal candidate cannot bypass the specialized confirmation gate',()=>{const f=fixture();const candidates=clone(Loop.goalTemplate('讓小地圖看得清楚一點',f.O.context()).candidates);f.O.requestExecution(candidates,'model',{goal:true,intent:'readable'});assert(f.O._confirmation.readable);assert.equal(f.stats.begin,0);f.O.requestExecution(candidates.concat(candidates),'model',{});assert.equal(f.O._confirmation,null);assert.equal(f.stats.apply,0);});
 test('main map ambiguity asks clarification without host action',()=>{const f=fixture();f.O.submit('讓地圖看得清楚一點');assert.equal(f.O._confirmation,null);assert(f.O.messageText.includes('主地圖'));assert.equal(f.stats.capture,0);});
@@ -62,7 +62,7 @@ for(const [name,mutate] of [['revision',f=>f.State.revision++],['policy',f=>f.O.
  ['viewport size',f=>f.viewport.width++]])test('Yes rejects stale '+name,()=>{const f=fixture();f.card();mutate(f);f.O.confirmIntent();assert.equal(f.O._confirmation,null);assert.equal(f.stats.begin,0);assert.equal(f.stats.apply,0);});
 test('Yes starts once; conditions, step/logical/final checks precede one commit',()=>{const f=fixture();f.card();f.O.confirmIntent();f.O.confirmIntent();assert.equal(f.stats.begin,1);assert.equal(f.stats.apply,1);assert.equal(f.stats.commit,0);f.step();assert.equal(f.stats.commit,0);f.drain();assert.equal(f.stats.commit,1);assert.equal(f.stats.rollback,0);assert.equal(f.O.busy,false);const phases=f.events.filter(e=>e.phase==='readability_loop').map(e=>e.event.phase);for(const p of ['step_check','logical_check','final_check','complete'])assert(phases.includes(p));assert.equal(f.backend(),0);});
 test('every settled poll recaptures measured host input',()=>{const f=fixture();f.card();f.O.confirmIntent();const n=f.stats.capture;f.step();assert(f.stats.capture>n);f.O.cancelWaiting();});
-test('fresh full obstacle list fails verification and rolls back without model repair',()=>{const f=fixture();f.card();f.O.confirmIntent();f.other.x=180;f.other.y=140;f.drain();assert.equal(f.stats.commit,0);assert.equal(f.stats.rollback,1);assert.equal(f.ov.scale,1);assert.equal(f.backend(),0);assert(f.events.some(e=>e.event&&e.event.reason==='REPAIR_UNAVAILABLE'));});
+test('fresh full obstacle list fails verification and rolls back without model repair',()=>{const f=fixture();f.card();f.O.confirmIntent();f.other.x=180;f.other.y=140;f.drain();assert.equal(f.stats.commit,0);assert.equal(f.stats.rollback,1);assert.equal(f.ov.scale,1);assert.equal(f.backend(),0);assert(f.events.some(e=>e.event&&e.event.reason==='REPAIR_INVALID'));});
 test('cancel pending poll restores only owned group and late callback is inert',()=>{const f=fixture();f.card();f.O.confirmIntent();const late=f.O.readableTick.onFire;f.O.cancelWaiting();assert.equal(f.stats.rollback,1);assert.equal(f.queued(),0);late();assert.equal(f.stats.commit,0);assert.equal(f.stats.apply,1);});
 test('settle timeout rolls back with retained failure',()=>{const f=fixture();f.card();f.O.confirmIntent();f.advance(2600);f.step();assert.equal(f.stats.rollback,1);assert(f.events.some(e=>e.event&&String(e.event.reason).includes('TIMEOUT')));});
 test('external State revision aborts then restores owned group',()=>{const f=fixture();f.card();f.O.confirmIntent();f.State.revision++;f.drain();assert.equal(f.stats.rollback,1);assert.equal(f.stats.commit,0);});

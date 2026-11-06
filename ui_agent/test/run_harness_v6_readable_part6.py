@@ -29,7 +29,7 @@ def save(name, data):
 
 def main():
     import PySide6
-    from PySide6.QtCore import QObject, QMetaObject, QSettings, Qt, QUrl, qVersion
+    from PySide6.QtCore import QCoreApplication, QEvent, QObject, QMetaObject, QSettings, Qt, QUrl, qVersion
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuick import QQuickWindow  # noqa: F401
@@ -84,6 +84,8 @@ def main():
         deadline = time.monotonic() + timeout
         while True:
             app.processEvents()
+            # QML destroy() posts DeferredDelete; this manual loop has no app.exec().
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
             if predicate():
                 return
             if time.monotonic() >= deadline:
@@ -124,7 +126,7 @@ def main():
 
         wait_for(ready, "all fixed actions and final text line visible at " + str(width))
         need(latest_geometry["last_line_text"] == "對嗎？", "last text line changed")
-        for expected in ("160", "80", "移動允許", "降尺寸不允許", "回所在畫面不允許", "尚未接模型修補"):
+        for expected in ("160", "80", "移動允許", "降尺寸不允許", "回所在畫面不允許", "最多請模型修正一次"):
             need(expected in latest_geometry["text"], "confirmation missing " + expected)
         need(not win.property("active") and win.property("miniScale") == 1, "geometry applied action")
         need(win.property("undoCount") == 0, "geometry created undo")

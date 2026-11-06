@@ -135,7 +135,7 @@ wait(500)
 FakeModel.delay = 4.0
 p0 = page()
 say("我想查看飛行設定", 2500)
-check("逾時：顯示「模型未完成…已改用規則判斷」", "已改用規則判斷" in notice(), notice())
+check("逾時：明示尚未套用任何動作，不宣稱規則後備", "模型等待逾時，尚未套用任何動作。" in notice() and "已改用規則判斷" not in notice(), notice())
 check("逾時：不自動套用後備、不出確認卡", page() == p0 and not agent.property("_confirmation"), (page(), agent.property("messageText")))
 wait(3500)
 check("逾時後晚到的回覆被忽略", page() == p0 and not agent.property("_confirmation"), page())

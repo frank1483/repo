@@ -67,7 +67,12 @@ def install_and_refuse_repeat():
     root = fresh("install with spaces")
     run("install", ["bash", str(HERE / "install_into_ui.sh"), str(root)], True)
     assets = (HERE / "install_assets_v6.txt").read_text().splitlines()
-    assert len(assets) == 10
+    assets = [name.strip() for name in assets if name.strip()]
+    payload_assets = [line.split("  ", 1)[1][4:]
+                      for line in (HERE / "install_payload_v6.sha256").read_text().splitlines()
+                      if line.split("  ", 1)[1].startswith("qml/")]
+    assert assets and len(assets) == len(set(assets))
+    assert len(assets) == len(payload_assets) and set(assets) == set(payload_assets)
     cmake = (root / "GCP/CMakeLists.txt").read_text()
     for name in assets:
         assert digest(HERE / "qml" / name) == digest(root / "GCP/Agent" / name)

@@ -30,7 +30,7 @@ def save(name, data):
 
 def main():
     import PySide6
-    from PySide6.QtCore import QObject, QMetaObject, QSettings, Qt, QUrl, qVersion
+    from PySide6.QtCore import QCoreApplication, QEvent, QObject, QMetaObject, QSettings, Qt, QUrl, qVersion
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuick import QQuickWindow  # noqa: F401
@@ -80,6 +80,8 @@ def main():
         deadline = time.monotonic() + timeout
         while True:
             app.processEvents()
+            # QML destroy() posts DeferredDelete; this manual loop has no app.exec().
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
             if predicate():
                 return
             if time.monotonic() >= deadline:
@@ -108,7 +110,7 @@ def main():
         panel = win.findChild(QObject, "agentConfirmationCard")
         wait_for(lambda: label is not None and panel is not None and panel.property("visible"), "card visible")
         text = label.property("text")
-        for expected in ("160", "80", "移動允許", "降尺寸不允許", "回所在畫面不允許", "尚未接模型修補"):
+        for expected in ("160", "80", "移動允許", "降尺寸不允許", "回所在畫面不允許", "最多請模型修正一次"):
             need(expected in text, "actual Text missing " + expected)
         need(not win.property("active") and win.property("miniScale") == 1, "card changed layout")
         win.grabWindow().save(str(OUT / "confirmation.png"))
