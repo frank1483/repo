@@ -1,6 +1,6 @@
 .pragma library
-.import "GcpSlotLoop.js" as SlotLoop
-// UI agent method library on the shared slot-loop engine (GcpSlotLoop.js), decision side S1-S5.
+.import "GcpAgentSlotLoop.js" as SlotLoop
+// UI agent method library on the shared slot-loop engine (GcpAgentSlotLoop.js), decision side S1-S5.
 // sm-v2: the engine (state object, prompt, parse, repair once, call cap, rule fallback) is shared
 // with alerts and mission; this file only holds the UI states, options and methods.
 // Program owns the loop: every state has exactly one output and one tool, and the next state
@@ -77,9 +77,8 @@ function create(core, options) {
     function start(input, ctx, pending) {
         ctx = ctx || {}
         var result = core.analyzeTurn(input, ctx, pending || "")
-        var st = null, finish = null
+        var st = null, finish = null, h = null
         function log(e) { h.log(e) }
-        var h = null
 
         function pageModules() {
             var mods = ctx.modules || null

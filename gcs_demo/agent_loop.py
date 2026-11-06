@@ -1,6 +1,6 @@
 """共用狀態機迴圈引擎（slot loop），Python 版。
 
-與 ui_agent/qml/GcpSlotLoop.js 是同一份契約：兩邊都要通過 gcs_demo/agent_loop_vectors.json，
+與 ui_agent/qml/GcpAgentSlotLoop.js 是同一份契約：兩邊都要通過 gcs_demo/agent_loop_vectors.json，
 所以 UI agent、告警、任務規劃用的是同一套迴圈行為。
 
 程式擁有迴圈，功能端只提供「方法庫」(lib)：

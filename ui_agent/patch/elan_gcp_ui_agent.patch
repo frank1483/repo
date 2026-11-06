@@ -24,7 +24,7 @@ diff --git a/GCP/CMakeLists.txt b/GCP/CMakeLists.txt
 +        Agent/GcpAgentState.qml
 +        Agent/GcpAgentVerifier.js
 +        Agent/GcpAgentStateMachine.js
-+        Agent/GcpSlotLoop.js
++        Agent/GcpAgentSlotLoop.js
 +        Agent/GcpAgentThemeColorMath.js
 +        Agent/GcpAgentThemePalette.js
 +        Agent/GcpAgentThemeHostPolicy.js

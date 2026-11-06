@@ -9,7 +9,7 @@ GcpAgentSnapshot.js
 GcpAgentState.qml
 GcpAgentVerifier.js
 GcpAgentStateMachine.js
-GcpSlotLoop.js
+GcpAgentSlotLoop.js
 GcpAgentThemeColorMath.js
 GcpAgentThemePalette.js
 GcpAgentThemeHostPolicy.js
