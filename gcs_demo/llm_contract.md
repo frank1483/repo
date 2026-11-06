@@ -85,3 +85,9 @@ APK 內的 QML 不能 import Python，所以共用介面以 **HTTP 層** 為準�
 ## 10. 修訂（v0.4.3，依 Codex 複審 GATEWAY_REVIEW_0426 的 P2）
 
 - 上游連線有明確階段：idle → connected（socket 已發布）→ sending（通過 claim_send，請求可能已到上游）→ received（回應已讀完）。被中斷時以當下階段判定，紀錄 `sent_upstream`（sending／received 為 true）與 `upstream_phase`，不再由錯誤字串推斷。回應讀完後才取消 → `sent_upstream=true`、`upstream_phase="received"`、`claimed=false`。
+
+## 11. 驗收紀錄（2026-11-06 台灣時間）
+
+- 期限／取消契約 v0.4.3（frank1483/repo claude/project-thread-wum8aq 241abba）：Codex 複審 GATEWAY_REVIEW_0429（CODEX-APP-0375）判定原 P2 已解決、無新 P1／P2。記為「**假上游範圍內工程驗收完成**」（AI 共同決定，使用者委任；不是使用者人工批准）。
+- 37/37 測試與另外 2 次重複成功是 Claude 回報（紀錄 /mnt/project-files/gcs_demo/llm_gateway/deadline_v043_run1/）；Codex 本輪未執行 Python。
+- 未完成：真模型（Ollama／llama-server）在上游斷線後是否停止推論，仍是待驗證的部署假設。
