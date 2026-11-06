@@ -1,5 +1,8 @@
 .pragma library
-// State-machine agent loop for the UI agent (decision side, S1-S5). Draft v0, off by default.
+.import "GcpSlotLoop.js" as SlotLoop
+// UI agent method library on the shared slot-loop engine (GcpSlotLoop.js), decision side S1-S5.
+// sm-v2: the engine (state object, prompt, parse, repair once, call cap, rule fallback) is shared
+// with alerts and mission; this file only holds the UI states, options and methods.
 // Program owns the loop: every state has exactly one output and one tool, and the next state
 // is chosen by code. The model is asked only to fill ONE enum slot per call, from a short prompt
 // rebuilt each time from the external state object (no chat history).
@@ -13,7 +16,7 @@
 //         step.type === "done" -> step.decision is v6-compatible: {decision, choice_id, steps, reason_zh, ...}
 //   s.fail(reason) records a transport error/timeout for the outstanding ask (counts as invalid answer).
 
-var VERSION = "sm-v1"
+var VERSION = "sm-v2"
 var MAX_MODEL_CALLS = 4      // classify + up to two slots + one repair
 
 var SYSTEM_PROMPT = "你是無人機地面站介面助理流程中的一個步驟，只負責填一格。" +
@@ -74,108 +77,10 @@ function create(core, options) {
     function start(input, ctx, pending) {
         ctx = ctx || {}
         var result = core.analyzeTurn(input, ctx, pending || "")
-        var st = {
-            version: VERSION, goal: String(result.intent || input || ""), state: "S1",
-            page: ctx.page, section: ctx.section, kind: "", slots: {}, need: "", allowed: [],
-            last_observation: "", last_error: "", repair_used: false, model_calls: 0,
-            trace: [], done: null
-        }
-        function log(event) { event.state = st.state; st.trace.push(copy(event)) }
-        function finish(decision, source, why) {
-            decision = copy(decision)
-            if (decision.decision === "SELECT" && !decision.steps)
-                decision.steps = [{ choice_id: decision.choice_id }]
-            decision.source = source
-            decision.model_errors = st.trace.filter(function(e) { return e.event === "invalid" }).map(function(e) { return e.why })
-            st.state = "END"
-            st.done = decision
-            log({ event: "done", decision: decision.decision, ids: (decision.steps || []).map(function(s) { return s.choice_id }),
-                  source: source, why: why || "" })
-        }
-        function ruleFallback(why) {
-            var d = copy(result.rule)
-            d.candidates = copy(result.candidates)
-            finish(d, "rule_fallback", why)
-        }
+        var st = null, finish = null
+        function log(e) { h.log(e) }
+        var h = null
 
-        // ---------------- S1 收訊：第一層安全閘、取消、待補合併（全在 analyzeTurn 內）
-        log({ event: "receive", text: st.goal, pending: result.pending_intent || "" })
-        if (result.cancelled || result.gate === "pre" || result.safety_hold) {
-            var held = copy(result.rule); held.candidates = []
-            finish(held, "rule", result.safety_hold ? "安全閘擋下" : "取消")
-            return api()
-        }
-        // ---------------- S2 分類（規則先）：規則已確定就跳過模型
-        if (result.rule.final || result.generic_settings || result.rule.decision === "SELECT") {
-            var d0 = copy(result.rule); d0.candidates = copy(result.candidates)
-            st.state = "S2"
-            finish(d0, "rule", "規則已確定")
-            return api()
-        }
-        // v0 limitation: an unclear multi-clause sentence is treated as ONE action (classify or pick).
-        // Fully explicit multi-clause sentences are already rule SELECT (up to five steps) above.
-        if (result.compound) st.compound = true
-        if (result.candidates.length) {
-            st.state = "S4_PICK"
-            st.last_observation = "規則找到 " + result.candidates.length + " 個可能，但沒有把握"
-        } else {
-            st.state = "S2_CLASSIFY"
-            st.last_observation = "規則找不到對應的畫面或模組"
-        }
-        if (opts.modelEnabled === false) { ruleFallback("模型未啟用"); st.done.source = "rule"; return api() }
-        prepare()
-        return api()
-
-        // ---------------- helpers bound to this session
-        function knownLine() {
-            var parts = []
-            if (st.kind) parts.push("類別=" + st.kind)
-            if (st.slots.page !== undefined) parts.push("頁面=" + page(st.slots.page).name)
-            if (st.slots.module) parts.push("模組=" + moduleById(st.slots.module).name)
-            return parts.join("；")
-        }
-        function prepare() {
-            var s = st.state
-            if (s === "S4_PICK") {
-                st.need = "最符合句子的一個動作"
-                st.allowed = result.candidates.map(function(c) { return { code: c.id, zh: c.label_zh } })
-                    .concat([{ code: "CLARIFY", zh: "兩個以上都說得通，要問使用者" },
-                             { code: "OTHER", zh: "都不是，要重新判斷" },
-                             { code: "NONE", zh: "都不符合，而且不是介面操作" }])
-            } else if (s === "S2_CLASSIFY") {
-                st.need = "這句話屬於哪一類"
-                st.allowed = copy(KINDS)
-            } else if (s === "S3_PAGE") {
-                st.need = "要去的畫面"
-                st.allowed = core.PAGES.map(function(p) { return { code: "P" + p.page, zh: p.name } })
-                    .concat([{ code: "UNKNOWN", zh: "不知道" }])
-            } else if (s === "S3_SECTION") {
-                st.need = "「" + page(st.slots.page).name + "」裡的哪個子頁"
-                st.allowed = [{ code: "WHOLE", zh: "整個畫面，不指定子頁" }]
-                    .concat(sectionsOf(st.slots.page).map(function(x) { return { code: "S" + x.section, zh: x.name } }))
-                    .concat([{ code: "UNKNOWN", zh: "不知道" }])
-            } else if (s === "S3_MODULE") {
-                st.need = "要調整的模組"
-                st.allowed = pageModules().map(function(m) { return { code: m.id, zh: m.name } })
-                    .concat([{ code: "UNKNOWN", zh: "不知道" }])
-            } else if (s === "S3_ACTION") {
-                var m = moduleById(st.slots.module)
-                st.need = "對「" + m.name + "」做什麼"
-                st.allowed = REGION_KEYS.map(function(k) { return { code: "MOVE_" + k, zh: "移到" + regionName(k) } })
-                    .concat(NUDGE_ACTIONS.map(function(a) { return { code: a.code, zh: a.zh } }))
-                    .concat(SCALE_ACTIONS.map(function(a) { return { code: a.code, zh: a.zh } }))
-                    .concat(m.locked ? [] : [{ code: "HIDE", zh: "隱藏" }])
-                    .concat([{ code: "SHOW", zh: "重新顯示" }, { code: "RESET", zh: "回到原本位置與大小" },
-                             { code: "UNKNOWN", zh: "不知道" }])
-            } else if (s === "S3_TEXT") {
-                st.need = "全系統文字比例"
-                st.allowed = TEXT_OPTIONS.map(function(o) { return { code: o.code, zh: o.zh } })
-            } else if (s === "S3_HISTORY") {
-                st.need = "要復原還是重做"
-                st.allowed = HISTORY_OPTIONS.map(function(o) { return { code: o.code, zh: o.zh } })
-            }
-            st.last_error = ""
-        }
         function pageModules() {
             var mods = ctx.modules || null
             return core.MODULES.filter(function(m) {
@@ -185,43 +90,12 @@ function create(core, options) {
                 return v && v.registered && v.visible
             })
         }
-        function renderCall() {
-            var lines = ["句子：" + st.goal, "目前畫面：" + core.pageName(ctx.page)]
-            var known = knownLine()
-            if (known) lines.push("已知：" + known)
-            if (st.last_observation && st.state === "S4_PICK") lines.push("觀察：" + st.last_observation)
-            lines.push("要填：" + st.need)
-            lines.push("只能選：" + st.allowed.map(function(a) { return a.code + " " + a.zh }).join("｜"))
-            if (st.last_error) lines.push("上次錯誤：" + st.last_error + "。請只從清單重選一個代碼。")
-            lines.push("只輸出 JSON：{\"value\":\"代碼\"}")
-            var codes = st.allowed.map(function(a) { return a.code })
-            return {
-                version: VERSION, state: st.state, repair: st.last_error !== "",
-                messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: lines.join("\n") }],
-                schema: { type: "object", additionalProperties: false, required: ["value"],
-                          properties: { value: { type: "string", enum: codes } } },
-                codes: codes
-            }
-        }
-        function invalid(why, raw) {
-            log({ event: "invalid", why: why, raw: String(raw === undefined ? "" : raw).slice(0, 200) })
-            if (!st.repair_used && st.model_calls < maxCalls) {
-                st.repair_used = true
-                st.last_error = why
-                log({ event: "repair_requested", why: why })
-                return
-            }
-            ruleFallback(st.repair_used ? "修正一次後仍無效：" + why : "模型呼叫已達上限：" + why)
-        }
-        function parse(raw) {
-            var obj = core.extractJson(raw)
-            if (!obj || typeof obj !== "object" || Array.isArray(obj)) return { error: "回覆不是 JSON 物件" }
-            var keys = Object.keys(obj)
-            if (keys.length !== 1 || keys[0] !== "value") return { error: "只能有 value 一個欄位" }
-            if (typeof obj.value !== "string") return { error: "value 必須是字串" }
-            var codes = st.allowed.map(function(a) { return a.code })
-            if (codes.indexOf(obj.value) < 0) return { error: "回答「" + String(obj.value).slice(0, 40) + "」不在可選清單內" }
-            return { value: obj.value }
+        function knownLine() {
+            var parts = []
+            if (st.kind) parts.push("類別=" + st.kind)
+            if (st.slots.page !== undefined) parts.push("頁面=" + page(st.slots.page).name)
+            if (st.slots.module) parts.push("模組=" + moduleById(st.slots.module).name)
+            return parts.join("；")
         }
         // S4 method library -> candidate (v6 IDs) ; S5 preconditions + second-layer gate.
         function selectCandidate(c, why) {
@@ -290,100 +164,137 @@ function create(core, options) {
                 : { id: "RESET_ALL", kind: "reset_all", label_zh: "版面與畫面全部回到 agent 介入前", score: 0 }
             return selectCandidate(c, "history." + code.toLowerCase())
         }
-        function escalate(why) {
-            finish({ decision: "CLARIFY", choice_id: "", reason_zh: why, candidates: copy(result.candidates) }, "state_machine", why)
-        }
-        function transition(code) {
-            var s = st.state, problem = ""
-            log({ event: "filled", value: code })
-            if (s === "S4_PICK") {
-                if (code === "CLARIFY") { ruleFallback("模型判斷有多個可能"); st.done.source = "state_machine"; return }
-                if (code === "OTHER") {
-                    // sm-v1: rule candidates missed the target; re-enter classification once.
-                    if (st.reclassified) { ruleFallback("重新判斷已用過"); return }
-                    st.reclassified = true
-                    st.state = "S2_CLASSIFY"; st.last_observation = "規則候選都不對，重新分類"
-                    prepare(); return
+        function escalate(why) { h.escalate(why, { candidates: copy(result.candidates) }) }
+
+        var lib = {
+            ruleDecision: function() { var d = copy(result.rule); d.candidates = copy(result.candidates); return d },
+            finalize: function(d) {
+                if (d.decision === "SELECT" && !d.steps) d.steps = [{ choice_id: d.choice_id }]
+                return d
+            },
+            begin: function(helper) {
+                h = helper; st = h.st; finish = h.finish
+                st.page = ctx.page; st.section = ctx.section
+                // ---------------- S1 收訊：第一層安全閘、取消、待補合併（全在 analyzeTurn 內）
+                log({ event: "receive", text: st.goal, pending: result.pending_intent || "" })
+                if (result.cancelled || result.gate === "pre" || result.safety_hold) {
+                    var held = copy(result.rule); held.candidates = []
+                    finish(held, "rule", result.safety_hold ? "安全閘擋下" : "取消")
+                    return
                 }
-                if (code === "NONE") { finish({ decision: "HOLD", choice_id: "", reason_zh: "沒有對應的動作", candidates: [] }, "state_machine", "pick: none"); return }
-                var c = core.candidateById(result, code)
-                problem = selectCandidate(c, "pick")
-            } else if (s === "S2_CLASSIFY") {
-                st.kind = code
-                if (code === "OUT_OF_SCOPE") { finish({ decision: "HOLD", choice_id: "", candidates: [],
-                    reason_zh: "介面助理只換頁與調整版面，不送飛行指令、不改參數" }, "state_machine", "classify: out of scope"); return }
-                if (code === "UNKNOWN") { ruleFallback("分類：不知道"); return }
-                if (code === "AMBIGUOUS") { escalate("請再說明想做什麼，例如要去哪個畫面或調整哪個模組"); return }
-                if (code === "LAYOUT" && !pageModules().length) { escalate("目前畫面沒有可調整的模組，請先切到要調整的畫面"); return }
-                st.state = { NAV: "S3_PAGE", LAYOUT: "S3_MODULE", TEXT: "S3_TEXT", HISTORY: "S3_HISTORY" }[code]
-                st.last_observation = "分類為 " + code
-                prepare(); return
-            } else if (s === "S3_PAGE") {
-                if (code === "UNKNOWN") { escalate("請說明要去哪個畫面"); return }
-                st.slots.page = parseInt(code.slice(1), 10)
-                if (sectionsOf(st.slots.page).length) { st.state = "S3_SECTION"; prepare(); return }
-                problem = navMethod()
-            } else if (s === "S3_SECTION") {
-                if (code === "UNKNOWN") { escalate("請說明要看「" + page(st.slots.page).name + "」的哪一項"); return }
-                st.slots.section = code === "WHOLE" ? -1 : parseInt(code.slice(1), 10)
-                problem = navMethod()
-            } else if (s === "S3_MODULE") {
-                if (code === "UNKNOWN") { escalate("請說明要調整哪個模組"); return }
-                st.slots.module = code
-                st.state = "S3_ACTION"; prepare(); return
-            } else if (s === "S3_ACTION") {
-                if (code === "UNKNOWN") { escalate("請說明要怎麼調整" + moduleById(st.slots.module).name); return }
-                problem = layoutMethod(code)
-            } else if (s === "S3_TEXT") {
-                if (code === "UNKNOWN") { escalate("請說明文字要放大還是縮小"); return }
-                problem = textMethod(code)
-            } else if (s === "S3_HISTORY") {
-                if (code === "UNKNOWN") { escalate("請說明要復原還是重做"); return }
-                problem = historyMethod(code)
-            }
-            // S5: a filled value that fails method preconditions counts as an invalid answer (repair once).
-            if (problem) invalid(problem, code)
-        }
-        function api() {
-            return {
-                state: function() { return copy(st) },
-                next: function() {
-                    if (st.done) return { type: "done", decision: copy(st.done), trace: copy(st.trace), model_calls: st.model_calls }
-                    if (st.model_calls >= maxCalls) { ruleFallback("模型呼叫已達上限"); return this.next() }
-                    return { type: "ask", call: renderCall() }
-                },
-                answer: function(raw) {
-                    if (st.done) throw new Error("session already finished")
-                    st.model_calls++
-                    log({ event: "model_reply", raw: String(raw === undefined ? "" : (typeof raw === "string" ? raw : JSON.stringify(raw))).slice(0, 200),
-                          repair: st.last_error !== "" })
-                    var p = parse(raw)
-                    if (p.error) { invalid(p.error, raw); return }
-                    transition(p.value)
-                },
-                fail: function(reason) {
-                    if (st.done) return
-                    st.model_calls++
-                    invalid("模型未回覆：" + String(reason || "error"), "")
+                // ---------------- S2 分類（規則先）：規則已確定就跳過模型
+                if (result.rule.final || result.generic_settings || result.rule.decision === "SELECT") {
+                    var d0 = copy(result.rule); d0.candidates = copy(result.candidates)
+                    st.state = "S2"
+                    finish(d0, "rule", "規則已確定")
+                    return
                 }
+                // An unclear multi-clause sentence is treated as ONE action (classify or pick).
+                // Fully explicit multi-clause sentences are already rule SELECT (up to five steps) above.
+                if (result.compound) st.compound = true
+                if (result.candidates.length) h.go("S4_PICK", "規則找到 " + result.candidates.length + " 個可能，但沒有把握")
+                else h.go("S2_CLASSIFY", "規則找不到對應的畫面或模組")
+            },
+            header: function() {
+                var lines = ["句子：" + st.goal, "目前畫面：" + core.pageName(ctx.page)]
+                var known = knownLine()
+                if (known) lines.push("已知：" + known)
+                if (st.last_observation && st.state === "S4_PICK") lines.push("觀察：" + st.last_observation)
+                return lines
+            },
+            options: function() {
+                var s = st.state
+                if (s === "S4_PICK") return { need: "最符合句子的一個動作",
+                    allowed: result.candidates.map(function(c) { return { code: c.id, zh: c.label_zh } })
+                        .concat([{ code: "CLARIFY", zh: "兩個以上都說得通，要問使用者" },
+                                 { code: "OTHER", zh: "都不是，要重新判斷" },
+                                 { code: "NONE", zh: "都不符合，而且不是介面操作" }]) }
+                if (s === "S2_CLASSIFY") return { need: "這句話屬於哪一類", allowed: copy(KINDS) }
+                if (s === "S3_PAGE") return { need: "要去的畫面",
+                    allowed: core.PAGES.map(function(p) { return { code: "P" + p.page, zh: p.name } })
+                        .concat([{ code: "UNKNOWN", zh: "不知道" }]) }
+                if (s === "S3_SECTION") return { need: "「" + page(st.slots.page).name + "」裡的哪個子頁",
+                    allowed: [{ code: "WHOLE", zh: "整個畫面，不指定子頁" }]
+                        .concat(sectionsOf(st.slots.page).map(function(x) { return { code: "S" + x.section, zh: x.name } }))
+                        .concat([{ code: "UNKNOWN", zh: "不知道" }]) }
+                if (s === "S3_MODULE") return { need: "要調整的模組",
+                    allowed: pageModules().map(function(m) { return { code: m.id, zh: m.name } })
+                        .concat([{ code: "UNKNOWN", zh: "不知道" }]) }
+                if (s === "S3_ACTION") {
+                    var m = moduleById(st.slots.module)
+                    return { need: "對「" + m.name + "」做什麼",
+                        allowed: REGION_KEYS.map(function(k) { return { code: "MOVE_" + k, zh: "移到" + regionName(k) } })
+                            .concat(NUDGE_ACTIONS.map(function(a) { return { code: a.code, zh: a.zh } }))
+                            .concat(SCALE_ACTIONS.map(function(a) { return { code: a.code, zh: a.zh } }))
+                            .concat(m.locked ? [] : [{ code: "HIDE", zh: "隱藏" }])
+                            .concat([{ code: "SHOW", zh: "重新顯示" }, { code: "RESET", zh: "回到原本位置與大小" },
+                                     { code: "UNKNOWN", zh: "不知道" }]) }
+                }
+                if (s === "S3_TEXT") return { need: "全系統文字比例", allowed: TEXT_OPTIONS.map(function(o) { return { code: o.code, zh: o.zh } }) }
+                if (s === "S3_HISTORY") return { need: "要復原還是重做", allowed: HISTORY_OPTIONS.map(function(o) { return { code: o.code, zh: o.zh } }) }
+                throw new Error("no options for state " + s)
+            },
+            transition: function(code) {
+                var s = st.state
+                if (s === "S4_PICK") {
+                    if (code === "CLARIFY") { h.ruleFallback("模型判斷有多個可能", "state_machine"); return "" }
+                    if (code === "OTHER") {
+                        // Rule candidates missed the target; re-enter classification once.
+                        if (st.reclassified) { h.ruleFallback("重新判斷已用過"); return "" }
+                        st.reclassified = true
+                        h.go("S2_CLASSIFY", "規則候選都不對，重新分類"); return ""
+                    }
+                    if (code === "NONE") { finish({ decision: "HOLD", choice_id: "", reason_zh: "沒有對應的動作", candidates: [] }, "state_machine", "pick: none"); return "" }
+                    return selectCandidate(core.candidateById(result, code), "pick")
+                }
+                if (s === "S2_CLASSIFY") {
+                    st.kind = code
+                    if (code === "OUT_OF_SCOPE") { finish({ decision: "HOLD", choice_id: "", candidates: [],
+                        reason_zh: "介面助理只換頁與調整版面，不送飛行指令、不改參數" }, "state_machine", "classify: out of scope"); return "" }
+                    if (code === "UNKNOWN") { h.ruleFallback("分類：不知道"); return "" }
+                    if (code === "AMBIGUOUS") { escalate("請再說明想做什麼，例如要去哪個畫面或調整哪個模組"); return "" }
+                    if (code === "LAYOUT" && !pageModules().length) { escalate("目前畫面沒有可調整的模組，請先切到要調整的畫面"); return "" }
+                    h.go({ NAV: "S3_PAGE", LAYOUT: "S3_MODULE", TEXT: "S3_TEXT", HISTORY: "S3_HISTORY" }[code], "分類為 " + code)
+                    return ""
+                }
+                if (s === "S3_PAGE") {
+                    if (code === "UNKNOWN") { escalate("請說明要去哪個畫面"); return "" }
+                    st.slots.page = parseInt(code.slice(1), 10)
+                    if (sectionsOf(st.slots.page).length) { h.go("S3_SECTION"); return "" }
+                    return navMethod()
+                }
+                if (s === "S3_SECTION") {
+                    if (code === "UNKNOWN") { escalate("請說明要看「" + page(st.slots.page).name + "」的哪一項"); return "" }
+                    st.slots.section = code === "WHOLE" ? -1 : parseInt(code.slice(1), 10)
+                    return navMethod()
+                }
+                if (s === "S3_MODULE") {
+                    if (code === "UNKNOWN") { escalate("請說明要調整哪個模組"); return "" }
+                    st.slots.module = code
+                    h.go("S3_ACTION"); return ""
+                }
+                if (s === "S3_ACTION") {
+                    if (code === "UNKNOWN") { escalate("請說明要怎麼調整" + moduleById(st.slots.module).name); return "" }
+                    return layoutMethod(code)
+                }
+                if (s === "S3_TEXT") {
+                    if (code === "UNKNOWN") { escalate("請說明文字要放大還是縮小"); return "" }
+                    return textMethod(code)
+                }
+                if (s === "S3_HISTORY") {
+                    if (code === "UNKNOWN") { escalate("請說明要復原還是重做"); return "" }
+                    return historyMethod(code)
+                }
+                return "未知狀態"
             }
         }
+        return SlotLoop.session(lib, { version: VERSION, systemPrompt: SYSTEM_PROMPT, maxCalls: maxCalls,
+            extractJson: core.extractJson, goal: String(result.intent || input || ""), modelEnabled: opts.modelEnabled })
     }
     return { start: start, VERSION: VERSION }
 }
 
 // Synchronous driver for offline evaluation: model(call) returns the raw reply text.
 function runSync(core, input, ctx, pending, model, options) {
-    var s = create(core, options).start(input, ctx, pending)
-    var calls = []
-    for (var guard = 0; guard < 16; ++guard) {
-        var step = s.next()
-        if (step.type === "done") return { decision: step.decision, trace: step.trace, model_calls: step.model_calls, calls: calls }
-        calls.push(step.call)
-        var reply
-        try { reply = model ? model(step.call) : null } catch (e) { s.fail(String(e)); continue }
-        if (reply === null || reply === undefined) s.fail("no model")
-        else s.answer(reply)
-    }
-    throw new Error("state machine did not terminate")
+    return SlotLoop.run(create(core, options).start(input, ctx, pending), model)
 }

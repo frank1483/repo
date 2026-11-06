@@ -116,7 +116,7 @@ const modelSet = heldout.concat(uncertainCorpus);
 const manifest = {version: SM.VERSION, ran_at_utc: new Date().toISOString(),
   inputs: {regression_ui_agent: sha('regression_ui_agent.jsonl'), text_regression_v6_0400: sha('text_regression_v6_0400.jsonl'),
     heldout_file: HELDOUT, heldout: sha(HELDOUT)},
-  code: {core: sha('../qml/GcpAgentCore.js'), sm: sha('../qml/GcpAgentStateMachine.js'), eval: sha('eval_sm_vs_v6.js')}};
+  code: {core: sha('../qml/GcpAgentCore.js'), sm: sha('../qml/GcpAgentStateMachine.js'), slot_loop: sha('../qml/GcpSlotLoop.js'), eval: sha('eval_sm_vs_v6.js')}};
 
 // ---------------------------------------------------------------- E1 rule path, model disabled
 const e1 = {rows: 0, identical: 0, diffs: []};

@@ -9,7 +9,7 @@ const args = process.argv.slice(2), arg = k => { const i = args.indexOf(k); retu
 const mode = arg('--mode');
 const C = require('./load_core'), SM = require('./load_sm');
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
-const FILES = ['../qml/GcpAgentCore.js', '../qml/GcpAgentStateMachine.js', 'load_core.js', 'load_sm.js',
+const FILES = ['../qml/GcpAgentCore.js', '../qml/GcpAgentStateMachine.js', '../qml/GcpSlotLoop.js', 'load_core.js', 'load_sm.js',
   'sm_heldout_v2.jsonl', 'regression_ui_agent.jsonl', 'live_sm_vs_v6.cjs'];
 // Hash over LF-normalised text so a Windows CRLF checkout gives the same value.
 const norm = f => fs.readFileSync(path.join(__dirname, f), 'utf8').replace(/\r\n/g, '\n');
