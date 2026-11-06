@@ -52,7 +52,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PRIORITY = {"ui": 0, "alerts": 1, "mission": 2, "report": 3, "recognition": 4}
 UNKNOWN_PRIORITY = 9
 # 逾時預算（秒，含排隊）。PC 上 Gemma 4 E2B 中位約 5 秒、首次載入約 12 秒。
-DEFAULT_BUDGETS = {"ui": 20.0, "alerts": 30.0, "mission": 60.0, "report": 90.0,
+DEFAULT_BUDGETS = {"ui": 32.0, "alerts": 30.0, "mission": 60.0, "report": 90.0,
                    "recognition": 30.0, "unknown": 60.0}
 
 

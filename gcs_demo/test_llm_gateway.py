@@ -425,7 +425,7 @@ def post(url, body, headers=None, timeout=30):
 
 
 class DeadlineContractTest(unittest.TestCase):
-    """llm_contract v0.4 期限／取消契約：不放寬 ui 20 s，也不放寬呼叫端給的期限。"""
+    """llm_contract v0.4 期限／取消契約：ui 預算 32 s（使用者 2026-11-06 定的一般意圖總上限），也不放寬呼叫端給的期限。"""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -520,8 +520,8 @@ class DeadlineContractTest(unittest.TestCase):
         finally:
             srv.shutdown(); fake.close()
 
-    def test_ui_budget_is_still_20s(self):
-        self.assertEqual(G.DEFAULT_BUDGETS["ui"], 20.0)
+    def test_ui_budget_is_32s_user_cap(self):
+        self.assertEqual(G.DEFAULT_BUDGETS["ui"], 32.0)
 
     def test_success_before_deadline_delivered(self):
         fake = SlowOllama(delay=0.2)

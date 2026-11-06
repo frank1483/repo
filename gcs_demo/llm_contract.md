@@ -91,3 +91,10 @@ APK 內的 QML 不能 import Python，所以共用介面以 **HTTP 層** 為準�
 - 期限／取消契約 v0.4.3（frank1483/repo claude/project-thread-wum8aq 241abba）：Codex 複審 GATEWAY_REVIEW_0429（CODEX-APP-0375）判定原 P2 已解決、無新 P1／P2。記為「**假上游範圍內工程驗收完成**」（AI 共同決定，使用者委任；不是使用者人工批准）。
 - 37/37 測試與另外 2 次重複成功是 Claude 回報（紀錄 /mnt/project-files/gcs_demo/llm_gateway/deadline_v043_run1/）；Codex 本輪未執行 Python。
 - 未完成：真模型（Ollama／llama-server）在上游斷線後是否停止推論，仍是待驗證的部署假設。
+
+## 12. 修訂（v0.4.4，2026-11-06 台灣時間；對齊使用者定的 UI 一般意圖 32 s 總上限）
+
+- 使用者 2026-11-06 09:16 定：UI 一般意圖（含 schema 重試）總等待 ≤32 s，與修復相同。Codex 0373（CLAUDE-APP-0432）的 UI 端每次呼叫帶 `X-GCS-Deadline-Ms = 剩餘總時間`（最多 32000）。
+- 原閘道 ui 預算 20 s 會把一般意圖的單次等待在 20 s 就截斷，與上限不符。改為 **ui 32 s**；其他功能不變（alerts 30、mission 60、report 90、recognition 30）。
+- 有效期限規則不變：min(功能預算, 標頭)，標頭只能縮短。修復路徑仍由 UI 端自行限制單次 ≤20 s，閘道不另外放寬。
+- 第 6、7 節「ui 20」為歷史紀錄，以本節為準。
