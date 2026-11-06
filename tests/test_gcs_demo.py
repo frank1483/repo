@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest import mock
 
@@ -20,7 +21,8 @@ class FakeBackend(llm.LLMBackend):
         return True
 
     def complete_json(self, system, user, schema, timeout_s=60):
-        return {"ok": True, "data": self.data, "raw": "", "latency_s": 0, "error": None,
+        return {"ok": True, "data": self.data, "raw": json.dumps(self.data, ensure_ascii=False),
+                "latency_s": 0, "error": None,
                 "backend": "fake", "model": "fake"}
 
 
@@ -72,10 +74,12 @@ class TestDemo(unittest.TestCase):
         self.assertEqual(p["pick"]["choice_id"], p["rule_choice"])
 
     def test_llm_valid_choice_used(self):
-        fb = FakeBackend({"decision": "SELECT", "choice_id": "C5", "reason_zh": "省電", "evidence_ids": ["E1", "E404"]})
+        # 狀態機迴圈（agent_methods_mission）：模型只回一個代碼，理由與依據由程式寫
+        fb = FakeBackend({"value": "C5"})
         p = plan_mission(S.mission(), Vehicle(), Wind(**S.WIND), fb)
         self.assertEqual((p["pick"]["choice_id"], p["pick"]["source"]), ("C5", "llm"))
-        self.assertEqual(p["pick"]["evidence_ids"], ["E1"])
+        ids = {e["id"] for e in p["evidence"]}
+        self.assertTrue(p["pick"]["evidence_ids"] and set(p["pick"]["evidence_ids"]) <= ids)
 
     def test_report_drops_ungrounded_suggestions(self):
         p, r, run, ch = full_run()

@@ -13,6 +13,7 @@ import math
 from .energy import Vehicle, Wind, route_estimate, haversine_m, best_speed
 from . import llm as llm_mod
 from .planner_t3 import mission_version, check_apply, replan_context, constraint_deltas, split_sorties
+from .agent_methods_mission import pick_candidate
 
 
 # ---------- 幾何：禁航區（圓）與繞行 ----------
@@ -247,7 +248,7 @@ def plan_mission(mission: dict, vehicle: Vehicle, wind: Wind, backend=None) -> d
     ev = evidence_for(cands, vehicle, wind)
     backend = backend or llm_mod.get_backend()
     if rc:
-        pick = llm_mod.pick_candidate(backend, "出發前任務規劃：選一條航線。必要目標都要做到，落地電量要高於保留值。",
+        pick = pick_candidate(backend, "出發前任務規劃：選一條航線。必要目標都要做到，落地電量要高於保留值。",
                                       [_brief(c) for c in cands], ev, rc)
     else:
         pick = {"choice_id": "", "source": "rule", "decision": "HOLD",
@@ -323,7 +324,7 @@ def replan(mission: dict, vehicle: Vehicle, wind: Wind, state: dict, event: dict
     ev = evidence_for(cands, vehicle, wind, extra=[f"觸發事件：{note}", f"目前電量 {pct}%",
                                                      f"起飛後實際耗電是預估的 {ratio*100:.0f}%，剩餘航線已用此比例修正"])
     backend = backend or llm_mod.get_backend()
-    pick = llm_mod.pick_candidate(
+    pick = pick_candidate(
         backend, "飛行中重規劃：事件發生後選一條剩餘航線。必要目標盡量完成，但落地電量必須高於保留值；"
                  "都不行就選立即返航。", [_brief(c) for c in cands], ev, rc)
     return {"kind": "replan", "mission_version": mission_version(m, vehicle, wind, state), "event": event, "state": state, "candidates": cands, "rule_choice": rc,
