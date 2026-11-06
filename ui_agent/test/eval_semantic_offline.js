@@ -9,7 +9,7 @@ const out = process.argv[2]; if (!out) throw Error('usage: OUT_DIR [LIVE_RECORD_
 if (fs.existsSync(out)) throw Error('OUT_DIR exists; one run per new directory');
 fs.mkdirSync(out, {recursive: true});
 const rec = process.argv[3] || null;
-const read = f => fs.readFileSync(path.join(__dirname, f), 'utf8').replace(/\r\n/g, '\n').split('\n').filter(s => s.trim()).map(JSON.parse);
+const read = f => fs.readFileSync(path.isAbsolute(f) ? f : path.join(__dirname, f), 'utf8').replace(/\r\n/g, '\n').split('\n').filter(s => s.trim()).map(JSON.parse);
 const DEV = read('sm_heldout_v1.jsonl'), TEST = read('sm_heldout_v2.jsonl');
 const prep = rows => rows.map(row => Object.assign({row, inv: S.inventory(row.ctx)}, S.fixedStage(row)));
 const dev = prep(DEV), test = prep(TEST);
