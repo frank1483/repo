@@ -1,6 +1,6 @@
 'use strict';
 // Offline part of the semantic-scoring experiment. No network.
-//   node eval_semantic_offline.js OUT_DIR [LIVE_RECORD_DIR]
+//   node eval_semantic_offline.js OUT_DIR [LIVE_DIR[,LIVE_DIR...]]   (one dir per recorded part)
 // Without LIVE_RECORD_DIR: group 1 (rule) only, plus a fake-semantic smoke test of groups 2-4.
 // With it: groups 2-4 from the recorded live outputs (distributions / embeddings), no model calls here.
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
@@ -55,8 +55,24 @@ if (!rec) {
   runGroup('SMOKE_fake_combo_w05', x => S.comboScores(S.ruleScores(x.result), fake(x), 0.5));
   report.note = 'SMOKE_* groups use a fake bigram scorer only to test the plumbing; they are not results.';
 } else {
-  const R = JSON.parse(fs.readFileSync(path.join(rec, 'record.json'), 'utf8'));
-  report.live_record = {dir: rec, source_sha256: R.source_sha256};
+  const dirs = rec.split(','), R = {embed_models: [], logprob_models: []};
+  report.live_record = [];
+  for (const dir of dirs) {
+    const r = JSON.parse(fs.readFileSync(path.join(dir, 'record.json'), 'utf8'));
+    report.live_record.push({dir, part: r.part, source_sha256: r.source_sha256, calls: r.calls});
+    R.embed_models.push(...(r.embed_models || [])); R.logprob_models.push(...(r.logprob_models || []));
+    // Latency from the raw call log: logprob = per-sentence total of its calls; embed = per embedded text.
+    const raw = fs.existsSync(path.join(dir, 'raw_calls.jsonl')) ? read(path.relative(__dirname, path.join(dir, 'raw_calls.jsonl'))) : [];
+    const med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor((b.length - 1) / 2)] : null; };
+    const lat = report.latency = report.latency || {};
+    for (const tag of new Set(raw.map(c => c.model))) {
+      const mine = raw.filter(c => c.model === tag);
+      if (r.part === 'logprob') { const per = {}; for (const c of mine) per[c.id] = (per[c.id] || 0) + c.latency_ms;
+        lat['logprob:' + tag] = {median_ms_per_sentence: med(Object.values(per)), median_calls_per_sentence: med(Object.keys(per).map(id => mine.filter(c => c.id === id).length))}; }
+      else { const items = mine.reduce((a, c) => a + ((c.body && c.body.count) || 0), 0);
+        lat['embed:' + tag] = {total_ms: mine.reduce((a, c) => a + c.latency_ms, 0), texts: items, ms_per_text: items ? Math.round(mine.reduce((a, c) => a + c.latency_ms, 0) / items * 10) / 10 : null}; }
+    }
+  }
   for (const m of R.embed_models || []) {
     if (!m.ok) { report.groups['embed:' + m.tag] = {invalid: m.error}; continue; }
     const vec = t => m.vectors[t]; const sem = x => S.embedScores(m.vectors['Q:' + x.row.id], x.inv, vec);
