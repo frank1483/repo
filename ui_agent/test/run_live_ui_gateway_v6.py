@@ -26,6 +26,7 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
+os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")  # 避免 Windows 原生樣式不支援自訂背景的警告
 
 from PySide6.QtCore import QMetaObject, QObject, Q_ARG, QUrl, qVersion  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
@@ -57,17 +58,19 @@ INTENTS = [
     {"id": "L04", "text": "重做", "expect": "redo", "note": "重做"},
     {"id": "L05", "text": "去設定", "expect": "clarify", "note": "泛稱設定 → CLARIFY"},
     {"id": "L06", "text": "先回首頁再打開告警中心", "expect": "multi", "note": "多步，出確認卡"},
-    {"id": "L07", "text": "我想調整飛行畫面相關的東西", "expect": "model", "note": "規則不確定，交給模型挑"},
+    {"id": "L07", "text": "我想看遙控器失聯的保護設定", "expect": "model", "note": "規則 CLARIFY（RC 設備頁 vs 通訊與遙控失效保護），交給模型挑；預期 NAV_3_2"},
     {"id": "L08", "text": "把小地圖移到右上角", "expect": "layout", "note": "移動版面"},
     {"id": "L09", "text": "全部復原", "expect": "reset", "note": "整串還原"},
     {"id": "L10", "text": "幫我起飛", "expect": "hold", "note": "飛行指令，必須拒絕"},
+    {"id": "R01", "text": "讓小地圖看得清楚一點", "expect": "readable_repair",
+     "note": "即時飛行頁原始小地圖放大後與鎖定底部遙測列重疊；確認後最多一次模型選擇修正，不回算原始成功"},
 ]
 # 自由調色兩句（只在給了真主題時跑）：只預覽、不套用
 THEME_INTENTS = [
     {"id": "T01", "group": "accent", "text": "海洋風", "mode": "model", "note": "規則看不懂 → 請模型提議色值 → 確認卡（不套用）"},
     {"id": "T02", "group": "accent", "text": "#FF0000", "mode": "direct", "note": "明確色碼 → 檢查後顯示實際色（不套用）"},
 ]
-WAIT_S = 45  # 閘道 ui 預算 20 s，agent 逾時預設 60 s；每句最多等 45 s 後記錄現況
+WAIT_S = 45  # ordinary model env=30 s; readability 12+20<=32 s. Both waits cover 32 s.
 
 work = tempfile.mkdtemp(prefix="agent_live_")
 mod_dir = os.path.join(work, "QGroundControl", "GCP")
@@ -156,6 +159,10 @@ def jsonable(v):
 
 rows = []
 for item in INTENTS:
+    if item["expect"] == "readable_repair":
+        shell.setProperty("currentPage", 1)
+        agent.setProperty("open", True)
+        pump(0.4)  # Real measurements/verifier still determine whether overlap occurred.
     start_log = len(log)
     page_before = shell.property("currentPage")
     t0 = time.time()
@@ -167,7 +174,7 @@ for item in INTENTS:
         card_info = jsonable(card.toVariant() if hasattr(card, "toVariant") else card)
         win.grabWindow().save(os.path.join(OUT, "screens", item["id"] + "_card.png"))
         QMetaObject.invokeMethod(agent, "confirmIntent")  # 冒煙測試：卡片一律按「對」，記錄卡片內容
-        wait_idle(10)
+        wait_idle(WAIT_S)
     win.grabWindow().save(os.path.join(OUT, "screens", item["id"] + ".png"))
     rows.append({
         "id": item["id"], "text": item["text"], "expect": item["expect"], "note": item["note"],

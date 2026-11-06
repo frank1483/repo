@@ -40,7 +40,8 @@ Item {
         }
         const generation = _themeModelGeneration, requestId = request.id
         const requestBackend = backend, requestUrl = modelUrl.replace(/\/+$/, ""), requestModel = modelName
-        const requestTimeout = modelTimeoutMs, requestKey = envValue("GCS_LLM_API_KEY", "")
+        const requestTimeout = Math.min(modelTimeoutMs, 32000), requestKey = envValue("GCS_LLM_API_KEY", "")
+        const requestDeadline = Date.now() + requestTimeout
         const schema = {type:"object", additionalProperties:false, required:["group","color"], properties:{
             group:{type:"string", enum:[request.group]}, color:{type:"string", pattern:"^#[0-9A-Fa-f]{6}$"}}}
         const messages = [{role:"system",content:"Suggest one UI color value only. Return exactly JSON {group,color}; color must be #RRGGBB. Do not return instructions, policy, tokens or actions. The application validates and asks the user to confirm."},
@@ -70,6 +71,8 @@ Item {
         themeTimeoutTimer.restart()
         function send(useSchema) {
             if (finished || generation !== root._themeModelGeneration) return
+            const remaining = Math.floor(requestDeadline - Date.now())
+            if (remaining <= 0) { fail(qsTr("色值提議等待逾時，保留目前色彩。")); return }
             const current = new XMLHttpRequest()
             xhr = current
             const body = requestBackend === "ollama" ? {model:requestModel,messages:messages,stream:false,format:schema,options:{temperature:0}} :
@@ -77,6 +80,7 @@ Item {
                     {type:"json_schema",json_schema:{name:"gcp_theme_color",strict:false,schema:schema}} : {type:"json_object"}}
             current.onreadystatechange = function() {
                 if (finished || generation !== root._themeModelGeneration || current !== xhr || current.readyState !== XMLHttpRequest.DONE) return
+                if (Date.now() >= requestDeadline || current.status === 504) { fail(qsTr("色值提議等待逾時，保留目前色彩。")); return }
                 if (requestBackend !== "ollama" && useSchema && current.status === 400 && !fallbackSent) {
                     fallbackSent = true; send(false); return
                 }
@@ -94,6 +98,9 @@ Item {
             try {
                 current.open("POST", requestUrl + (requestBackend === "ollama" ? "/api/chat" : "/chat/completions"))
                 current.setRequestHeader("Content-Type", "application/json")
+                const remainingAtSend = Math.floor(requestDeadline - Date.now())
+                if (remainingAtSend <= 0) { fail(qsTr("色值提議等待逾時，保留目前色彩。")); current.abort(); return }
+                current.setRequestHeader("X-GCS-Deadline-Ms", String(remainingAtSend))
                 if (requestKey) current.setRequestHeader("Authorization", "Bearer " + requestKey)
                 current.send(JSON.stringify(body))
             } catch (e) { fail(qsTr("無法建立色值請求，請使用取色器。")); current.abort() }
@@ -160,8 +167,8 @@ Item {
 
     function resolvedModelTimeoutMs() {
         const saved = Number(agentSettings.llmTimeoutMs)
-        const n = isFinite(saved) && saved > 0 ? saved : Number(envValue("GCS_LLM_TIMEOUT_MS", "60000"))
-        return isFinite(n) && n > 0 ? Math.max(1, Math.min(120000, Math.floor(n))) : 60000
+        const n = isFinite(saved) && saved > 0 ? saved : Number(envValue("GCS_LLM_TIMEOUT_MS", "32000"))
+        return isFinite(n) && n > 0 ? Math.max(1, Math.min(32000, Math.floor(n))) : 32000
     }
 
     function setModelTimeout(text) {
@@ -171,7 +178,7 @@ Item {
         // Panel accepts whole milliseconds; malformed edits never change the prior setting.
         if (!/^[0-9]+$/.test(value)) return false
         const n = Number(value)
-        if (!isFinite(n) || n < 1 || n > 120000) return false
+        if (!isFinite(n) || n < 1 || n > 32000) return false
         agentSettings.llmTimeoutMs = n
         return true
     }
@@ -324,6 +331,13 @@ Item {
 
     // model: null（沒問）或 { ok, decision, choice_id, reason_zh, error, latency_ms }
     function finish(result, model) {
+        if (model && model.error_code === "TIMEOUT") {
+            clearConfirmation(); _pending = null; _candidateScope = []; choices = []; pendingText = ""
+            modelNotice = qsTr("模型等待逾時，尚未套用任何動作。")
+            messageText = modelNotice
+            decisionLogged({phase:"model_timeout", intent:result.intent, model:model, executed:false})
+            return
+        }
         modelNotice = model && !model.ok ? qsTr("模型未完成（%1），已改用規則判斷。").arg(model.error) : ""
         let decision = result.rule, source = qsTr("規則")
         if (model && model.ok) {
@@ -441,6 +455,7 @@ Item {
                 else if (readableTick.onFire === handle) { readableTick.stop(); readableTick.onFire = null }
             },
             now: function() { return Date.now() },
+            propose: function(request, done) { return root.callReadableRepair(request, done) },
             report: function(e) { if (!root._destroying) {
                 root.decisionLogged({phase: "readability_loop", event: e})
                 if (e.gate) root.recordGate(e)
@@ -520,7 +535,7 @@ Item {
     function confirmationSummary() {
         if (!_confirmation) return ""
         if (_confirmation.readable) return qsTr("我理解你要：") + "\n" + _confirmation.readable.spec.label + "\n" +
-            _confirmation.readable.summary + "\n" + qsTr("本批檢查失敗會整組復原，尚未接模型修補。") + "\n" + qsTr("對嗎？")
+            _confirmation.readable.summary + "\n" + qsTr("檢查失敗時最多請模型修正一次；操作限 12 秒、模型等待限 20 秒，總共不超過 32 秒，仍失敗就整組復原。") + "\n" + qsTr("對嗎？")
         const marks = ["①", "②", "③", "④", "⑤"]
         return qsTr("我理解你要：") + "\n" + _confirmation.steps.map((c, i) =>
             marks[i] + " " + c.label_zh).join("\n") + "\n" + qsTr("對嗎？")
@@ -570,12 +585,78 @@ Item {
         input.forceActiveFocus()
     }
 
+    // Dedicated one-shot path. The Session owns the deadline and abort handle;
+    // no schema retry, native backend or rule fallback is used for repair.
+    function callReadableRepair(request, done) {
+        let xhr = null, finished = false
+        const callStarted = Date.now()
+        const remainingTotal = Number(request.deadline_ms), modelBudget = Number(request.timeout_ms)
+        const requestDeadline = callStarted + Math.min(remainingTotal, modelBudget)
+        const totalDeadline = callStarted + remainingTotal
+        const url = modelUrl.replace(/\/+$/, ""), requestModel = modelName
+        const requestKey = envValue("GCS_LLM_API_KEY", "")
+        function cancel() {
+            if (finished) return
+            finished = true
+            if (xhr) { xhr.onreadystatechange = null; xhr.abort() }
+        }
+        function end(result) {
+            if (finished) return
+            finished = true
+            if (xhr) xhr.onreadystatechange = null
+            done(result)
+        }
+        if (backend !== "openai" || !/^https?:\/\/[^/?#]+\/f\/ui\/v1$/.test(url)) {
+            end({ok:false, error_code:"REPAIR_INVALID", raw:"", error:"repair requires the /f/ui/v1 gateway"})
+            return cancel
+        }
+        if (!isFinite(remainingTotal) || !isFinite(modelBudget) || remainingTotal <= 0 || modelBudget <= 0) {
+            end({ok:false, error_code:"REPAIR_TIMEOUT", raw:"", error:"missing or expired repair deadline"})
+            return cancel
+        }
+        const body = {model:requestModel, temperature:0, max_tokens:500,
+            response_format:{type:"json_schema", json_schema:{name:"gcp_ui_readability_repair", strict:true, schema:request.json_schema}},
+            messages:[{role:"system", content:"只從給定候選選一個 choice_id 修正小地圖。只回傳符合 schema 的 JSON；不得新增動作、修改規則或選未列出的 ID。"},
+                {role:"user", content:JSON.stringify({goal:request.goal, failures:request.failures, snapshot:request.snapshot,
+                    expected:request.expected, candidates:request.candidates, max_steps:1})}]}
+        try {
+            xhr = new XMLHttpRequest()
+            xhr.onreadystatechange = function() {
+                if (finished || xhr.readyState !== XMLHttpRequest.DONE) return
+                if (Date.now() >= requestDeadline) { end({ok:false, error_code:"REPAIR_TIMEOUT", raw:String(xhr.responseText || "")}); return }
+                if (xhr.status < 200 || xhr.status >= 300) {
+                    end({ok:false, error_code:xhr.status === 504 ? "REPAIR_TIMEOUT" : "REPAIR_INVALID", raw:String(xhr.responseText || "")})
+                    return
+                }
+                let raw = String(xhr.responseText || "")
+                try {
+                    const envelope = JSON.parse(raw)
+                    raw = envelope.choices[0].message.content
+                    if (typeof raw !== "string") throw new Error("repair content must be a JSON string")
+                    end({ok:true, response:JSON.parse(raw), raw:raw})
+                } catch (e) { end({ok:false, error_code:"REPAIR_INVALID", raw:String(raw || ""), error:String(e)}) }
+            }
+            xhr.open("POST", url + "/chat/completions")
+            xhr.setRequestHeader("Content-Type", "application/json")
+            const remaining = Math.floor(totalDeadline - Date.now())
+            if (remaining <= 0 || Date.now() >= requestDeadline) { end({ok:false, error_code:"REPAIR_TIMEOUT", raw:""}); xhr.abort(); return cancel }
+            xhr.setRequestHeader("X-GCS-Deadline-Ms", String(remaining))
+            if (requestKey) xhr.setRequestHeader("Authorization", "Bearer " + requestKey)
+            xhr.send(JSON.stringify(body))
+        } catch (e) {
+            end({ok:false, error_code:"REPAIR_INVALID", raw:"", error:String(e)})
+            if (xhr) xhr.abort()
+        }
+        return cancel
+    }
+
     function callModel(result, ctx, done) {
         let xhr = null, finished = false, fallbackSent = false
         const t0 = Date.now(), requestBackend = backend
         // Snapshot connection settings for the whole request, including any schema retry.
         const requestUrl = modelUrl.replace(/\/+$/, ""), requestModel = modelName
-        const requestTimeoutMs = modelTimeoutMs, requestKey = envValue("GCS_LLM_API_KEY", "")
+        const requestTimeoutMs = Math.min(modelTimeoutMs, 32000), requestKey = envValue("GCS_LLM_API_KEY", "")
+        const requestDeadline = t0 + requestTimeoutMs
         // Native Ollama always receives the candidate-bound schema. The env switch is OpenAI-only.
         const schemaOn = requestBackend === "ollama" || envValue("GCS_LLM_SCHEMA", "1") === "1"
         const schema = Core.decisionSchema(result)
@@ -585,6 +666,7 @@ Item {
             timeoutTimer.stop()
             timeoutTimer.onFire = null
             root._cancelModel = null
+            if (xhr) xhr.onreadystatechange = null
             r.latency_ms = Date.now() - t0
             r.timeout_ms = requestTimeoutMs
             r.request_backend = requestBackend
@@ -610,6 +692,8 @@ Item {
         const messages = [{ role: "system", content: Core.SYSTEM_PROMPT },
                           { role: "user", content: Core.buildUserMessage(result, ctx) }]
         function send(useSchema) {
+            const remaining = Math.floor(requestDeadline - Date.now())
+            if (remaining <= 0) { end({ok:false, error_code:"TIMEOUT", error:"deadline"}); return }
             const current = new XMLHttpRequest()
             xhr = current
             let url, body
@@ -627,6 +711,9 @@ Item {
             }
             current.onreadystatechange = function () {
                 if (finished || current !== xhr || current.readyState !== XMLHttpRequest.DONE) return
+                if (Date.now() >= requestDeadline || current.status === 504) {
+                    end({ok:false, error_code:"TIMEOUT", error:"deadline", raw:String(current.responseText || "")}); return
+                }
                 if (requestBackend !== "ollama" && useSchema && current.status === 400 && !fallbackSent) {
                     fallbackSent = true
                     send(false)
@@ -646,6 +733,9 @@ Item {
             try {
                 current.open("POST", url)
                 current.setRequestHeader("Content-Type", "application/json")
+                const remainingAtSend = Math.floor(requestDeadline - Date.now())
+                if (remainingAtSend <= 0) { end({ok:false, error_code:"TIMEOUT", error:"deadline"}); current.abort(); return }
+                current.setRequestHeader("X-GCS-Deadline-Ms", String(remainingAtSend))
                 if (requestKey) current.setRequestHeader("Authorization", "Bearer " + requestKey)
                 current.send(JSON.stringify(body))
             } catch (e) { end({ ok: false, error: qsTr("無法建立模型請求") }); current.abort() }
@@ -1135,7 +1225,7 @@ Item {
                     }
                     Text {
                         Layout.fillWidth: true
-                        text: qsTr("等待上限（毫秒，1–120000；留空採環境設定）")
+                        text: qsTr("等待上限（毫秒，1–32000；留空採環境設定）")
                         color: root.cSub; font.pixelSize: (16 * GcpTheme.font.textScale)
                         wrapMode: Text.Wrap
                     }
@@ -1152,7 +1242,7 @@ Item {
                         placeholderTextColor: root.cSub
                         background: Rectangle { radius: 8; color: "#33000000"; border.color: settingsForm.timeoutError ? root.cWarn : root.cLine }
                         onEditingFinished: {
-                            settingsForm.timeoutError = root.setModelTimeout(text) ? "" : qsTr("請填 1–120000 的整數，或留空；原設定保留")
+                            settingsForm.timeoutError = root.setModelTimeout(text) ? "" : qsTr("請填 1–32000 的整數，或留空；原設定保留")
                             if (settingsForm.timeoutError) text = agentSettings.llmTimeoutMs > 0 ? String(agentSettings.llmTimeoutMs) : ""
                         }
                     }

@@ -745,7 +745,7 @@ function catalogCandidates(ctx) {
 
 // ---------------------------------------------------------------- 模型提示與驗證（共用決策格式）
 var SYSTEM_PROMPT =
-    "你是無人機地面站的介面助理。只能從 candidates 選 ID，不可自創。單步用 choice_id，多步用 steps:[{choice_id:ID}]（最多五步，依序）。不可混用兩種格式。\n" +
+    "你是無人機地面站的介面助理。只能從 candidates 選 ID，不可自創。單步用 choice_id，多步用 steps:[{choice_id:ID}]（最多五步，依序），多步時 choice_id 填空字串。SELECT 一定要填 choice_id 或 steps。\n" +
     "規則：意圖明確對應某個候選就 SELECT；有兩個以上都說得通、或意圖太模糊就 CLARIFY；" +
     "沒有任何候選符合、或要求控制飛機／修改參數就 HOLD。\n" +
     "只輸出 JSON：{\"decision\":\"SELECT|HOLD|CLARIFY\",\"choice_id\":\"候選id或空字串\"," +
@@ -761,7 +761,7 @@ function decisionSchema(result) {
                 properties: { choice_id: { type: "string", enum: ids } }, required: ["choice_id"] } },
             reason_zh: { type: "string" },
             evidence_ids: { type: "array", items: { type: "string", enum: result.evidence.map(function(e) {return e.id}) } }
-        }, required: ["decision", "reason_zh", "evidence_ids"] }
+        }, required: ["decision", "choice_id", "reason_zh", "evidence_ids"] }
 }
 
 function buildUserMessage(result, ctx) {

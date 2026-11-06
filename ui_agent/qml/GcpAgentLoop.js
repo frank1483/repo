@@ -186,7 +186,7 @@ function create(spec, ports) {
             })
             return state()
         },
-        cancel: function() { if (phase === "running") end(false, "CANCELLED"); return state() },
+        cancel: function(reason) { if (phase === "running") end(false, typeof reason === "string" ? reason : "CANCELLED"); return state() },
         state: state
     }
 }

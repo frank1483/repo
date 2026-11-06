@@ -127,7 +127,7 @@ def main():
 
         wait_for(ready, "all fixed actions and final text line visible at " + str(width))
         need(latest_geometry["last_line_text"] == "對嗎？", "last text line changed")
-        for expected in ("160", "80", "移動允許", "降尺寸不允許", "回所在畫面不允許", "尚未接模型修補"):
+        for expected in ("160", "80", "移動允許", "降尺寸不允許", "回所在畫面不允許", "最多請模型修正一次"):
             need(expected in latest_geometry["text"], "confirmation missing " + expected)
         need(not win.property("active") and win.property("miniScale") == 1, "geometry applied action")
         need(win.property("undoCount") == 0, "geometry created undo")

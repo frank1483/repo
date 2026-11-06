@@ -59,7 +59,7 @@ function prepareReadable(host, core, catalogAdapter) {
     var summary = "小地圖可讀下限：寬 " + g.minWidth + " × 高 " + g.minHeight + "（畫面座標單位）\n" +
         "修補權限：移動" + (g.allowMove ? "允許" : "不允許") + "；降尺寸" + (g.allowShrink ? "允許" : "不允許") +
         "；回所在畫面" + (g.allowNavigate ? "允許" : "不允許") + "\n" +
-        "降尺寸仍須保留可讀下限；最多五輪，失敗整組復原。"
+        "降尺寸仍須保留可讀下限；最多一次模型修正、只選一個已確認候選；失敗整組復原。"
     return {spec: spec, summary: summary, basis: input,
         limitations: ["host-policy-only", "confirm-and-recapture-before-start", "registered-items-only", "Qt-layout-unverified"]}
 }

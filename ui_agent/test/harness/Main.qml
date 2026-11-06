@@ -91,6 +91,9 @@ Window {
             anchors.fill: parent
             z: 95
             shell: shell
+            readableViewport: content
+            readableGoalPolicy: ({kind:"readable", minWidth:320, minHeight:180,
+                allowMove:true, allowShrink:false, allowNavigate:false})
             envValue: function (name, fallback) { return harnessEnv[name] !== undefined ? harnessEnv[name] : fallback }
             Component.onCompleted: GcpAgentState.shell = shell
         }
