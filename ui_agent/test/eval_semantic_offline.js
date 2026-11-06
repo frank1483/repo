@@ -17,6 +17,8 @@ const report = {version: 'semantic-eval-1', dev_file: 'sm_heldout_v1.jsonl', tes
   dev_scored: dev.filter(x => !x.fixed).length, dev_fixed: dev.filter(x => x.fixed).length,
   test_scored: test.filter(x => !x.fixed).length, test_fixed: test.filter(x => x.fixed).length, groups: {}};
 
+// Windows forbids ':' in file names (run1 on the PC failed there); group names keep it, file names do not.
+const safe = n => n.replace(/[^A-Za-z0-9._-]+/g, '_');
 function runGroup(name, scorer) {
   const sr = set => set.filter(x => !x.fixed).map(x => ({row: x.row, inv: x.inv, scores: scorer(x, set === dev ? 'dev' : 'test'),
     forced: name === 'rule' ? S.ruleForced(x.result) : null}));
@@ -25,8 +27,8 @@ function runGroup(name, scorer) {
   const g = {chosen_on_dev: {tau: sw.best.tau, gap: sw.best.gap}, dev: S.evaluate(d, sw.best.tau, sw.best.gap).summary,
     test: S.evaluate(t, sw.best.tau, sw.best.gap).summary};
   if (name === 'rule') g.native = {tau: 0.75, gap: 0.15, dev: S.evaluate(d, 0.75, 0.15).summary, test: S.evaluate(t, 0.75, 0.15).summary};
-  fs.writeFileSync(path.join(out, 'sweep_dev_' + name + '.json'), JSON.stringify(sw.table));
-  fs.writeFileSync(path.join(out, 'rows_' + name + '.jsonl'), ['dev', 'test'].flatMap(k => S.evaluate(k === 'dev' ? d : t,
+  fs.writeFileSync(path.join(out, 'sweep_dev_' + safe(name) + '.json'), JSON.stringify(sw.table));
+  fs.writeFileSync(path.join(out, 'rows_' + safe(name) + '.jsonl'), ['dev', 'test'].flatMap(k => S.evaluate(k === 'dev' ? d : t,
     name === 'rule' ? 0.75 : sw.best.tau, name === 'rule' ? 0.15 : sw.best.gap).rows.map(r => JSON.stringify(Object.assign({set: k}, r)))).join('\n') + '\n');
   report.groups[name] = g;
   return {d, t};
