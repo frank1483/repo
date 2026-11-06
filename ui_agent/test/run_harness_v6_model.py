@@ -35,8 +35,11 @@ class FakeModel(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         FakeModel.calls.append({"path": self.path, "body": body})
         time.sleep(FakeModel.delay)
-        out = {"decision": "SELECT", "choice_id": "NAV_8_11", "reason_zh": "飛行畫面相關設定", "evidence_ids": []}
-        content = json.dumps(out, ensure_ascii=False)
+        # sm-v2: the state machine asks for one enum slot {"value": CODE}; answer from the offered enum.
+        fmt = body.get("format") or (body.get("response_format") or {}).get("json_schema", {}).get("schema") or {}
+        enum = (fmt.get("properties", {}).get("value", {}) or {}).get("enum") or []
+        pick = next((k for k in ("NAV_8_11", "NAV", "P8", "S11") if k in enum), enum[0] if enum else "UNKNOWN")
+        content = json.dumps({"value": pick}, ensure_ascii=False)
         if self.path.endswith("/api/chat"):
             payload = {"message": {"role": "assistant", "content": content}, "done": True}
         else:
@@ -141,7 +144,7 @@ wait(3500)
 check("逾時後晚到的回覆被忽略", page() == p0 and not agent.property("_confirmation"), page())
 check("只送出一次請求", len(FakeModel.calls) == 1, len(FakeModel.calls))
 
-# 2 Ollama 端點：format 帶本回合候選 schema
+# 2 Ollama 端點：format 帶本步驟的單格 enum schema（sm-v2 狀態機）
 win.close()
 FakeModel.delay = 0.0
 FakeModel.calls = []
@@ -151,7 +154,7 @@ say("我想查看飛行設定", 2000)
 call = FakeModel.calls[0] if FakeModel.calls else {}
 fmt = call.get("body", {}).get("format")
 check("Ollama 走 /api/chat", call.get("path") == "/api/chat", call.get("path"))
-check("Ollama format 是含候選 enum 的 schema", isinstance(fmt, dict) and "NAV_8_11" in json.dumps(fmt), str(fmt)[:200])
+check("Ollama format 是只含 value 一格、enum 有候選的 schema", isinstance(fmt, dict) and fmt.get("required") == ["value"] and "NAV_8_11" in json.dumps(fmt), str(fmt)[:200])
 check("Ollama 回覆後出確認卡（模型選的動作）", bool(agent.property("_confirmation")), agent.property("messageText"))
 QMetaObject.invokeMethod(agent, "confirmIntent")
 wait(800)

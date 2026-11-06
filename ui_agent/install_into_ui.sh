@@ -11,7 +11,7 @@ DOC='GCS_開發交接與變更紀錄.md'
 PATCHES=(elan_gcp_ui_agent.patch elan_gcp_home_modules.patch elan_gcp_text_scale.patch elan_gcp_joystick_grab.patch elan_gcp_agent_handoff_v6.patch elan_gcp_agent_theme.patch)
 # The manifest intentionally enumerates the complete source set: fail on drift.
 mapfile -t ASSETS < "$HERE/install_assets_v6.txt"
-[[ ${#ASSETS[@]} == 14 ]] || { echo 'expected exactly 14 Agent assets' >&2; exit 2; }
+[[ ${#ASSETS[@]} == 16 ]] || { echo 'expected exactly 16 Agent assets' >&2; exit 2; }
 for tool in patch sha256sum find cp mv mkdir mktemp grep cut cat rmdir sed; do command -v "$tool" >/dev/null; done
 [[ -f "$UI/GCP/GcpMainShell.qml" && -f "$UI/GCP/CMakeLists.txt" && -f "$UI/$DOC" ]] || { echo 'UI copy is incomplete' >&2; exit 2; }
 [[ ! -L "$UI/GCP" && ! -L "$UI/$DOC" && ! -e "$UI/GCP/Agent" && ! -L "$UI/GCP/Agent" ]] || { echo 'symlink or prior Agent installation refused' >&2; exit 2; }
@@ -28,7 +28,7 @@ while read -r expected relative; do
     [[ "${actual%% *}" == "$expected" ]] || { echo "LF payload checksum mismatch: $relative" >&2; exit 2; }
     payload_count=$((payload_count+1))
 done < "$HERE/install_payload_v6.sha256"
-[[ "$payload_count" == 27 ]] || { echo 'expected 27 payload checksum entries' >&2; exit 2; }
+[[ "$payload_count" == 29 ]] || { echo 'expected 29 payload checksum entries' >&2; exit 2; }
 LOCK="$UI/.ui-agent-install.lock"
 mkdir -- "$LOCK" || { echo 'installer lock exists; inspect its owner, do not steal it' >&2; exit 2; }
 STAGE=''
@@ -77,8 +77,8 @@ done
 [[ "$(grep -Fxc 'set_source_files_properties(Agent/GcpAgentState.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)' "$STAGE/GCP/CMakeLists.txt")" == 1 ]] || exit 3
 grep -Fq 'readableViewport: root' "$STAGE/GCP/GcpMainShell.qml"
 grep -Fq 'readableGoalPolicy: root.agentReadableGoalPolicy' "$STAGE/GCP/GcpMainShell.qml"
-printf 'ui-agent-v6-theme-batch4\npayload_manifest_sha256=%s\nassets=14\nreadability_policy_default=null\n' "$(sha256sum < "$HERE/install_payload_v6.sha256" | cut -d ' ' -f1)" > "$STAGE/GCP/Agent/.install_v6_receipt"
-if [[ "$MODE" == check ]]; then echo 'CHECK: 6 patches staged; 14 assets verified; target GCP and handoff unchanged'; exit 0; fi
+printf 'ui-agent-v6-theme-batch4\npayload_manifest_sha256=%s\nassets=16\nreadability_policy_default=null\n' "$(sha256sum < "$HERE/install_payload_v6.sha256" | cut -d ' ' -f1)" > "$STAGE/GCP/Agent/.install_v6_receipt"
+if [[ "$MODE" == check ]]; then echo 'CHECK: 6 patches staged; 16 assets verified; target GCP and handoff unchanged'; exit 0; fi
 # Two renames are recoverable on ordinary failures/signals, not power-loss atomic.
 # Preserve the original directory and handoff; never delete an old backup.
 mv -T -- "$UI/GCP" "$STAGE/original-GCP"
@@ -87,4 +87,4 @@ mv -T -- "$STAGE/GCP" "$UI/GCP"
 DOC_DONE=1
 mv -T -- "$STAGE/$DOC" "$UI/$DOC"
 MOVED=0
-echo 'Installed 14 Agent assets and 6 UI-copy patches. No build, model, service or application was started.'
+echo 'Installed 16 Agent assets and 6 UI-copy patches. No build, model, service or application was started.'

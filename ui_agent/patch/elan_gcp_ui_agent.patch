@@ -9,7 +9,7 @@ diff --git a/GCP/CMakeLists.txt b/GCP/CMakeLists.txt
 
  # 字型檔放在專案共用的 resources/gcp/fonts/（跟 resources/gcp/icons/ 同一層，
  # 不屬於 GCP/ 模組目錄），這裡明確指定 QT_RESOURCE_ALIAS，把它們打包成
-@@ -81,6 +82,20 @@
+@@ -81,6 +82,22 @@
      RESOURCE_PREFIX /qml
      QML_FILES
          GcpApplication.qml
@@ -23,6 +23,8 @@ diff --git a/GCP/CMakeLists.txt b/GCP/CMakeLists.txt
 +        Agent/GcpAgentSnapshot.js
 +        Agent/GcpAgentState.qml
 +        Agent/GcpAgentVerifier.js
++        Agent/GcpAgentStateMachine.js
++        Agent/GcpSlotLoop.js
 +        Agent/GcpAgentThemeColorMath.js
 +        Agent/GcpAgentThemePalette.js
 +        Agent/GcpAgentThemeHostPolicy.js

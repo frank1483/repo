@@ -6,6 +6,11 @@ const qml=fs.readFileSync(path.join(__dirname,'../qml/GcpAgentOverlay.qml'),'utf
 const clone=x=>JSON.parse(JSON.stringify(x)); let count=0;
 function test(name,fn){fn();++count;console.log('PASS '+name);}
 function extract(name){const start=qml.indexOf('    function '+name+'(');assert(start>=0,name);const end=qml.indexOf('\n    function ',start+1);return qml.slice(start,end<0?qml.length:end).split('\n    Timer {')[0];}
+// sm-v2: ordinary requests come from the state machine; a one-step fake session stands in for it.
+function fakeMachine(){let done=null;const call={state:'S4_PICK',repair:false,messages:[{role:'system',content:'fake'},{role:'user',content:''}],schema:{type:'object'},codes:['X']};
+ return {next(){return done?{type:'done',decision:done,trace:[],model_calls:1}:{type:'ask',call};},
+  answer(raw){done={decision:'SELECT',choice_id:'X',steps:[{choice_id:'X'}],source:'state_machine',raw};},
+  fail(reason){done={decision:'HOLD',choice_id:'',source:'rule_fallback',model_errors:[reason]};}};}
 function transport(kind='ordinary',opts={}) {
  let clock=1000;const xs=[],sent=[],results=[],errors=[];
  class XHR {constructor(){this.headers={};this.aborts=0;xs.push(this);}open(m,u){this.method=m;this.url=u;}setRequestHeader(k,v){this.headers[k]=v;}send(b){sent.push(JSON.parse(b));}abort(){++this.aborts;}}
@@ -19,13 +24,13 @@ function transport(kind='ordinary',opts={}) {
   Core:{decisionSchema:()=>({type:'object'}),SYSTEM_PROMPT:'fake',buildUserMessage:()=>'',extractJson:JSON.parse,
         validateModelDecision:d=>({ok:true,...d})},qsTr:s=>s};
  c.root=c;vm.createContext(c);vm.runInContext('String.prototype.arg=function(x){return this.replace(/%[1-9]/,String(x));}',c);
- const name=kind==='repair'?'callReadableRepair':kind==='theme'?'requestThemeModel':'callModel';
+ const name=kind==='repair'?'callReadableRepair':kind==='theme'?'requestThemeModel':'callMachine';
  vm.runInContext(extract(name),c);
  const request={goal:'map',candidates:[{id:'X'}],json_schema:{type:'object'},timeout_ms:20000,deadline_ms:opts.remaining===undefined?31000:opts.remaining};
  let cancel;
  if(kind==='repair') cancel=c.callReadableRepair(request,r=>results.push(clone(r)));
  else if(kind==='theme') c.requestThemeModel({id:1,group:'background',text:'blue'});
- else c.callModel({intent:'x',candidates:[{id:'X'}]}, {},r=>results.push(clone(r)));
+ else { const m=fakeMachine(); c.callMachine(m,m.next(),r=>results.push(clone(r))); }
  return {c,xs,sent,results,errors,timer,cancel,advance:ms=>clock+=ms,
   header(i=0){return Number(xs[i].headers['X-GCS-Deadline-Ms']);},
   respond(status,body,i=xs.length-1){const x=xs[i];x.status=status;x.responseText=typeof body==='string'?body:JSON.stringify(body);x.readyState=4;const fn=x.onreadystatechange;if(fn)fn();},

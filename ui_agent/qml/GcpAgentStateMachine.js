@@ -183,7 +183,9 @@ function create(core, options) {
                     return
                 }
                 // ---------------- S2 分類（規則先）：規則已確定就跳過模型
-                if (result.rule.final || result.generic_settings || result.rule.decision === "SELECT") {
+                // opts.always (GCS_AGENT_LLM_ALWAYS=1): a rule SELECT with candidates is still checked by the model in S4.
+                if (result.rule.final || result.generic_settings ||
+                    (result.rule.decision === "SELECT" && !(opts.always && result.candidates.length))) {
                     var d0 = copy(result.rule); d0.candidates = copy(result.candidates)
                     st.state = "S2"
                     finish(d0, "rule", "規則已確定")

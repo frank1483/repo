@@ -92,7 +92,7 @@ function transport(backend='openai') {
  class XHR {constructor(){this.aborts=0;this.headers={};xs.push(this);} open(method,url){this.method=method;this.url=url;}setRequestHeader(k,v){this.headers[k]=v;}send(body){sent.push(JSON.parse(body));}abort(){this.aborts++;}}
  XHR.DONE=4;
  const qml=fs.readFileSync(path.join(__dirname,'../qml/GcpAgentOverlay.qml'),'utf8');
- const start=qml.indexOf('    function callReadableRepair('),end=qml.indexOf('\n    function callModel(',start);
+ const start=qml.indexOf('    function callReadableRepair('),end=qml.indexOf('\n    function machineModel(',start);
  const context={backend,modelUrl:'http://127.0.0.1:8090/f/ui/v1',modelName:'fake',envValue:(_n,v)=>v,XMLHttpRequest:XHR};vm.createContext(context);vm.runInContext(qml.slice(start,end),context);
  const request={deadline_ms:32000,timeout_ms:20000,goal:'小地圖',failures:[],snapshot:{},expected:{},candidates:[{id:'REPAIR_MINIVIEW_MOVE_TL'}],json_schema:{type:'object'}};
  const cancel=context.callReadableRepair(request,r=>replies.push(clone(r)));

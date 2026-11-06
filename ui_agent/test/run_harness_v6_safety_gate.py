@@ -48,7 +48,7 @@ def main():
         "GcpAgentState.qml", "GcpAgentOverlay.qml", "GcpAgentThemeEditor.qml", "GcpAgentModule.qml",
         "GcpAgentCore.js", "GcpAgentSnapshot.js", "GcpAgentThemePalette.js", "GcpAgentThemeColorMath.js",
         "GcpAgentThemeHostPolicy.js", "GcpAgentHost.js", "GcpAgentLoop.js", "GcpAgentCatalog.js",
-        "GcpAgentVerifier.js", "GcpAgentReadableSession.js")
+        "GcpAgentVerifier.js", "GcpAgentReadableSession.js", "GcpAgentStateMachine.js", "GcpSlotLoop.js")
     pairs = [(HERE.parent / "qml" / name, agent / "qml" / name) for name in qml_names]
     pairs += [(HERE / "harness" / "GcpTheme.qml", module / "GcpTheme.qml"),
               (HERE / "harness" / "SafetyGateV6.qml", fixtures / "SafetyGateV6.qml")]

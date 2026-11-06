@@ -18,4 +18,4 @@ Place the fixture and the new evidence directory on a local Linux filesystem sup
 
 This version stages six patches and twelve assets, including theme math/palette, and patches formal ThemeColor.44 declared targets/25 checksum entries. Theme policy initially remains null pending trusted source/pairs. configureHostThemePolicy supplies the user-selected initial 20-degree hue distance and relativeAmount=0.03, both adjustable. See THEME_STATE_V6.md; the retained AI options draft is historical and superseded by CLAUDE-APP-0392. State handles grouped theme changes and saves theme groups with layouts. Picker/confirmation UI and full host pair policy remain pending; do not bypass State or report completed free-color UI.
 
-Batch4: 14 assets/27 payload entries. See THEME_BATCH4_V6.md for host inventory, picker, confirmation and unconnected model ingress limitations.
+Batch4: 14 assets/27 payload entries. sm-v2 (2026-11-06): +GcpAgentStateMachine.js and GcpSlotLoop.js → 16 assets/29 payload entries; the v6 one-shot model call is replaced by the state machine. See THEME_BATCH4_V6.md for host inventory, picker, confirmation and unconnected model ingress limitations.

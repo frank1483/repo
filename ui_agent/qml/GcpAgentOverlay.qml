@@ -7,6 +7,7 @@ import QtCore
 import QGroundControl.GCP
 
 import "GcpAgentCore.js" as Core
+import "GcpAgentStateMachine.js" as Machine
 import "GcpAgentHost.js" as ReadableHost
 import "GcpAgentCatalog.js" as ReadableCatalog
 import "GcpAgentLoop.js" as ReadableLoop
@@ -294,6 +295,7 @@ Item {
             else { pendingText = ""; _pending = null; messageText = readable.reason_zh }
             return
         }
+        const pendingBefore = pendingText
         let result = Core.analyzeTurn(text, ctx, pendingText)
         if (result.gate === "pre") {
             recordGate({gate:"pre",ok:false,intent:result.intent})
@@ -301,28 +303,27 @@ Item {
         if (!result.pending_intent) pendingText = ""
         _pending = result
         _t0 = Date.now()
-        const ask = modelEnabled && !result.rule.final && (Core.needsModel(result, modelAlways) || result.candidates.length === 0)
-        if (ask && result.candidates.length === 0) {
-            // 規則完全沒對到：把全部畫面當候選，讓模型用語意挑
-            result.candidates = Core.catalogCandidates(ctx)
-        }
-        if (ask && result.candidates.length) {
+        // sm-v2 state machine (shared slot-loop engine): rules first; the model fills one enum slot per
+        // call, repair once, then rule fallback. Replaces the v6 one-shot catalogue prompt (2026-11-06).
+        const machine = modelEnabled ? Machine.create(Core, { always: modelAlways }).start(text, ctx, pendingBefore) : null
+        const first = machine ? machine.next() : null
+        if (first && first.type === "ask") {
             busy = true
             statusText = qsTr("模型判斷中…")
             const generation = ++_modelGeneration
             const guard = { revision: GcpAgentState.revision, page: ctx.page, section: ctx.section }
-            callModel(result, ctx, function (model) {
+            callMachine(machine, first, function (model) {
                 if (generation !== _modelGeneration) return
                 busy = false
                 statusText = ""
                 if (!sameContext(guard)) {
                     _pending = null
-        _candidateScope = []
+                    _candidateScope = []
                     choices = []
                     messageText = qsTr("畫面已改變，請再說一次")
                     return
                 }
-                finish(result, model)
+                finish(result, machineModel(result, model))
             })
         } else {
             finish(result, null)
@@ -650,16 +651,38 @@ Item {
         return cancel
     }
 
-    function callModel(result, ctx, done) {
-        let xhr = null, finished = false, fallbackSent = false
+    // Turn the state machine's final decision into finish()'s model argument.
+    // state_machine decisions count as model decisions (their method-built candidates join the scope
+    // so both safety gates still check them); rule fallbacks keep the v6 "規則（模型無效）" path.
+    function machineModel(result, out) {
+        if (out.error_code === "TIMEOUT") return out
+        const d = out.decision || {}
+        const meta = { sm_version: Machine.VERSION, model_calls: out.model_calls, calls: out.calls, trace: out.trace,
+                       latency_ms: out.latency_ms, timeout_ms: out.timeout_ms, request_backend: out.request_backend,
+                       request_model: out.request_model, schema_fallback: out.schema_fallback }
+        if (d.source === "state_machine") {
+            const known = {}
+            result.candidates.forEach(c => { known[c.id] = true })
+            ;(d.candidates || []).forEach(c => { if (c && c.id && !known[c.id]) { result.candidates.push(c); known[c.id] = true } })
+            const m = Object.assign({ ok: true }, meta)
+            ;["decision", "choice_id", "steps", "reason_zh", "evidence_ids", "method"].forEach(k => { if (d[k] !== undefined) m[k] = d[k] })
+            return m
+        }
+        const errs = d.model_errors || []
+        return Object.assign({ ok: false, error: errs.length ? errs[errs.length - 1] : qsTr("模型未完成") }, meta)
+    }
+
+    // Drives one state-machine session over HTTP. One deadline (≤32 s) covers every step and retry.
+    function callMachine(machine, first, done) {
+        let xhr = null, finished = false, schemaFallback = false
         const t0 = Date.now(), requestBackend = backend
-        // Snapshot connection settings for the whole request, including any schema retry.
+        // Snapshot connection settings for the whole session, including repair and schema retry.
         const requestUrl = modelUrl.replace(/\/+$/, ""), requestModel = modelName
         const requestTimeoutMs = Math.min(modelTimeoutMs, 32000), requestKey = envValue("GCS_LLM_API_KEY", "")
         const requestDeadline = t0 + requestTimeoutMs
-        // Native Ollama always receives the candidate-bound schema. The env switch is OpenAI-only.
+        // Native Ollama always receives the one-slot enum schema. The env switch is OpenAI-only.
         const schemaOn = requestBackend === "ollama" || envValue("GCS_LLM_SCHEMA", "1") === "1"
-        const schema = Core.decisionSchema(result)
+        const calls = []
         function end(r) {
             if (finished) return
             finished = true
@@ -671,6 +694,8 @@ Item {
             r.timeout_ms = requestTimeoutMs
             r.request_backend = requestBackend
             r.request_model = requestModel
+            r.schema_fallback = schemaFallback
+            r.calls = calls
             done(r)
         }
         root._cancelModel = function () {
@@ -688,25 +713,38 @@ Item {
             if (active) active.abort()
         }
         timeoutTimer.interval = requestTimeoutMs
-        timeoutTimer.restart() // One deadline covers both attempts.
-        const messages = [{ role: "system", content: Core.SYSTEM_PROMPT },
-                          { role: "user", content: Core.buildUserMessage(result, ctx) }]
-        function send(useSchema) {
+        timeoutTimer.restart() // One deadline covers every step.
+        function step(s) {
+            if (finished) return
+            if (s.type === "done") { end({ decision: s.decision, trace: s.trace, model_calls: s.model_calls }); return }
+            send(s.call, schemaOn && !schemaFallback)
+        }
+        function answered(call, content, ms) {
+            calls.push({ state: call.state, repair: call.repair, ms: ms, raw: String(content).substring(0, 200) })
+            machine.answer(content)
+            step(machine.next())
+        }
+        function failed(call, reason, ms) {
+            calls.push({ state: call.state, repair: call.repair, ms: ms, error: reason })
+            machine.fail(reason)
+            step(machine.next())
+        }
+        function send(call, useSchema) {
             const remaining = Math.floor(requestDeadline - Date.now())
             if (remaining <= 0) { end({ok:false, error_code:"TIMEOUT", error:"deadline"}); return }
-            const current = new XMLHttpRequest()
+            const current = new XMLHttpRequest(), sentAt = Date.now()
             xhr = current
             let url, body
             if (requestBackend === "ollama") {
                 url = requestUrl + "/api/chat"
-                body = { model: requestModel, messages: messages, stream: false,
-                         format: schema, options: { temperature: 0 } }
+                body = { model: requestModel, messages: call.messages, stream: false,
+                         format: call.schema, options: { temperature: 0 } }
             } else {
                 url = requestUrl + "/chat/completions"
-                body = { model: requestModel, messages: messages, temperature: 0, max_tokens: 500 }
+                body = { model: requestModel, messages: call.messages, temperature: 0, max_tokens: 500 }
                 if (useSchema) body.response_format = { type: "json_schema",
-                    json_schema: { name: "gcp_ui_decision", strict: false, schema: schema } }
-                else if (fallbackSent || envValue("GCS_LLM_JSON_MODE", "1") === "1")
+                    json_schema: { name: "gcp_ui_slot", strict: false, schema: call.schema } }
+                else if (schemaFallback || envValue("GCS_LLM_JSON_MODE", "1") === "1")
                     body.response_format = { type: "json_object" }
             }
             current.onreadystatechange = function () {
@@ -714,21 +752,19 @@ Item {
                 if (Date.now() >= requestDeadline || current.status === 504) {
                     end({ok:false, error_code:"TIMEOUT", error:"deadline", raw:String(current.responseText || "")}); return
                 }
-                if (requestBackend !== "ollama" && useSchema && current.status === 400 && !fallbackSent) {
-                    fallbackSent = true
-                    send(false)
+                if (requestBackend !== "ollama" && useSchema && current.status === 400 && !schemaFallback) {
+                    schemaFallback = true
+                    send(call, false)
                     return
                 }
-                if (current.status < 200 || current.status >= 300) { end({ ok: false, error: "HTTP " + current.status }); return }
+                if (current.status < 200 || current.status >= 300) { failed(call, "HTTP " + current.status, Date.now() - sentAt); return }
                 let content = ""
                 try {
                     const j = JSON.parse(current.responseText)
                     content = requestBackend === "ollama" ? j.message.content : j.choices[0].message.content
-                } catch (e) { end({ ok: false, error: qsTr("回覆格式錯誤") }); return }
-                const v = Core.validateModelDecision(Core.extractJson(content), result)
-                v.raw = String(content).substring(0, 400)
-                v.schema_fallback = fallbackSent
-                end(v)
+                    if (typeof content !== "string") throw new Error("content")
+                } catch (e) { failed(call, qsTr("回覆格式錯誤"), Date.now() - sentAt); return }
+                answered(call, content, Date.now() - sentAt)
             }
             try {
                 current.open("POST", url)
@@ -738,9 +774,13 @@ Item {
                 current.setRequestHeader("X-GCS-Deadline-Ms", String(remainingAtSend))
                 if (requestKey) current.setRequestHeader("Authorization", "Bearer " + requestKey)
                 current.send(JSON.stringify(body))
-            } catch (e) { end({ ok: false, error: qsTr("無法建立模型請求") }); current.abort() }
+            } catch (e) {
+                if (xhr === current) xhr = null
+                current.abort()
+                failed(call, qsTr("無法建立模型請求"), Date.now() - sentAt)
+            }
         }
-        send(schemaOn)
+        step(first)
     }
 
     Timer {
