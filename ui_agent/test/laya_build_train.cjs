@@ -76,6 +76,18 @@ const write = (name, arr) => fs.writeFileSync(path.join(out, name), arr.map(x =>
 write('train.jsonl', built.filter(x => !isVal(x.id)));
 write('val.jsonl', built.filter(x => isVal(x.id)));
 write('rejected.jsonl', rejected);
+// Literal-name check: does the sentence contain the target's catalog name or an alias (v2 asks >= 50% unnamed).
+function targetNames(id) {
+  let m = id.match(/^NAV_(\d+)(?:_(\d+))?$/);
+  if (m) { const p = C.PAGES.filter(x => x.page === +m[1])[0], out = [p.name].concat(p.aliases || []);
+    if (m[2] !== undefined) { const sct = C.SECTIONS.filter(x => x.page === +m[1] && x.section === +m[2])[0]; out.push(sct.name, ...(sct.aliases || [])); }
+    return out; }
+  m = id.match(/^LAY_([A-Za-z]+)_/);
+  if (m) { const mo = C.MODULES.filter(x => x.id === m[1])[0]; return [mo.name].concat(mo.aliases || []); }
+  return null;
+}
+const literal = r => { if (r.expect.decision !== 'SELECT') return null; const n = targetNames(r.expect.ids[0]); if (!n) return null;
+  const t = r.intent.toLowerCase(); return n.some(a => a && t.indexOf(String(a).toLowerCase().replace(/（.*?）/g, '')) >= 0); };
 const count = (arr, f) => arr.reduce((a, x) => (a[f(x)] = (a[f(x)] || 0) + 1, a), {});
 const report = {version: 'laya-build-1', inputs: list.split(',').map(f => ({file: path.basename(f), sha256: sha(fs.readFileSync(f))})),
   kept: rows.length, rejected: rejected.length, rejected_by_reason: count(rejected, x => x.why.replace(/ [A-Z]{3}[0-9A-Z-]*$/, '').replace(/of .*$/, 'of …')),
@@ -83,6 +95,10 @@ const report = {version: 'laya-build-1', inputs: list.split(',').map(f => ({file
   by_lang: count(rows, x => x.r.lang), by_decision: count(rows, x => x.r.expect.decision), by_kind: count(rows, x => x.gp[0]),
   by_page: count(rows, x => x.r.ctx.page), slots_per_row: count(built, x => Object.keys(x.questions).length),
   near_threshold_vs_heldout: NEAR, files: {}};
+const nameable = rows.filter(x => literal(x.r) !== null);
+report.literal_named = {checked: nameable.length, named: nameable.filter(x => literal(x.r)).length,
+  by_lang: count(nameable.filter(x => literal(x.r)), x => x.r.lang), checked_by_lang: count(nameable, x => x.r.lang),
+  label_mismatch: nameable.filter(x => typeof x.r.named === 'boolean' && x.r.named !== literal(x.r)).length};
 for (const f of ['train.jsonl', 'val.jsonl', 'rejected.jsonl']) report.files[f] = sha(fs.readFileSync(path.join(out, f)));
 fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 1));
 console.log(JSON.stringify({kept: report.kept, rejected: report.rejected, train: report.train, val: report.val, by_lang: report.by_lang, by_decision: report.by_decision}));
