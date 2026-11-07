@@ -1,7 +1,7 @@
 'use strict';
 // Turns Codex's synthetic sentences into Laya fine-tuning files. No network, no model.
 //   node laya_build_train.cjs OUT_DIR codex_file1.jsonl[,codex_file2.jsonl...]
-// Input row (one per line): {id, lang:"zh"|"en"|"mix", style, template_group?, intent, ctx:{page,section,canUndo,canRedo,textScale}, expect:{decision, ids}}
+// Input row (one per line): {id, lang:"zh"|"en"|"mix", style, template_group?, split?:"train"|"valid", named?, intent, ctx:{page,section,canUndo,canRedo,textScale}, expect:{decision, ids}}
 // Output OUT_DIR/:
 //   train.jsonl, val.jsonl   {state, questions, gold} rows for laya.train.finetune (one row per sentence,
 //                            questions = the gold path's slots only, same wording as inference)
@@ -11,8 +11,8 @@
 // inside the batch, and the same against BOTH held-out files (sm_heldout_v1 dev, sm_heldout_v2 test).
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const S = require('./semantic_scoring'), C = require('./load_core'), L = require('./laya_slots.cjs');
-const [out, list] = process.argv.slice(2);
-if (!out || !list) throw Error('usage: OUT_DIR codex1.jsonl[,codex2.jsonl]');
+const [out, list, lexPath] = process.argv.slice(2);
+if (!out || !list) throw Error('usage: OUT_DIR codex1.jsonl[,codex2.jsonl] [lexicon_v2.json]');
 if (fs.existsSync(out)) throw Error('OUT_DIR exists; one build per new directory');
 fs.mkdirSync(out, {recursive: true});
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
@@ -70,7 +70,10 @@ function lavaRow(x) {
 // Deterministic split: by template_group when Codex gives one (a template never sits on both sides),
 // otherwise by id. Hash-based, so it does not depend on file order.
 const groupOf = new Map(rows.map(x => [x.r.id, x.r.template_group ? 'g|' + x.r.template_group : 'id|' + x.r.id]));
-const isVal = id => parseInt(sha('val|' + groupOf.get(id)).slice(0, 8), 16) / 0xffffffff < VAL_FRAC;
+// A row's own split ("train" | "valid", v2 data) wins over the hash, so valid-only descriptions stay in val.
+const splitOf = new Map(rows.map(x => [x.r.id, x.r.split]));
+const isVal = id => splitOf.get(id) === 'valid' ? true : splitOf.get(id) === 'train' ? false :
+  parseInt(sha('val|' + groupOf.get(id)).slice(0, 8), 16) / 0xffffffff < VAL_FRAC;
 const built = rows.map(lavaRow);
 const write = (name, arr) => fs.writeFileSync(path.join(out, name), arr.map(x => JSON.stringify(x)).join('\n') + (arr.length ? '\n' : ''));
 write('train.jsonl', built.filter(x => !isVal(x.id)));
@@ -95,6 +98,16 @@ const report = {version: 'laya-build-1', inputs: list.split(',').map(f => ({file
   by_lang: count(rows, x => x.r.lang), by_decision: count(rows, x => x.r.expect.decision), by_kind: count(rows, x => x.gp[0]),
   by_page: count(rows, x => x.r.ctx.page), slots_per_row: count(built, x => Object.keys(x.questions).length),
   near_threshold_vs_heldout: NEAR, files: {}};
+// v2: no valid_only lexicon description may appear in a train row (NFKC, case-fold, no whitespace).
+if (lexPath) {
+  const nf = t => String(t).normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+  const lex = JSON.parse(fs.readFileSync(lexPath, 'utf8'));
+  const vo = lex.entries.flatMap(e => e.descriptions.filter(d => d.split === 'valid_only').map(d => nf(d.text)));
+  const trainRows = rows.filter(x => !isVal(x.r.id));
+  const leaks = trainRows.filter(x => vo.some(v => nf(x.r.intent).indexOf(v) >= 0)).map(x => x.r.id);
+  report.lexicon = {file: path.basename(lexPath), sha256: sha(fs.readFileSync(lexPath)), valid_only_descriptions: vo.length,
+    valid_only_in_train: leaks.length, examples: leaks.slice(0, 10)};
+}
 const nameable = rows.filter(x => literal(x.r) !== null);
 report.literal_named = {checked: nameable.length, named: nameable.filter(x => literal(x.r)).length,
   by_lang: count(nameable.filter(x => literal(x.r)), x => x.r.lang), checked_by_lang: count(nameable, x => x.r.lang),
