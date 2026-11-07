@@ -1,8 +1,8 @@
 """typed P1/P2/P3 編排的 LLM 說明入口（MVP，契約 v0.3 第 6 節）。
 
 分級一律由演算法先出：告警事件立刻用規則文字顯示，模型說明之後非同步補上。
-模型只能寫兩句說明與引用依據；typed 編排目前沒有可執行候選（candidates 為空），
-所以 selected_id 必須是 null。回覆抵達時告警版本不同就丟棄，不覆蓋新狀態。
+模型不寫句子，只在共用迴圈裡選「主要依據」與「操作建議」的代碼，句子由程式用範本寫；
+typed 編排目前沒有可執行候選（candidates 為空），所以 selected_id 必須是 null。回覆抵達時告警版本不同就丟棄，不覆蓋新狀態。
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from gcs_demo import llm
 from .core import contract
 from .display import landing_pct_text
 from .explain import ALERTS_TIMEOUT_S, get_backend
+from .slot_explain import ADVICE, GENERIC_ADVICE, SYSTEM_PROMPT as SLOT_SYSTEM, AlertSlots, run as slot_run
 
 MAX_SENTENCE_CHARS = 60
 
@@ -37,20 +38,6 @@ EVIDENCE_LABELS = {
     "soc_overestimate_pct": ("飛控剩餘量可能高估", "%"),
 }
 _RATIO_KEYS = {"capacity_ratio"}   # 0–1 比值，顯示成百分比
-
-SYSTEM_TYPED = (
-    "你是無人機地面站的告警助理。告警等級已由演算法決定，你不能更改，也不能提出新的處置動作。"
-    "只能使用 facts 裡的事實與數字，不可自行計算、換算或四捨五入。"
-    "allowed_ids 為空時 selected_id 必須是 null。"
-    "回覆只輸出 JSON：{\"alert_version\":\"照抄 facts 的 alert_version\",\"selected_id\":null,"
-    "\"sentences\":[\"第一句說明發生什麼\",\"第二句說明操作員該注意什麼\"],\"evidence_ids\":[\"E1\"]}。"
-    f"sentences 剛好兩句，每句不超過 {MAX_SENTENCE_CHARS} 字。evidence_ids 必須非空且每一項都存在。"
-    "一律使用台灣繁體中文，不寫出內部欄位名稱，不可寫「一定」「保證」「絕對」等沒有依據的斷言。"
-)
-
-SCHEMA_TYPED = {"required": {"alert_version": "str", "selected_id": "any",
-                             "sentences": "list", "evidence_ids": "list"}}
-
 
 def _fmt(key, value):
     if isinstance(value, bool) or value is None:
@@ -132,10 +119,9 @@ def validate(d, view, current=None) -> str | None:
 
 
 def explain_typed(view: dict, backend=None, timeout_s=ALERTS_TIMEOUT_S) -> dict:
-    """同步呼叫一次模型；任何失敗都回規則文字。給 AsyncExplainer 在背景執行。"""
+    """範本句＋模型選格（slot_explain）；任何失敗都回規則文字。給 AsyncExplainer 在背景執行。"""
     rule = rule_text(view)
-    user = json.dumps(_facts(view), ensure_ascii=False, allow_nan=False)
-    log = {"backend": "?", "model": None, "prompt_sha256": llm.prompt_hash(SYSTEM_TYPED, user),
+    log = {"backend": "?", "model": None, "prompt_sha256": None,
            "ok": False, "latency_s": None, "error": None, "raw": ""}
 
     def fallback(reason):
@@ -144,15 +130,21 @@ def explain_typed(view: dict, backend=None, timeout_s=ALERTS_TIMEOUT_S) -> dict:
     try:
         backend = backend or get_backend()
         log.update(backend=getattr(backend, "name", "?"), model=getattr(backend, "model", None))
-        res = backend.complete_json(SYSTEM_TYPED, user, SCHEMA_TYPED, timeout_s=timeout_s)
-        log.update(ok=res["ok"], latency_s=res.get("latency_s"), error=res.get("error"),
-                   raw=(res.get("raw") or "")[:800])
-        if res["ok"] is not True:
-            return fallback(res.get("error") or "後端未成功")
-        reason = validate(res["data"], view)
+        facts = _facts(view)
+        lib = AlertSlots(level_zh=view["severity_zh"], title=view["title_zh"], evidence=facts["evidence"],
+                         allowed=[], labels={}, advice=ADVICE.get(view.get("predictor"), GENERIC_ADVICE),
+                         check=lambda out: validate(out, view), alert_version=view["alert_version"], rule=rule)
+        data, loop = slot_run(lib, backend, timeout_s)
+        log.update(loop)
+        if loop["prompts"]:
+            log["prompt_sha256"] = llm.prompt_hash(SLOT_SYSTEM, loop["prompts"][-1])
+        if data is None:
+            return fallback(loop["error"] or "模型選格失敗")
+        reason = validate(data, view)
         if reason:
             return fallback(reason)
-        return {"text": dict(res["data"]), "source": "llm", "fallback_reason": None, "llm": log}
+        log["ok"] = True
+        return {"text": data, "source": "llm", "fallback_reason": None, "llm": log}
     except Exception as exc:
         log.update(ok=False, error=f"{type(exc).__name__}: {exc}")
         return fallback(log["error"])

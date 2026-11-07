@@ -2,6 +2,7 @@
 import unittest
 
 from . import explain, sim
+from .slot_test_helpers import SlotBackend
 from .test_v5_explain_fixtures import event, answer
 from .energy_api import Wind, default_vehicle, leg_energy, rtl_energy
 from .predict import linfit
@@ -51,14 +52,15 @@ class EnergyTests(unittest.TestCase):
 class ExplainTests(unittest.TestCase):
     def test_valid_llm_choice_kept(self):
         # review_0305 第 8 項後，引用必須全部存在：混合 [E1,E9] 改為退回規則（原斷言保留 E1 已作廢）
-        d = answer(EV, "C4", ["C4 預估落地 40.0%。", "請操作員評估返航。"])
-        r = explain.explain(EV, FakeBackend(d))
-        self.assertEqual(r["source"], "llm")
+        # 範本句＋選格：模型選 C4，依據 E1（屬於 C4 的落地電量），句子由程式寫
+        r = explain.explain(EV, SlotBackend(lambda cs, user: "C4" if "C4" in cs else cs[0]))
+        self.assertEqual(r["source"], "llm", r["fallback_reason"])
         self.assertEqual(r["text"]["choice_id"], "C4")
         self.assertEqual(r["text"]["evidence_ids"], ["E1"])
+        self.assertIn("C4 預估落地 40.0%", r["text"]["sentences"][0])
         self.assertFalse(r["text"]["rule_agrees"])
-        mixed = explain.explain(EV, FakeBackend(dict(d, evidence_ids=["E1", "E9"])))
-        self.assertEqual(mixed["source"], "rule")
+        d = answer(EV, "C4", ["C4 預估落地 40.0%。", "請操作員評估返航。"])
+        self.assertIsNotNone(explain.validate(dict(d, evidence_ids=["E1", "E9"]), EV))
 
     def test_infeasible_choice_falls_back(self):
         d = answer(EV, "C1")
@@ -66,16 +68,17 @@ class ExplainTests(unittest.TestCase):
         self.assertEqual((r["source"], r["text"]["choice_id"]), ("rule", "C3"))
 
     def test_unknown_id_and_made_up_number_fall_back(self):
-        d = answer(EV, "C9", evidence_ids=[])
-        self.assertEqual(explain.explain(EV, FakeBackend(d))["source"], "rule")
+        r = explain.explain(EV, SlotBackend(raw='{"value":"C9"}'))   # 不在清單：修正一次仍錯 → 規則
+        self.assertEqual(r["source"], "rule")
+        self.assertIn("C9", r["fallback_reason"])
         d = answer(EV, "C3", ["C3 落地 63%。", "請注意。"])
-        self.assertIn("63", explain.explain(EV, FakeBackend(d))["fallback_reason"])
+        self.assertIn("63", explain.validate(d, EV))
 
     def test_simplified_or_field_names_fall_back(self):
         d = answer(EV, "C3", ["电量不足以完成原航线，建议返航。", "請注意。"])
-        self.assertEqual(explain.explain(EV, FakeBackend(d))["fallback_reason"], "說明用了簡體字")
+        self.assertEqual(explain.validate(d, EV), "說明用了簡體字")
         d["sentences"] = ["建議返航。", "missed_required 為 0"]
-        self.assertEqual(explain.explain(EV, FakeBackend(d))["fallback_reason"], "說明寫出內部欄位名稱")
+        self.assertEqual(explain.validate(d, EV), "說明寫出內部欄位名稱")
 
     def test_backend_down_still_alerts(self):
         r = explain.explain(EV, FakeBackend(None, ok=False))

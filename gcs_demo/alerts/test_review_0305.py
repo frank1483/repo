@@ -6,6 +6,7 @@ import math
 import unittest
 
 from . import explain
+from .slot_test_helpers import SlotBackend
 from .test_v5_explain_fixtures import event, answer
 from .energy_api import Wind, default_vehicle
 from .predict import Config, Finding, PredictiveAlertEngine, Telemetry
@@ -167,7 +168,10 @@ class Hysteresis(unittest.TestCase):               # 審查第 7 項（pending�
 
 class ExplainContract(unittest.TestCase):          # 審查第 8、9 項
     def fb(self, **kw):
-        return explain.explain(EV, FakeBackend(ok_answer(**kw)))
+        # 範本句＋選格後模型不寫句子：成功路徑走選格假後端；不合規的回答改由同一個驗證器直接檢查
+        if not kw:
+            return explain.explain(EV, SlotBackend())
+        return {"source": "rule" if explain.validate(ok_answer(**kw), EV) else "llm"}
 
     def test_valid_answer_passes(self):
         self.assertEqual(self.fb()["source"], "llm")

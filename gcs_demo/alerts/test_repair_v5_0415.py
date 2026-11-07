@@ -11,6 +11,7 @@ from .energy_api import Wind
 from .predict import Telemetry
 from .test_explain_v5_wiring import event, Backend
 from .test_v5_explain_fixtures import answer
+from .slot_test_helpers import SlotBackend
 from .test_predict_v5_0411 import engine, finding
 
 
@@ -88,7 +89,7 @@ class Pending0415(unittest.TestCase):
     def test_application_rejection_settles_rule_and_still_returns_no_model(self):
         ev = event()
         state = {"active": True, "alert_version": "v1", "feasible_ids": ["C1"]}
-        worker = tx.LegacyAlertExplainer(Backend(answer(ev, "C1")), current_state=lambda key: state)
+        worker = tx.LegacyAlertExplainer(SlotBackend(), current_state=lambda key: state)
         pending = worker(ev)
         worker.close(True)
         state["feasible_ids"] = []

@@ -143,7 +143,7 @@ class ExplainExtra(unittest.TestCase):
         backend = type("BadBackend", (), {"complete_json": lambda *a, **k: {"ok": True}})()
         result = explain.explain(EV, backend)
         self.assertEqual(result["source"], "rule")
-        self.assertIn("KeyError", result["fallback_reason"])
+        self.assertTrue(result["fallback_reason"])   # 選格後端沒有回覆內容 → 退回規則
 
 
 if __name__ == "__main__":

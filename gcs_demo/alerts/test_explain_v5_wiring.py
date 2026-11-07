@@ -6,6 +6,7 @@ from unittest.mock import patch
 from . import explain, typed_explain as tx
 from .core import contract
 from .test_v5_explain_fixtures import answer
+from .slot_test_helpers import SlotBackend
 
 
 def event():
@@ -69,7 +70,7 @@ class V5ExplanationWiringTests(unittest.TestCase):
     def test_legacy_unstructured_facts_are_not_guessed(self):
         ev = event()
         ev["evidence"] = [{"id": "E1", "text": "落地", "value": "15.0%"}]
-        self.assertEqual(explain.explain(ev, Backend(answer(ev, "C1")))["source"], "rule")
+        self.assertEqual(explain.explain(ev, SlotBackend())["source"], "rule")
 
     def test_old_model_schema_cannot_pass(self):
         ev = event()
@@ -79,7 +80,7 @@ class V5ExplanationWiringTests(unittest.TestCase):
 
     def test_legacy_success_retains_locally_derived_display_aliases(self):
         ev = event()
-        result = explain.explain(ev, Backend(answer(ev, "C1")))
+        result = explain.explain(ev, SlotBackend())
         self.assertEqual(result["source"], "llm", result["fallback_reason"])
         self.assertEqual(result["text"]["choice_id"], "C1")
 
@@ -129,7 +130,7 @@ class V5ExplanationWiringTests(unittest.TestCase):
     def test_legacy_application_rechecks_current_feasibility(self):
         ev = event()
         state = {"active": True, "alert_version": "v1", "feasible_ids": ["C1"]}
-        worker = tx.LegacyAlertExplainer(Backend(answer(ev, "C1")), current_state=lambda key: state)
+        worker = tx.LegacyAlertExplainer(SlotBackend(), current_state=lambda key: state)
         worker(ev)
         worker.close(wait=True)
         state["feasible_ids"] = []
@@ -138,7 +139,7 @@ class V5ExplanationWiringTests(unittest.TestCase):
 
     def test_application_missing_current_state_fails_closed(self):
         ev = event()
-        worker = tx.LegacyAlertExplainer(Backend(answer(ev, "C1")), current_state=lambda key: None)
+        worker = tx.LegacyAlertExplainer(SlotBackend(), current_state=lambda key: None)
         worker(ev)
         worker.close(wait=True)
         self.assertEqual(worker.poll(), [])

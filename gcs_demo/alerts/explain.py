@@ -1,6 +1,6 @@
-"""LLM 說明層：只引用已提供的事實與可行候選；失敗時仍輸出規則說明。
-
-模型使用 v5 固定格式；無允許選項時選擇為 null，緊急備選只在規則文字顯示。
+"""LLM 說明層：範本句＋模型選格（slot_explain）。模型只選處置、依據與建議句的代碼，
+句子由程式寫，再經 v5 驗證器；失敗時仍輸出規則說明。無允許選項時選擇為 null，
+緊急備選只在規則文字顯示。
 """
 from __future__ import annotations
 
@@ -13,19 +13,8 @@ from .core import contract
 from .display import landing_pct_text
 
 from gcs_demo import llm
-
-SYSTEM_ZH = (
-    "你是無人機地面站的告警助理。等級、允許集合與數字均由規則決定，不可更改。"
-    "只能從 allowed_ids 選 selected_id；集合為空時必須 null，不得把緊急備選當推薦。"
-    "alert_version 的值與型別必須照抄 facts。"
-    "每個數字須原樣引用 evidence 中同一 option_id、metric 的 value 與 unit，並引用其依據ID。"
-    "回覆只輸出 JSON：{\"alert_version\":\"照抄 facts\",\"selected_id\":null,"
-    "\"sentences\":[\"第一句\",\"第二句\"],\"evidence_ids\":[\"E1\"]}。"
-    "正好兩句、各不超過60字、不空白，使用台灣繁體中文，不寫內部欄位名稱或無依據斷言。"
-)
-SCHEMA = {"required": {"alert_version": "any", "selected_id": "any",
-                       "sentences": "list", "evidence_ids": "list"}}
-
+from .slot_explain import (ADVICE, GENERIC_ADVICE, LEGACY_GROUP, SEVERITY_ZH, SYSTEM_PROMPT,
+                           AlertSlots, run as slot_run)
 
 # MVP（契約 v0.3）：告警預設經共用閘道接模型；設 GCS_LLM_BACKEND 時照環境變數（none 可關閉）
 ALERTS_GATEWAY_URL = "http://127.0.0.1:8090/f/alerts/v1"
@@ -100,8 +89,21 @@ def rule_text(ev: dict) -> dict:
             "evidence_ids": [e["id"] for e in ev.get("evidence", [])][:2], "summary_zh": s}
 
 
+def _slots(ev, rule):
+    """範本句＋模型選格的方法庫（slot_explain）。依據只用 v5 綁定欄位齊全的列。"""
+    facts = _facts(ev)
+    state = current_state(ev)
+    allowed = [x for x in facts["allowed_ids"] if x in state["feasible_ids"]]
+    labels = {c["id"]: c.get("label", c["id"]) for c in ev.get("candidates", [])}
+    group = LEGACY_GROUP.get(ev.get("key"))
+    return AlertSlots(level_zh=SEVERITY_ZH.get(ev.get("severity"), "注意"), title=ev.get("title") or "告警",
+                      evidence=[e for e in facts["evidence"] if isinstance(e, dict) and "metric" in e],
+                      allowed=allowed, labels=labels, advice=ADVICE.get(group, GENERIC_ADVICE),
+                      check=lambda out: validate(out, ev), alert_version=facts["alert_version"], rule=rule)
+
+
 def explain(ev: dict, backend=None, timeout_s=ALERTS_TIMEOUT_S) -> dict:
-    """先建規則結果；後端建立、呼叫、解碼、驗證例外都退回規則。"""
+    """先建規則結果；模型只在共用迴圈裡選格，句子由程式寫。任何失敗都退回規則。"""
     rule = rule_text(ev)
     log = {"backend": "?", "model": None, "prompt_sha256": None, "ok": False,
            "latency_s": None, "error": None, "raw": ""}
@@ -112,25 +114,19 @@ def explain(ev: dict, backend=None, timeout_s=ALERTS_TIMEOUT_S) -> dict:
     try:
         if not ev.get("candidates"):
             return fallback("沒有候選，保留 HOLD")
-        user = json.dumps(_facts(ev), ensure_ascii=False, allow_nan=False)
-        log["prompt_sha256"] = llm.prompt_hash(SYSTEM_ZH, user)
         if backend is None:
             backend = get_backend()
         log.update(backend=getattr(backend, "name", "?"), model=getattr(backend, "model", None))
-        res = backend.complete_json(SYSTEM_ZH, user, SCHEMA, timeout_s=timeout_s)
-        latency = float(res["latency_s"])
-        if not math.isfinite(latency):
-            raise ValueError("後端 latency_s 非有限數值")
-        log.update(ok=res["ok"], latency_s=round(latency, 2), error=res["error"],
-                   raw=(res.get("raw") or "")[:800])
-        if res["ok"] is not True:
-            return fallback(res["error"] or "後端未成功")
-        data = res["data"]
-        if isinstance(data, str):
-            data = json.loads(data)
+        data, loop = slot_run(_slots(ev, rule), backend, timeout_s)
+        log.update(loop)
+        if loop["prompts"]:
+            log["prompt_sha256"] = llm.prompt_hash(SYSTEM_PROMPT, loop["prompts"][-1])
+        if data is None:
+            return fallback(loop["error"] or "模型選格失敗")
         reason = validate(data, ev)
         if reason:
             return fallback(reason)
+        log["ok"] = True
         d = _display(data)
         d["rule_agrees"] = d["selected_id"] == rule["selected_id"]
         return {"text": d, "source": "llm", "fallback_reason": None, "llm": log}

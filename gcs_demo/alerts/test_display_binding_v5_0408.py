@@ -4,6 +4,7 @@ import unittest
 
 from .core import contract
 from . import typed_explain as tx
+from .slot_test_helpers import SlotBackend
 
 
 def view_for(predictor, values):
@@ -28,16 +29,9 @@ class DisplayBindingTests(unittest.TestCase):
         self.assertIsNone(tx.validate(tx.rule_text(self.view), self.view))
 
     def test_display_reply_is_used_through_model_adapter_without_network(self):
-        reply = self.reply("預估落地電量（中值）低於 0%（短缺 1.0%）。")
-
-        class StubBackend:
-            name, model = "fixture", "fixture"
-
-            def complete_json(self, *args, **kwargs):
-                return {"ok": True, "data": reply, "raw": "", "latency_s": 0, "error": None}
-
-        result = tx.explain_typed(self.view, StubBackend())
+        result = tx.explain_typed(self.view, SlotBackend())
         self.assertEqual(result["source"], "llm", result["fallback_reason"])
+        self.assertIn("低於 0%（短缺 1.0%）", result["text"]["sentences"][0])
 
     def test_isolated_zero_wrong_shortage_and_partial_display_are_rejected(self):
         for value in ("0%", "短缺 1.0%", "低於 0%（短缺 2.0%）",

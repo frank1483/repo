@@ -1,0 +1,3404 @@
+{
+ "engine": "slot-loop-1",
+ "note": "frozen expected outputs; do not regenerate in place",
+ "vectors": [
+  {
+   "name": "two_slots_ok",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "{\"value\":\"NAV\"}",
+    "{\"value\":\"P1\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "SELECT",
+     "choice_id": "NAV_1",
+     "source": "state_machine",
+     "model_errors": []
+    },
+    "model_calls": 2,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"NAV\"}",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "NAV",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"P1\"}",
+      "repair": false,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "P1",
+      "state": "B"
+     },
+     {
+      "event": "done",
+      "decision": "SELECT",
+      "ids": [],
+      "source": "state_machine",
+      "why": "nav",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     false
+    ]
+   }
+  },
+  {
+   "name": "bad_json_then_repair",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "我覺得是換頁",
+    "{\"value\":\"NAV\"}",
+    "{\"value\":\"P1\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "SELECT",
+     "choice_id": "NAV_1",
+     "source": "state_machine",
+     "model_errors": [
+      "回覆不是 JSON 物件"
+     ]
+    },
+    "model_calls": 3,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "我覺得是換頁",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "invalid",
+      "why": "回覆不是 JSON 物件",
+      "raw": "我覺得是換頁",
+      "state": "A"
+     },
+     {
+      "event": "repair_requested",
+      "why": "回覆不是 JSON 物件",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"NAV\"}",
+      "repair": true,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "NAV",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"P1\"}",
+      "repair": false,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "P1",
+      "state": "B"
+     },
+     {
+      "event": "done",
+      "decision": "SELECT",
+      "ids": [],
+      "source": "state_machine",
+      "why": "nav",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n上次錯誤：回覆不是 JSON 物件。請只從清單重選一個代碼。\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     true,
+     false
+    ]
+   }
+  },
+  {
+   "name": "repair_twice_falls_back",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "nope",
+    "{\"value\":\"X\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定",
+     "source": "rule_fallback",
+     "model_errors": [
+      "回覆不是 JSON 物件",
+      "回答「X」不在可選清單內"
+     ]
+    },
+    "model_calls": 2,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "nope",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "invalid",
+      "why": "回覆不是 JSON 物件",
+      "raw": "nope",
+      "state": "A"
+     },
+     {
+      "event": "repair_requested",
+      "why": "回覆不是 JSON 物件",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"X\"}",
+      "repair": true,
+      "state": "A"
+     },
+     {
+      "event": "invalid",
+      "why": "回答「X」不在可選清單內",
+      "raw": "{\"value\":\"X\"}",
+      "state": "A"
+     },
+     {
+      "event": "done",
+      "decision": "HOLD",
+      "ids": [],
+      "source": "rule_fallback",
+      "why": "修正一次後仍無效：回答「X」不在可選清單內",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n上次錯誤：回覆不是 JSON 物件。請只從清單重選一個代碼。\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     true
+    ]
+   }
+  },
+  {
+   "name": "extra_key_invalid",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "{\"value\":\"NAV\",\"why\":\"x\"}",
+    "{\"value\":\"NAV\"}",
+    "{\"value\":\"P1\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "SELECT",
+     "choice_id": "NAV_1",
+     "source": "state_machine",
+     "model_errors": [
+      "只能有 value 一個欄位"
+     ]
+    },
+    "model_calls": 3,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"NAV\",\"why\":\"x\"}",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "invalid",
+      "why": "只能有 value 一個欄位",
+      "raw": "{\"value\":\"NAV\",\"why\":\"x\"}",
+      "state": "A"
+     },
+     {
+      "event": "repair_requested",
+      "why": "只能有 value 一個欄位",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"NAV\"}",
+      "repair": true,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "NAV",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"P1\"}",
+      "repair": false,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "P1",
+      "state": "B"
+     },
+     {
+      "event": "done",
+      "decision": "SELECT",
+      "ids": [],
+      "source": "state_machine",
+      "why": "nav",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n上次錯誤：只能有 value 一個欄位。請只從清單重選一個代碼。\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     true,
+     false
+    ]
+   }
+  },
+  {
+   "name": "non_string_value",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "{\"value\":3}",
+    "{\"value\":\"UNKNOWN\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定",
+     "source": "rule_fallback",
+     "model_errors": [
+      "value 必須是字串"
+     ]
+    },
+    "model_calls": 2,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":3}",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "invalid",
+      "why": "value 必須是字串",
+      "raw": "{\"value\":3}",
+      "state": "A"
+     },
+     {
+      "event": "repair_requested",
+      "why": "value 必須是字串",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"UNKNOWN\"}",
+      "repair": true,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "UNKNOWN",
+      "state": "A"
+     },
+     {
+      "event": "done",
+      "decision": "HOLD",
+      "ids": [],
+      "source": "rule_fallback",
+      "why": "分類：不知道",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n上次錯誤：value 必須是字串。請只從清單重選一個代碼。\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     true
+    ]
+   }
+  },
+  {
+   "name": "precondition_problem_then_ok",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "{\"value\":\"NAV\"}",
+    "{\"value\":\"P2\"}",
+    "{\"value\":\"P1\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "SELECT",
+     "choice_id": "NAV_1",
+     "source": "state_machine",
+     "model_errors": [
+      "已經在設定頁"
+     ]
+    },
+    "model_calls": 3,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"NAV\"}",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "NAV",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"P2\"}",
+      "repair": false,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "P2",
+      "state": "B"
+     },
+     {
+      "event": "invalid",
+      "why": "已經在設定頁",
+      "raw": "P2",
+      "state": "B"
+     },
+     {
+      "event": "repair_requested",
+      "why": "已經在設定頁",
+      "state": "B"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"P1\"}",
+      "repair": true,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "P1",
+      "state": "B"
+     },
+     {
+      "event": "done",
+      "decision": "SELECT",
+      "ids": [],
+      "source": "state_machine",
+      "why": "nav",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n上次錯誤：已經在設定頁。請只從清單重選一個代碼。\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     false,
+     true
+    ]
+   }
+  },
+  {
+   "name": "precondition_twice",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "{\"value\":\"NAV\"}",
+    "{\"value\":\"P2\"}",
+    "{\"value\":\"P2\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定",
+     "source": "rule_fallback",
+     "model_errors": [
+      "已經在設定頁",
+      "已經在設定頁"
+     ]
+    },
+    "model_calls": 3,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"NAV\"}",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "NAV",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"P2\"}",
+      "repair": false,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "P2",
+      "state": "B"
+     },
+     {
+      "event": "invalid",
+      "why": "已經在設定頁",
+      "raw": "P2",
+      "state": "B"
+     },
+     {
+      "event": "repair_requested",
+      "why": "已經在設定頁",
+      "state": "B"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"P2\"}",
+      "repair": true,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "P2",
+      "state": "B"
+     },
+     {
+      "event": "invalid",
+      "why": "已經在設定頁",
+      "raw": "P2",
+      "state": "B"
+     },
+     {
+      "event": "done",
+      "decision": "HOLD",
+      "ids": [],
+      "source": "rule_fallback",
+      "why": "修正一次後仍無效：已經在設定頁",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n上次錯誤：已經在設定頁。請只從清單重選一個代碼。\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     false,
+     true
+    ]
+   }
+  },
+  {
+   "name": "transport_fail_then_ok",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    null,
+    "{\"value\":\"NAV\"}",
+    "{\"value\":\"P1\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "SELECT",
+     "choice_id": "NAV_1",
+     "source": "state_machine",
+     "model_errors": [
+      "模型未回覆：no model"
+     ]
+    },
+    "model_calls": 3,
+    "trace": [
+     {
+      "event": "invalid",
+      "why": "模型未回覆：no model",
+      "raw": "",
+      "state": "A"
+     },
+     {
+      "event": "repair_requested",
+      "why": "模型未回覆：no model",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"NAV\"}",
+      "repair": true,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "NAV",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"P1\"}",
+      "repair": false,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "P1",
+      "state": "B"
+     },
+     {
+      "event": "done",
+      "decision": "SELECT",
+      "ids": [],
+      "source": "state_machine",
+      "why": "nav",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n上次錯誤：模型未回覆：no model。請只從清單重選一個代碼。\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     true,
+     false
+    ]
+   }
+  },
+  {
+   "name": "transport_fail_twice",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    null,
+    null
+   ],
+   "expect": {
+    "decision": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定",
+     "source": "rule_fallback",
+     "model_errors": [
+      "模型未回覆：no model",
+      "模型未回覆：no model"
+     ]
+    },
+    "model_calls": 2,
+    "trace": [
+     {
+      "event": "invalid",
+      "why": "模型未回覆：no model",
+      "raw": "",
+      "state": "A"
+     },
+     {
+      "event": "repair_requested",
+      "why": "模型未回覆：no model",
+      "state": "A"
+     },
+     {
+      "event": "invalid",
+      "why": "模型未回覆：no model",
+      "raw": "",
+      "state": "A"
+     },
+     {
+      "event": "done",
+      "decision": "HOLD",
+      "ids": [],
+      "source": "rule_fallback",
+      "why": "修正一次後仍無效：模型未回覆：no model",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n上次錯誤：模型未回覆：no model。請只從清單重選一個代碼。\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     true
+    ]
+   }
+  },
+  {
+   "name": "escalate",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "{\"value\":\"NAV\"}",
+    "{\"value\":\"UNKNOWN\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "CLARIFY",
+     "choice_id": "",
+     "reason_zh": "請說明要去哪個畫面",
+     "source": "state_machine",
+     "model_errors": []
+    },
+    "model_calls": 2,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"NAV\"}",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "NAV",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"UNKNOWN\"}",
+      "repair": false,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "UNKNOWN",
+      "state": "B"
+     },
+     {
+      "event": "done",
+      "decision": "CLARIFY",
+      "ids": [],
+      "source": "state_machine",
+      "why": "請說明要去哪個畫面",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     false
+    ]
+   }
+  },
+  {
+   "name": "rule_with_source",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "{\"value\":\"LAYOUT\"}",
+    "{\"value\":\"CAM\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定",
+     "source": "state_machine",
+     "model_errors": []
+    },
+    "model_calls": 2,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"LAYOUT\"}",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "LAYOUT",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"CAM\"}",
+      "repair": false,
+      "state": "C"
+     },
+     {
+      "event": "filled",
+      "value": "CAM",
+      "state": "C"
+     },
+     {
+      "event": "done",
+      "decision": "HOLD",
+      "ids": [],
+      "source": "rule_fallback",
+      "why": "退回",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：C\n已知：類別=LAYOUT\n觀察：規則找不到\n要填：哪個模組\n只能選：MAP 地圖｜CAM 相機\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "MAP",
+      "CAM"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     false
+    ]
+   }
+  },
+  {
+   "name": "call_cap_reached",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": 3,
+    "modelEnabled": null
+   },
+   "replies": [
+    "{\"value\":\"LAYOUT\"}",
+    "bad",
+    "{\"value\":\"MAP\"}",
+    "{\"value\":\"UP\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定",
+     "source": "rule_fallback",
+     "model_errors": [
+      "回覆不是 JSON 物件"
+     ]
+    },
+    "model_calls": 3,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"LAYOUT\"}",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "LAYOUT",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "bad",
+      "repair": false,
+      "state": "C"
+     },
+     {
+      "event": "invalid",
+      "why": "回覆不是 JSON 物件",
+      "raw": "bad",
+      "state": "C"
+     },
+     {
+      "event": "repair_requested",
+      "why": "回覆不是 JSON 物件",
+      "state": "C"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"MAP\"}",
+      "repair": true,
+      "state": "C"
+     },
+     {
+      "event": "filled",
+      "value": "MAP",
+      "state": "C"
+     },
+     {
+      "event": "done",
+      "decision": "HOLD",
+      "ids": [],
+      "source": "rule_fallback",
+      "why": "模型呼叫已達上限",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：C\n已知：類別=LAYOUT\n觀察：規則找不到\n要填：哪個模組\n只能選：MAP 地圖｜CAM 相機\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：C\n已知：類別=LAYOUT\n觀察：規則找不到\n要填：哪個模組\n只能選：MAP 地圖｜CAM 相機\n上次錯誤：回覆不是 JSON 物件。請只從清單重選一個代碼。\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "MAP",
+      "CAM"
+     ],
+     [
+      "MAP",
+      "CAM"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     false,
+     true
+    ]
+   }
+  },
+  {
+   "name": "cap_after_chain",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": 2,
+    "modelEnabled": null
+   },
+   "replies": [
+    "{\"value\":\"LAYOUT\"}",
+    "{\"value\":\"MAP\"}",
+    "{\"value\":\"UP\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定",
+     "source": "rule_fallback",
+     "model_errors": []
+    },
+    "model_calls": 2,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"LAYOUT\"}",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "LAYOUT",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"MAP\"}",
+      "repair": false,
+      "state": "C"
+     },
+     {
+      "event": "filled",
+      "value": "MAP",
+      "state": "C"
+     },
+     {
+      "event": "done",
+      "decision": "HOLD",
+      "ids": [],
+      "source": "rule_fallback",
+      "why": "模型呼叫已達上限",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：C\n已知：類別=LAYOUT\n觀察：規則找不到\n要填：哪個模組\n只能選：MAP 地圖｜CAM 相機\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "MAP",
+      "CAM"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     false
+    ]
+   }
+  },
+  {
+   "name": "model_disabled",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": false
+   },
+   "replies": [],
+   "expect": {
+    "decision": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定",
+     "source": "rule",
+     "model_errors": []
+    },
+    "model_calls": 0,
+    "trace": [
+     {
+      "event": "done",
+      "decision": "HOLD",
+      "ids": [],
+      "source": "rule_fallback",
+      "why": "模型未啟用",
+      "state": "END"
+     }
+    ],
+    "prompts": [],
+    "codes": [],
+    "repair_flags": []
+   }
+  },
+  {
+   "name": "begin_finishes",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "finish": {
+      "decision": "HOLD",
+      "choice_id": "",
+      "reason_zh": "安全閘"
+     },
+     "source": "rule",
+     "why": "安全閘擋下"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [],
+   "expect": {
+    "decision": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "安全閘",
+     "source": "rule",
+     "model_errors": []
+    },
+    "model_calls": 0,
+    "trace": [
+     {
+      "event": "done",
+      "decision": "HOLD",
+      "ids": [],
+      "source": "rule",
+      "why": "安全閘擋下",
+      "state": "END"
+     }
+    ],
+    "prompts": [],
+    "codes": [],
+    "repair_flags": []
+   }
+  },
+  {
+   "name": "json_in_prose",
+   "spec": {
+    "goal": "幫我把地圖放大",
+    "header": [
+     "句子：幫我把地圖放大"
+    ],
+    "rule": {
+     "decision": "HOLD",
+     "choice_id": "",
+     "reason_zh": "規則：不確定"
+    },
+    "start": {
+     "go": "A",
+     "obs": "規則找不到"
+    },
+    "states": {
+     "A": {
+      "need": "哪一類",
+      "allowed": [
+       [
+        "NAV",
+        "換頁"
+       ],
+       [
+        "LAYOUT",
+        "版面"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "NAV": {
+        "go": "B",
+        "obs": "分類為 NAV",
+        "set": {
+         "kind": "NAV"
+        }
+       },
+       "LAYOUT": {
+        "go": "C",
+        "set": {
+         "kind": "LAYOUT"
+        }
+       },
+       "UNKNOWN": {
+        "rule": "分類：不知道"
+       }
+      }
+     },
+     "B": {
+      "need": "哪個畫面",
+      "allowed": [
+       [
+        "P1",
+        "地圖"
+       ],
+       [
+        "P2",
+        "設定"
+       ],
+       [
+        "UNKNOWN",
+        "不知道"
+       ]
+      ],
+      "on": {
+       "P1": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "NAV_1"
+        },
+        "source": "state_machine",
+        "why": "nav"
+       },
+       "P2": {
+        "problem": "已經在設定頁"
+       },
+       "UNKNOWN": {
+        "escalate": "請說明要去哪個畫面"
+       }
+      }
+     },
+     "C": {
+      "need": "哪個模組",
+      "allowed": [
+       [
+        "MAP",
+        "地圖"
+       ],
+       [
+        "CAM",
+        "相機"
+       ]
+      ],
+      "on": {
+       "MAP": {
+        "go": "D"
+       },
+       "CAM": {
+        "rule": "退回",
+        "source": "state_machine"
+       }
+      }
+     },
+     "D": {
+      "need": "做什麼",
+      "allowed": [
+       [
+        "UP",
+        "放大"
+       ],
+       [
+        "DOWN",
+        "縮小"
+       ]
+      ],
+      "on": {
+       "UP": {
+        "finish": {
+         "decision": "SELECT",
+         "choice_id": "LAY_MAP_UP"
+        },
+        "source": "state_machine",
+        "why": "layout"
+       },
+       "DOWN": {
+        "problem": "倍率不允許"
+       }
+      }
+     }
+    }
+   },
+   "config": {
+    "maxCalls": null,
+    "modelEnabled": null
+   },
+   "replies": [
+    "好的 {\"value\":\"NAV\"} 謝謝",
+    "{\"value\":\"P1\"}"
+   ],
+   "expect": {
+    "decision": {
+     "decision": "SELECT",
+     "choice_id": "NAV_1",
+     "source": "state_machine",
+     "model_errors": []
+    },
+    "model_calls": 2,
+    "trace": [
+     {
+      "event": "model_reply",
+      "raw": "好的 {\"value\":\"NAV\"} 謝謝",
+      "repair": false,
+      "state": "A"
+     },
+     {
+      "event": "filled",
+      "value": "NAV",
+      "state": "A"
+     },
+     {
+      "event": "model_reply",
+      "raw": "{\"value\":\"P1\"}",
+      "repair": false,
+      "state": "B"
+     },
+     {
+      "event": "filled",
+      "value": "P1",
+      "state": "B"
+     },
+     {
+      "event": "done",
+      "decision": "SELECT",
+      "ids": [],
+      "source": "state_machine",
+      "why": "nav",
+      "state": "END"
+     }
+    ],
+    "prompts": [
+     "句子：幫我把地圖放大\n目前步驟：A\n觀察：規則找不到\n要填：哪一類\n只能選：NAV 換頁｜LAYOUT 版面｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}",
+     "句子：幫我把地圖放大\n目前步驟：B\n已知：類別=NAV\n觀察：分類為 NAV\n要填：哪個畫面\n只能選：P1 地圖｜P2 設定｜UNKNOWN 不知道\n只輸出 JSON：{\"value\":\"代碼\"}"
+    ],
+    "codes": [
+     [
+      "NAV",
+      "LAYOUT",
+      "UNKNOWN"
+     ],
+     [
+      "P1",
+      "P2",
+      "UNKNOWN"
+     ]
+    ],
+    "repair_flags": [
+     false,
+     false
+    ]
+   }
+  }
+ ]
+}
