@@ -20,7 +20,7 @@ def finding(key="battery_route"):
                               "value": "25.0%", "unit": "%", "segment": "route",
                               "relation": "estimate"}],
                    candidates=[{"id": "C1", "label": "返航", "action": "A_RTL_NOW",
-                                "feasible": True}], rule_choice="C1")
+                                "feasible": True, "end_pct_raw": 25.0}], rule_choice="C1")
 
 
 def engine():

@@ -51,6 +51,9 @@ class Config:
     reserve_pct: float = 20.0
     wind_limit_mps: float = 12.0
     link_min_pct: float = 35.0
+    # 第一階段假設門檻，待回放敏感度驗證。
+    link_warn_enter_s: float = 120.0
+    link_warn_exit_s: float = 150.0
     cell_r_ohm: float = 0.004         # 單芯內阻（電壓補償用）
     cell_empty_v: float = 3.55        # 補償後單芯電壓到這裡視為 0%
     raise_ticks: int = 3              # 連續成立幾次才發
@@ -506,7 +509,14 @@ class PredictiveAlertEngine:
             if q < self.cfg.link_min_pct:
                 wp = self._orig(tm.next_wp + i - 1)
                 f.active = True
-                f.severity = SEV_WARNING if t_cum < 120 else SEV_NOTICE
+                # The committed alert level owns hysteresis; the core still
+                # requires ten continuous seconds before a downgrade commits.
+                state = self._states.states.get(f.key)
+                was_warning = (state is not None and state.active
+                               and state.severity <= SEV_WARNING)
+                warn = (t_cum <= self.cfg.link_warn_enter_s
+                        or (was_warning and t_cum <= self.cfg.link_warn_exit_s))
+                f.severity = SEV_WARNING if warn else SEV_NOTICE
                 f.title = "航線前方可能斷訊"
                 f.value = f"WP{wp + 1}（離家 {d / 1000:.2f} km）預估鏈路 {max(0, q):.0f}%，約 {t_cum / 60:.1f} 分鐘後"
                 f.lead_s = t_cum
@@ -714,6 +724,22 @@ class PredictiveAlertEngine:
                 for c in row.get("candidates", [])) else "HOLD"
         return rows
 
+    def _recommendation_eligible(self, candidate, retained=False):
+        """Joint feasibility is necessary; new energy advice also needs +2%.
+
+        Option energy qualification is shared with PNR/route calculations and
+        deliberately remains unchanged. Recommendation entry is per alert, so
+        an option qualified long ago cannot enter a new recommendation at 21%.
+        Monitoring/estimation advice carries no landing estimate.
+        """
+        if candidate.get("feasible") is not True:
+            return False
+        if candidate.get("action") in ("A_CONTINUE_MONITOR", "A_USE_VOLTAGE_ESTIMATE"):
+            return True
+        raw = candidate.get("end_pct_raw")
+        return (self._finite(raw)
+                and raw >= self.cfg.reserve_pct + (0.0 if retained else 2.0))
+
     def _debounce(self, t, f: Finding):
         """Contract v5 seconds, cooling, downgrade and recommendation timing.
 
@@ -727,11 +753,19 @@ class PredictiveAlertEngine:
         payload = f if f.active or previous is None else previous
         facts = self._state_facts(self._event(t, "update", payload))
         facts["route_version"] = self._route_revision
-        selected = next((c for c in f.candidates if c["id"] == f.rule_choice), None)
+        retained = state.recommendation if state is not None and state.active else None
+        eligible = [c for c in f.candidates if self._recommendation_eligible(
+            c, retained=retained is not None and self._recommendation_key(c) == retained)]
+        selected = next((c for c in eligible if c["id"] == f.rule_choice), None)
+        if selected is None and eligible:
+            # Re-rank genuinely eligible alternatives; never hide a 23% option
+            # behind the old rank winner that now needs 22% to enter.
+            choice = self._rule_pick(eligible, self.cfg.emergency_rtl_min_pct)
+            selected = next((c for c in eligible if c["id"] == choice), None)
         recommendation = self._recommendation_key(selected) if selected else None
         rows = self._states.step(
             f.key, t, TRUE if f.active else FALSE, f.severity, recommendation,
-            {self._recommendation_key(c) for c in f.candidates if c.get("feasible") is True},
+            {self._recommendation_key(c) for c in eligible},
             max_gap_s=10.0 if f.key == "wind_trend" else 3.0,
             **facts)
         return self._sync_state(f.key, payload, rows)

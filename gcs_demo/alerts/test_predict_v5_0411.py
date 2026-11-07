@@ -16,7 +16,9 @@ def engine():
 
 def finding(active=True, severity=4, choice="C1", feasible=("C1", "C4")):
     return Finding("battery_route", active, severity=severity, title="電量",
-                   candidates=[{"id": c, "feasible": c in feasible}
+                   candidates=[{"id": c, "feasible": c in feasible,
+                                "end_pct_raw": 30.0,
+                                "action": "A_CONTINUE" if c == "C1" else "A_RTL_NOW"}
                                for c in ("C1", "C4")], rule_choice=choice)
 
 
