@@ -43,9 +43,12 @@ class Round2Extra(unittest.TestCase):
             eng.update(telemetry(t=i, wind=15))
         bad = telemetry(t=4)
         bad.cell_count = 0
-        self.assertEqual(eng.update(bad), [])
+        events = eng.update(bad)
+        self.assertFalse(any(e["key"] == "wind_trend" and e["type"] == "resolve" for e in events))
+        self.assertEqual(eng.last_state["predictor_readiness"]["wind_trend"]["status"], "ready")
+        self.assertEqual(eng.last_state["predictor_readiness"]["battery_capacity"]["status"], "unknown")
         self.assertIn("wind_trend", eng.active())
-        self.assertEqual(eng.last_state["data_status"], "insufficient")
+        self.assertEqual(eng.last_state["data_status"], "partial")
 
     def test_real_candidate_rounding_and_active_threshold(self):
         eng = engine()

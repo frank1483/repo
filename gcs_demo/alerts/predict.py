@@ -22,6 +22,7 @@ from copy import deepcopy
 from .display import landing_pct_text
 from .core.state_machine import AlertEngine
 from .core.freshness import TRUE, FALSE, UNKNOWN
+from .core.source_inputs import SourceInputs
 
 from .energy_api import (Vehicle, Wind, air_power_w, leg_energy, rtl_energy,
                          with_calib, profile_limits)
@@ -124,6 +125,8 @@ class PredictiveAlertEngine:
         self._pending_choice: dict[str, tuple] = {}
         self._wind_trend = (0.0, 0.0)            # (每秒變化, R²)
         self.last_state: dict = {}
+        self._source_seen = {}
+        self._source_available = None
 
     def set_route(self, route, indices=None):
         """操作員改了航線。indices＝新航線每點在原航線的索引（省略則視為原航線前段）。
@@ -194,40 +197,67 @@ class PredictiveAlertEngine:
         except (TypeError, ValueError, OverflowError):
             return False
 
-    def _input_error(self, tm):
-        """先檢核完整快照；壞資料不寫入歷史、不宣告恢復正常。"""
+    @staticmethod
+    def new_source_inputs(ttl=None):
+        """Scalar legacy fields; companion TTLs inherit their owning source.
+
+        position/velocity/next_wp are separate samples, as are voltage,
+        cell_count and used_wh. Callers may explicitly override every TTL.
+        update_sources consumes these values, never an unrelated snapshot.
+        """
+        configured = dict(ttl or {})
+        defaults = SourceInputs(configured).freshness.ttl
+        for name, owner in (("velocity", "position"), ("next_wp", "position"),
+                            ("cell_count", "voltage"), ("used_wh", "voltage")):
+            configured.setdefault(name, defaults[owner])
+        return SourceInputs(configured)
+
+    def _source_valid(self, name, value):
         try:
-            if not isinstance(tm, Telemetry):
-                return "遙測須為 Telemetry 快照"
-            if len(tm.pos) != 3 or len(tm.vel) != 3:
-                return "位置／速度須為三維"
-            values = [tm.t, *tm.pos, *tm.vel, tm.soc_pct, tm.voltage, tm.current_a,
-                      tm.used_wh, tm.cell_count, tm.next_wp, tm.link_pct,
-                      tm.wind.speed_mps, tm.wind.from_deg]
-            values += [v for k, v in vars(self.v).items() if k not in ("vehicle_id", "airframe_profile")]  # 機型檔由 load_airframe 驗證
+            if name in ("position", "velocity"):
+                return len(value) == 3 and all(self._finite(x) for x in value)
+            if name == "wind":
+                return (isinstance(value, Wind) and self._finite(value.speed_mps)
+                        and value.speed_mps >= 0 and self._finite(value.from_deg))
+            if not self._finite(value):
+                return False
+            if name in ("fc_pct", "link"):
+                return 0 <= value <= 100
+            if name == "voltage":
+                return value > 0
+            if name == "cell_count":
+                return value > 0 and value == int(value)
+            if name == "used_wh":
+                return value >= 0
+            if name == "next_wp":
+                return value == int(value) and 0 <= value <= len(self.route)
+            return True  # current is already A; MAVLink ingestion is separate
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False
+
+    def _input_error(self):
+        """Shared configuration only; telemetry errors belong to each source."""
+        try:
+            values = [v for k, v in vars(self.v).items()
+                      if k not in ("vehicle_id", "airframe_profile")]
             values += list(vars(self.cfg).values()) + [self.calib, *self.home]
             if not all(self._finite(x) for x in values):
-                return "遙測／機型／設定含非有限數值"
-            if (tm.cell_count <= 0 or tm.cell_count != int(tm.cell_count)
-                    or self.v.battery_wh <= 0 or self.v.eta <= 0 or self.v.cruise_mps <= 0
+                return "機型／設定含非有限數值"
+            if (self.v.battery_wh <= 0 or self.v.eta <= 0 or self.v.cruise_mps <= 0
                     or self.calib <= 0 or self.v.calib <= 0):
-                return "芯數、容量、效率、速度與校正係數須為正值"
-            if (tm.next_wp != int(tm.next_wp) or not 0 <= tm.soc_pct <= 100
-                    or not 0 <= tm.link_pct <= 100 or tm.voltage <= 0
-                    or tm.used_wh < 0 or tm.wind.speed_mps < 0):
-                return "遙測超出有效範圍"
+                return "容量、效率、速度與校正係數須為正值"
             if (self.cfg.wind_limit_mps <= 0 or self.cfg.horizon_s < 0
                     or not 0 <= self.cfg.reserve_pct <= 100
                     or not 0 <= self.cfg.emergency_rtl_min_pct <= 100):
                 return "告警設定超出有效範圍"
             if (len(self.home) != 3 or len(self.route_idx) != len(self.route)
-                    or any(len(p) != 3 or not all(self._finite(x) for x in p) for p in self.route)
+                    or any(len(q) != 3 or not all(self._finite(x) for x in q) for q in self.route)
                     or any(not isinstance(k, int) or isinstance(k, bool)
                            or not 0 <= k < self.total_wps for k in self.route_idx)
                     or (self.prio is not None and len(self.prio) != self.total_wps)):
                 return "航線／原索引／優先級不一致"
         except (AttributeError, TypeError, ValueError, OverflowError):
-            return "遙測／機型／航線格式不符"
+            return "機型／航線格式不符"
         return None
 
     def _validate_next_wp(self, tm):
@@ -590,25 +620,116 @@ class PredictiveAlertEngine:
 
     # ---------- 主流程 ----------
     def update(self, tm: Telemetry) -> list[dict]:
-        """吃一筆遙測，回傳這一刻的告警事件（raise / update / resolve）。"""
-        if isinstance(tm, Telemetry):
-            tm = self._validate_next_wp(tm)
-        if isinstance(tm, Telemetry) and self._finite(tm.t):
-            if self._last_tm_t is not None and tm.t <= self._last_tm_t:
-                return []  # duplicate/out-of-order snapshots never mutate histories
-            self._last_tm_t = tm.t
-        error = self._input_error(tm)
-        self.last_state.update({"data_status": "insufficient" if error else "ok", "input_error": error,
-                                "predictor_errors": {}, "end_pct": None, "pnr_wp": None,
-                                "pnr_eta_s": None,
-                                "rem_s": self.last_state.get("rem_s", 0.0) if not error and self.route else 0.0,
-                                "capacity_ratio": None, "avail_wh": None})
+        """Compatibility adapter: an explicit synchronous sample per field.
+
+        Telemetry.current_a is already amperes, NOT a MAVLink raw integer.
+        Asynchronous feeds should use new_source_inputs / update_sources and
+        put_mavlink_current for SYS_STATUS / BATTERY_STATUS raw current.
+        """
+        if not isinstance(tm, Telemetry):
+            return []
+        tm = self._validate_next_wp(tm)  # reject before any state mutation
+        if not self._finite(tm.t):
+            return []
+        if self._last_tm_t is not None and tm.t <= self._last_tm_t:
+            return []
+        sources = self.new_source_inputs()
+        values = {"position": tm.pos, "velocity": tm.vel, "next_wp": tm.next_wp,
+                  "fc_pct": tm.soc_pct, "voltage": tm.voltage,
+                  "current": tm.current_a, "used_wh": tm.used_wh,
+                  "cell_count": tm.cell_count, "link": tm.link_pct, "wind": tm.wind}
+        for name, value in values.items():
+            sources.put(name, value, tm.t, tm.t, valid=self._source_valid(name, value),
+                        invalid_reason="invalid_value")
+        return self.update_sources(sources, tm.t)
+
+    def update_sources(self, sources: SourceInputs, now: float) -> list[dict]:
+        """Consume independently timed source values in one monotonic domain.
+
+        No source is refreshed by merely calling this method. Unknown / stale
+        values are never substituted with a snapshot field or a normal value.
+        """
+        if not isinstance(sources, SourceInputs) or not self._finite(now):
+            raise ValueError("SourceInputs and finite monotonic now required")
+        names = ("position", "velocity", "next_wp", "fc_pct", "voltage",
+                 "current", "used_wh", "cell_count", "link", "wind")
+        rows = {name: sources.status(name, now) for name in names}
+        # A fresh cursor must satisfy the same fail-before-mutation contract.
+        cursor = rows["next_wp"]
+        if cursor["status"] == "ready" and not self._source_valid("next_wp", cursor["value"]):
+            raise ValueError("next_wp must be an integer in [0, len(route)]")
+        if self._last_tm_t is not None and now <= self._last_tm_t:
+            return []
+        for name, row in rows.items():
+            if row["status"] == "ready" and not self._source_valid(name, row["value"]):
+                row.update(status="unknown", reason="invalid_value")
+        def ready(required):
+            return all(rows[name]["status"] == "ready" for name in required)
+        energy = ("fc_pct", "voltage", "current", "used_wh", "cell_count")
+        geometry = ("position", "next_wp")
+        dependencies = {"battery_route": energy + geometry,
+                        "rtl_point": energy + geometry,
+                        "battery_capacity": energy,
+                        "link_route": geometry + ("link", "wind"), "wind_trend": ("wind",)}
+        readiness = {key: {"status": "ready" if ready(required) else "unknown",
+                           "unknown_sources": [n for n in required if rows[n]["status"] != "ready"]}
+                     for key, required in dependencies.items()}
+        values = {name: row["value"] if row["status"] == "ready" else None
+                  for name, row in rows.items()}
+        if values["next_wp"] is not None:
+            values["next_wp"] = int(values["next_wp"])
+        tm = Telemetry(now, values["position"], values["velocity"], values["fc_pct"],
+                       values["voltage"], values["current"], values["used_wh"],
+                       values["cell_count"], values["next_wp"], values["link"], values["wind"])
+        self._last_tm_t = now
+        error = self._input_error()
+        available_count = sum(row["status"] == "ready" for row in readiness.values())
+        previous_metrics = dict(self.last_state)
+        self.last_state.update({"data_status": "insufficient" if error or not available_count
+                                else "ok" if available_count == len(readiness) else "partial",
+                                "input_error": error, "predictor_errors": {},
+                                "source_status": {name: {k: v for k, v in row.items() if k != "value"}
+                                                  for name, row in rows.items()},
+                                "predictor_readiness": readiness,
+                                "end_pct": None, "pnr_wp": None, "pnr_eta_s": None,
+                                # _plan_wind consumes the PREVIOUS valid route duration
+                                # before _battery_route computes this assessment's walk.
+                                # Resetting every fresh sample silently disables trend
+                                # extrapolation and delays battery/PNR warnings (0450).
+                                "rem_s": (previous_metrics.get("rem_s", 0.0)
+                                          if not error and self.route
+                                          and readiness["battery_route"]["status"] == "ready"
+                                          else 0.0),
+                                "capacity_ratio": None, "avail_wh": None,
+                                "basis": None})
+        self.last_state["wind_included"] = ready(("wind",))
+        # Contract 2.2: energy still computes explicitly WITHOUT wind. This is
+        # a model input only, never a fresh source or a measured calm wind.
+        if not ready(("wind",)):
+            tm = replace(tm, wind=Wind(0.0, 0.0))
         if error:
-            self._pending_choice.clear()       # 資料缺口不算建議連續成立
+            self._pending_choice.clear()
             self._streak.clear()
-            return (self._unknown_all(tm.t) if isinstance(tm, Telemetry)
-                    and self._finite(tm.t) else [])
-        self._reached.update(self.route_idx[:tm.next_wp])
+            return self._unknown_all(now)
+        if ready(("position", "next_wp")):
+            self._reached.update(self.route_idx[:int(tm.next_wp)])
+        def new_sample(key, required):
+            if not ready(required):
+                self._source_seen.pop(key, None)
+                return False
+            stamp = (max(rows[n]["sensed_t"] for n in required),
+                     max(rows[n]["recv_t"] for n in required))
+            previous = self._source_seen.get(key)
+            if previous is not None and (stamp[0] <= previous[0] or stamp[1] <= previous[1]):
+                return False
+            self._source_seen[key] = stamp
+            return True
+        fresh = {key: new_sample(key, required) for key, required in dependencies.items()}
+        for key, metrics in (("battery_route", ("end_pct", "pnr_wp", "pnr_eta_s", "rem_s")),
+                             ("battery_capacity", ("capacity_ratio",))):
+            if readiness[key]["status"] == "ready" and not fresh[key]:
+                for metric in metrics:
+                    self.last_state[metric] = previous_metrics.get(metric)
 
         def attempt(key, fn):
             try:
@@ -629,11 +750,20 @@ class PredictiveAlertEngine:
                 self.calib = before
                 raise
 
-        attempt("calibration", calibrate)
-        wind_f = attempt("wind_trend", lambda: self._wind(tm))  # 先算趨勢，P1/P2 要用
-        if wind_f is None:
+        if new_sample("calibration", ("position", "velocity", "voltage", "current", "wind")):
+            attempt("calibration", calibrate)
+        if not ready(("wind",)):
+            self._wind_hist.clear()
+        wind_f = attempt("wind_trend", lambda: self._wind(replace(tm, t=rows["wind"]["sensed_t"]))) if fresh["wind_trend"] else None
+        if not ready(("wind",)) or (fresh["wind_trend"] and wind_f is None):
             self._wind_trend = (0.0, 0.0)
-        available = attempt("available_energy", lambda: self._available_wh(tm))
+        if not ready(energy):
+            self._cell_hist.clear()
+            self._source_available = None
+        if new_sample("available_energy", energy):
+            self._source_available = attempt("available_energy", lambda: self._available_wh(
+                replace(tm, t=max(rows[n]["sensed_t"] for n in energy))))
+        available = self._source_available
         findings = []
         avail = None
         if available is not None:
@@ -643,27 +773,47 @@ class PredictiveAlertEngine:
                 avail = None
             else:
                 self.last_state.update(avail_wh=avail, basis=basis, calib=self.calib)
-                if self.route:
+                if self.route and fresh["battery_route"]:
+                    before_options = dict(self._option_energy_ok)
                     battery = attempt("battery_route", lambda: self._battery_route(tm, avail, basis, cap))
+                    if not ready(("wind",)):
+                        self._option_energy_ok = before_options  # unmodelled wind cannot qualify options
                     if battery is not None:
                         findings.extend(battery)
                     else:
                         self.last_state.update(end_pct=None, pnr_wp=None, pnr_eta_s=None, rem_s=0.0)
-                capacity = attempt("battery_capacity", lambda: self._battery_capacity(tm, avail, cap))
+                capacity = (attempt("battery_capacity", lambda: self._battery_capacity(tm, avail, cap))
+                            if fresh["battery_capacity"] else None)
                 if capacity is not None:
                     findings.append(capacity)
-        link_f = attempt("link_route", lambda: self._link(tm))
+        if not ready(dependencies["link_route"]):
+            self._link_hist.clear()
+        link_f = (attempt("link_route", lambda: self._link(tm))
+                  if fresh["link_route"] else None)
         findings.extend(f for f in (link_f, wind_f) if f is not None)
         # P4/P5 的返航建議亦須有能量證據；監控/估計類選項不代表飛行操作可行。
         for f in (link_f, wind_f):
             if f is not None and f.active:
-                attempt(f.key, lambda f=f: self._assess_advisory(f, tm, avail))
+                if ready(geometry + ("wind",)) and avail is not None:
+                    attempt(f.key, lambda f=f: self._assess_advisory(f, tm, avail))
                 pick = next((c for c in f.candidates if c["id"] == f.rule_choice), None)
                 if pick is None or pick.get("feasible") is not True:
                     f.rule_choice = self._rule_pick(f.candidates, self.cfg.emergency_rtl_min_pct)
+        if not ready(("wind",)):
+            for finding in findings:
+                if finding.key not in ("battery_route", "rtl_point"):
+                    continue
+                finding.value += "（能量預測未含風）"
+                for candidate in finding.candidates:
+                    if candidate.get("action") not in ("A_USE_VOLTAGE_ESTIMATE", "A_CONTINUE_MONITOR"):
+                        candidate.update(feasible=False, energy_feasible=None,
+                                         operational_status="unknown", wind_included=False)
+                finding.rule_choice = self._rule_pick(finding.candidates, self.cfg.emergency_rtl_min_pct)
         events = []
         seen = {f.key for f in findings}
         for key in ("battery_route", "rtl_point", "battery_capacity", "link_route", "wind_trend"):
+            if readiness[key]["status"] == "ready" and not fresh[key]:
+                continue  # no new sample: do not manufacture a TRUE/FALSE/UNKNOWN tick
             if key not in seen:               # 預測器缺資料／例外不跨缺口累積遲滯
                 self._pending_choice.pop(key, None)
                 self._streak.pop(key, None)
@@ -671,7 +821,9 @@ class PredictiveAlertEngine:
         if self.last_state["predictor_errors"]:
             self.last_state["data_status"] = "partial"
         for f in findings:
-            events.extend(self._debounce(tm.t, f))
+            sensed_t, recv_t = self._source_seen[f.key]
+            events.extend(self._debounce(tm.t, f, sensed_t=sensed_t, recv_t=recv_t,
+                                        max_gap_s=min(rows[n]["ttl_s"] for n in dependencies[f.key])))
         return events
 
     def _assess_advisory(self, f, tm, avail):
@@ -754,11 +906,12 @@ class PredictiveAlertEngine:
         return (self._finite(raw)
                 and raw >= self.cfg.reserve_pct + (0.0 if retained else 2.0))
 
-    def _debounce(self, t, f: Finding):
+    def _debounce(self, t, f: Finding, *, sensed_t=None, recv_t=None, max_gap_s=None):
         """Contract v5 seconds, cooling, downgrade and recommendation timing.
 
-        This adapter still receives legacy complete snapshots. Per-source TTL,
-        separate sensed/recv timestamps and battery merging are the next batch.
+        SourceInputs gates each predictor; timestamps follow the newest actual
+        dependency sample, while all dependency TTLs are checked individually.
+        Battery merging remains a separate pending batch.
         """
         state = self._states.states.get(f.key)
         if state is not None and state.last_t is not None and t <= state.last_t:
@@ -780,7 +933,8 @@ class PredictiveAlertEngine:
         rows = self._states.step(
             f.key, t, TRUE if f.active else FALSE, f.severity, recommendation,
             {self._recommendation_key(c) for c in eligible},
-            max_gap_s=10.0 if f.key == "wind_trend" else 3.0,
+            max_gap_s=max_gap_s if max_gap_s is not None else (10.0 if f.key == "wind_trend" else 3.0),
+            sensed_t=sensed_t, recv_t=recv_t,
             **facts)
         return self._sync_state(f.key, payload, rows)
 
