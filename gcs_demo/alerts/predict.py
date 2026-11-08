@@ -23,6 +23,7 @@ from .display import landing_pct_text
 from .core.state_machine import AlertEngine
 from .core.freshness import TRUE, FALSE, UNKNOWN
 from .core.source_inputs import SourceInputs
+from .core.ranked_facts import ranked_ids, fact, option_evidence
 
 from .energy_api import (Vehicle, Wind, air_power_w, leg_energy, rtl_energy,
                          with_calib, profile_limits)
@@ -96,6 +97,7 @@ class Finding:
     lead_s: float | None = None                       # 距離問題發生還有多久
     prediction_expired: bool = False
     member_status: dict = field(default_factory=dict)
+    allowed_ids: list = field(default_factory=list)
 
 
 class PredictiveAlertEngine:
@@ -379,13 +381,16 @@ class PredictiveAlertEngine:
         feasible = end_pct >= self.cfg.reserve_pct + (2.0 if was else -0.5)
 
         ev = [
-            {"id": "E1", "text": "預估完成航線並返航後的落地電量", "value": f"{end_pct:.1f}%",
-             "display_value": landing_pct_text(end_pct)},
-            {"id": "E2", "text": "落地保留電量設定", "value": f"{self.cfg.reserve_pct:.0f}%"},
-            {"id": "E3", "text": "目前可用能量（依據）", "value": f"{avail_wh:.0f} Wh（{'電壓趨勢' if basis == 'voltage' else '飛控電量%'}）"},
-            {"id": "E4", "text": "實測耗電 / 模型耗電", "value": f"{self.calib:.2f} 倍"},
-            {"id": "E5", "text": "預測用風速（目前＋趨勢外推）、風向", "value": f"{wind.speed_mps:.1f} m/s（目前 {tm.wind.speed_mps:.1f}）、{wind.from_deg:.0f}°"},
-            {"id": "E6", "text": "剩餘航點數", "value": f"{n_rem}"},
+            fact("E1", "預估完成航線並返航後的落地電量", "end_pct", f"{end_pct:.1f}%", "%", "remaining_route_and_rtl",
+                 option_id="C1", raw_value=end_pct, display_value=landing_pct_text(end_pct)),
+            fact("E2", "落地保留電量設定", "reserve_pct", f"{self.cfg.reserve_pct:.0f}%", "%", "configuration"),
+            fact("E3", "目前可用能量", "usable_wh", f"{avail_wh:.0f}", "Wh", "current",
+                 basis=basis, raw_value=avail_wh),
+            fact("E4", "實測耗電與模型耗電比", "calibration_ratio", f"{self.calib:.2f}", "倍", "calibration"),
+            fact("E5", "預測用風速", "wind_speed", f"{wind.speed_mps:.1f}", "m/s", "remaining_route"),
+            fact("E6", "剩餘航點數", "remaining_waypoints", n_rem, "個", "remaining_route"),
+            fact("E7", "目前風速", "wind_speed", f"{tm.wind.speed_mps:.1f}", "m/s", "current"),
+            fact("E8", "預測風向", "wind_direction", f"{wind.from_deg:.0f}", "°", "remaining_route"),
         ]
         self.last_state.update({"end_pct": end_pct, "avail_wh": avail_wh, "basis": basis,
                                 "calib": self.calib, "pnr_wp": None, "pnr_eta_s": None})
@@ -426,8 +431,12 @@ class PredictiveAlertEngine:
                     f2.title = "即將到達最晚返航點"
                     f2.value = f"WP{wp_idx + 1}，約 {eta / 60:.1f} 分鐘後"
                     f2.lead_s = eta
-            f2.evidence = ev + [{"id": "E7", "text": "最晚返航點與到達時間",
-                                 "value": f2.value or "—"}]
+            f2.evidence = deepcopy(ev)
+            if f2.lead_s is not None:
+                f2.evidence.append(fact("E9", "距最晚返航點時間", "eta_s", f2.lead_s, "s", "safe_return_boundary"))
+            if pnr is not None and pnr[0] > 0:
+                f2.evidence.append(fact("E10", "最晚返航點", "return_waypoint", f"WP{self._orig(tm.next_wp + pnr[0] - 1) + 1}",
+                                       "", "safe_return_boundary", value_kind="categorical_id"))
             f2.rule_choice = self._rule_pick(cands, self.cfg.emergency_rtl_min_pct)
         out.append(f2)
 
@@ -447,10 +456,10 @@ class PredictiveAlertEngine:
                 f3.title = "電池實際容量低於標稱"
                 f3.value = f"約為標稱 {ratio * 100:.0f}%，飛控電量% 偏高約 {gap_pct:.0f}%"
                 f3.evidence = [
-                    {"id": "E1", "text": "電壓趨勢推估的總容量", "value": f"{total_cap:.0f} Wh"},
-                    {"id": "E2", "text": "電池標稱容量", "value": f"{self.v.battery_wh:.0f} Wh"},
-                    {"id": "E3", "text": "飛控電量%", "value": f"{tm.soc_pct:.0f}%"},
-                    {"id": "E4", "text": "電壓推估的實際剩餘", "value": f"{avail_wh / self.v.battery_wh * 100:.0f}%"},
+                    fact("E1", "推估總容量", "estimated_capacity_wh", f"{total_cap:.0f}", "Wh", "battery_capacity", basis="voltage"),
+                    fact("E2", "電池標稱容量", "nominal_capacity_wh", f"{self.v.battery_wh:.0f}", "Wh", "battery_capacity"),
+                    fact("E3", "飛控電量", "fc_pct", f"{tm.soc_pct:.0f}%", "%", "current"),
+                    fact("E4", "推估實際剩餘電量", "estimated_remaining_pct", f"{avail_wh / self.v.battery_wh * 100:.0f}%", "%", "current", basis="voltage"),
                 ]
                 f3.candidates = [
                     {"id": "C1", "action": "A_USE_VOLTAGE_ESTIMATE", "label": "後續預測改用電壓推估", "energy_feasible": None, "feasible": True},
@@ -475,7 +484,7 @@ class PredictiveAlertEngine:
             energy_ok = self._is_feasible(raw, identity)
             c = {"id": ident, "option_identity": identity, "action": action, "label": label, "end_pct_raw": raw,
                  "end_pct": round(raw, 1), "end_pct_zh": landing_pct_text(raw), "completion_pct": round(self._completion(planned), 1),
-                 "energy_feasible": energy_ok, "feasible": energy_ok, **extra}
+                 "energy_feasible": energy_ok, "feasible": energy_ok, "missed_required": 0, **extra}
             if action == "A_LAND_NOW":
                 c.update(operational_status="unknown", feasible=False)
             return c
@@ -527,10 +536,9 @@ class PredictiveAlertEngine:
             return None
         if emergency_rtl_min_pct is None:
             emergency_rtl_min_pct = Config().emergency_rtl_min_pct
-        ok = [c for c in cands if c["feasible"] and c["action"] != "A_LAND_NOW"]
-        if ok:   # 先保住必要目標，再看完成度、剩餘電量
-            return max(ok, key=lambda c: (-c.get("missed_required", 0), c.get("completion_pct", 0),
-                                          c.get("end_pct_raw", c.get("end_pct", -math.inf))))["id"]
+        allowed = ranked_ids(cands)
+        if allowed:
+            return allowed[0]
         rtl = next((c for c in cands if c["action"] == "A_RTL_NOW"), None)
         if rtl and rtl.get("end_pct_raw", rtl.get("end_pct", -math.inf)) >= emergency_rtl_min_pct:
             return rtl["id"]
@@ -571,10 +579,14 @@ class PredictiveAlertEngine:
                 f.value = f"WP{wp + 1}（離家 {d / 1000:.2f} km）預估鏈路 {max(0, q):.0f}%，約 {t_cum / 60:.1f} 分鐘後"
                 f.lead_s = t_cum
                 f.evidence = [
-                    {"id": "E1", "text": "目前鏈路品質／離家距離", "value": f"{tm.link_pct:.0f}%／{d_now / 1000:.2f} km"},
-                    {"id": "E2", "text": "每遠 1 km 鏈路下降", "value": f"{-b * 1000:.0f}%（R²={r2:.2f}）"},
-                    {"id": "E3", "text": "預估最差航點", "value": f"WP{wp + 1}，{max(0, q):.0f}%"},
-                    {"id": "E4", "text": "弱鏈路門檻", "value": f"{self.cfg.link_min_pct:.0f}%"},
+                    fact("E1", "目前鏈路品質", "link_pct", f"{tm.link_pct:.0f}%", "%", "current"),
+                    fact("E2", "每遠一公里鏈路下降", "link_loss_per_km", f"{-b * 1000:.0f}", "%/km", "remaining_route"),
+                    fact("E3", "預估航點鏈路品質", "predicted_link_pct", f"{max(0, q):.0f}%", "%", f"WP{wp + 1}"),
+                    fact("E4", "弱鏈路門檻", "link_min_pct", f"{self.cfg.link_min_pct:.0f}%", "%", "configuration"),
+                    fact("E5", "目前離家距離", "home_distance", f"{d_now / 1000:.2f}", "km", "current"),
+                    fact("E6", "鏈路回歸擬合度", "link_r_squared", f"{r2:.2f}", "", "history"),
+                    fact("E7", "預估弱鏈路航點", "link_waypoint", f"WP{wp + 1}", "", "remaining_route", value_kind="categorical_id"),
+                    fact("E8", "抵達弱鏈路航點時間", "eta_s", t_cum, "s", f"WP{wp + 1}"),
                 ]
                 f.candidates = [
                     {"id": "C1", "action": "A_CONTINUE_MONITOR", "label": "繼續並確認失聯保護（RTL）已開", "energy_feasible": None, "feasible": True},
@@ -614,9 +626,11 @@ class PredictiveAlertEngine:
             f.value = f"現在 {tm.wind.speed_mps:.1f} m/s，每分鐘 +{b * 60:.1f}，約 {tts / 60:.1f} 分鐘後達 {lim:.0f} m/s"
             f.lead_s = tts
             f.evidence = [
-                {"id": "E1", "text": "目前風速", "value": f"{tm.wind.speed_mps:.1f} m/s"},
-                {"id": "E2", "text": "近 3 分鐘風速趨勢", "value": f"+{b * 60:.2f} m/s/分（R²={r2:.2f}）"},
-                {"id": "E3", "text": "機體抗風上限", "value": f"{lim:.0f} m/s"},
+                fact("E1", "目前風速", "wind_speed", f"{tm.wind.speed_mps:.1f}", "m/s", "current"),
+                fact("E2", "每分鐘風勢增幅", "wind_trend_per_min", f"{b * 60:+.2f}", "m/s/分", "history_180s"),
+                fact("E3", "機體抗風上限", "wind_limit", f"{lim:.0f} m/s", "m/s", "configuration"),
+                fact("E4", "趨勢回歸擬合度", "wind_r_squared", f"{r2:.2f}", "", "history_180s"),
+                fact("E5", "到達抗風上限時間", "eta_s", tts, "s", "wind_limit"),
             ]
             f.candidates = [
                 {"id": "C1", "action": "A_CONTINUE_MONITOR", "label": "持續觀察風速", "energy_feasible": None, "feasible": True},
@@ -1036,17 +1050,24 @@ class PredictiveAlertEngine:
             # refresh member truth, evidence and P1 feasibility from this sample.
             payload = replace(f, title=previous.title, value=previous.value,
                               lead_s=previous.lead_s)
-        facts = self._state_facts(self._event(t, "update", payload))
-        facts["route_version"] = self._route_revision
         retained = state.recommendation if state is not None and state.active else None
         eligible = [c for c in f.candidates if self._recommendation_eligible(
             c, retained=retained is not None and self._recommendation_key(c) == retained)]
+        allowed = ranked_ids(eligible)
+        # Predictor rules own the recommendation when joint feasibility and
+        # the existing recommendation-entry gate pass. Ranking constrains the
+        # model's allowed_ids; it must not suppress a qualified safety rule.
         selected = next((c for c in eligible if c["id"] == f.rule_choice), None)
-        if selected is None and eligible:
-            # Re-rank genuinely eligible alternatives; never hide a 23% option
-            # behind the old rank winner that now needs 22% to enter.
-            choice = self._rule_pick(eligible, self.cfg.emergency_rtl_min_pct)
-            selected = next((c for c in eligible if c["id"] == choice), None)
+        if selected is None:
+            # Only fallback uses ranking and committed-identity tie retention.
+            tied = [c for c in eligible if c["id"] in allowed]
+            selected = next((c for c in tied
+                             if self._recommendation_key(c) == retained), None)
+            if selected is None and tied:
+                selected = tied[0]
+        payload = replace(payload, allowed_ids=allowed)
+        facts = self._state_facts(self._event(t, "update", payload))
+        facts["route_version"] = self._route_revision
         recommendation = self._recommendation_key(selected) if selected else None
         rows = self._states.step(
             f.key, t, TRUE if f.active else FALSE, f.severity, recommendation,
@@ -1070,7 +1091,9 @@ class PredictiveAlertEngine:
     @staticmethod
     def _event(t, kind, f: Finding):
         return {"t": t, "type": kind, "key": f.key, "severity": f.severity, "title": f.title,
-                "value": f.value, "lead_s": f.lead_s, "evidence": f.evidence,
+                "value": f.value, "lead_s": f.lead_s,
+                "evidence": option_evidence(f.evidence, f.candidates, f.key),
+                "allowed_ids": list(f.allowed_ids),
                 "member_status": deepcopy(f.member_status),
                 "candidates": f.candidates, "rule_choice": f.rule_choice,
                 "rule_decision": PredictiveAlertEngine._rule_decision(f),
@@ -1086,6 +1109,7 @@ class PredictiveAlertEngine:
         return {"active": bool(state.active and not state.prediction_expired
                                and state.facts.get("route_version") == self._route_revision),
                 "alert_version": state.version,
+                "allowed_ids": list(state.facts.get("allowed_ids", [])),
                 "feasible_ids": [c["id"] for c in finding.candidates
                                  if c.get("feasible") is True] if finding else []}
 

@@ -38,9 +38,14 @@ class BatteryMerge0452Tests(unittest.TestCase):
         row = battery[0]
         self.assertEqual((row["severity"], row["title"]), (2, "rtl_point"))
         self.assertEqual([c["id"] for c in row["candidates"]], ["C4"])
-        self.assertEqual([e["id"] for e in row["evidence"]], ["E1", "E2", "E3"])
-        self.assertEqual([e["source_predictor"] for e in row["evidence"]], ["P1", "P2", "P3"])
-        self.assertTrue(all(e["source_evidence_id"] == "E1" for e in row["evidence"]))
+        sources = [e for e in row["evidence"] if e.get("source_kind") != "candidate"]
+        self.assertEqual([e["id"] for e in sources], ["E1", "E2", "E3"])
+        self.assertEqual([e["source_predictor"] for e in sources], ["P1", "P2", "P3"])
+        self.assertTrue(all(e["source_evidence_id"] == "E1" for e in sources))
+        metrics = [e for e in row["evidence"] if e.get("source_kind") == "candidate"]
+        self.assertEqual([(e["option_id"], e["metric"], e["value"]) for e in metrics],
+                         [("C4", "end_pct", 30.), ("C4", "completion_pct", 0.)])
+        self.assertEqual(len({e["id"] for e in row["evidence"]}), len(row["evidence"]))
         self.assertFalse(set(eng._states.states) & {"battery_route", "rtl_point", "battery_capacity"})
         self.assertEqual(eng.current_state("battery")["feasible_ids"], ["C4"])
 
