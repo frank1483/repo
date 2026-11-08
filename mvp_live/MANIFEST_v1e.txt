@@ -1,0 +1,14 @@
+MVP live smoke v1e (prepared 2026-11-08 TW). User chose 2026-11-08 09:29 TW: fix UI first, then retest UI and mission together.
+Previous: v1d 087aef81 ran once 2026-11-05 23:20 TW (29 calls, 0 failed; mission exit 2 because the model picked C5 and no replan happened; UI L01/L07 problems). Kept as-is.
+Sources (frank1483/repo):
+  src/gateway  claude/project-thread-wum8aq  847f5a9  gcs_demo/llm_gateway.py (contract v0.4.4: ui budget 32 s, deadline header only shortens)
+  src/mission  claude/project-thread-ovsufa  f54c7c1  gcs_demo/  (state-machine planner, design doc item 12 ticked 2026-11-08; smoke v2 flies rule C3 so replan always runs; saves each step)
+  src/ui       claude/project-thread-8cd61o  1a58482  ui_agent/  (sm-v2 state-machine model path; L01 requires choice_id; L07 now goes to the model; 32 s client with X-GCS-Deadline-Ms)
+Not rerun: alerts, recognition (passed in v1d).
+Runner: run_mvp_live_v1e.ps1
+  preflight (no model call) -> theme copy (read-only copy of formal UI theme + patch into out_run1\theme_gcp; formal UI not written)
+  -> gateway -> warm-up -> UI -> mission/report
+Model: Ollama gemma4:e2b on the user's PC via gateway 127.0.0.1:8090 (think:false, temperature 0, JSON).
+Expected model calls: about 30 max (warm-up 1, UI up to about 18, mission plan/replan up to 4, report 1, alert explanations inside mission about 4-6).
+Dry run in the cloud with a fake Ollama through the gateway: mission plan and replan went through the model path (exit 1 only because the fake report text fails the checker). UI dry run by the UI thread on 1a58482: exit 0, 11 rows, headers 29998/30000/31883 ms.
+Run once. Output out_run1\ kept as-is; any fix goes to a new version.
