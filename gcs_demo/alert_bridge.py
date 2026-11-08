@@ -28,7 +28,7 @@ class AlertFeed:
         if typed_geographic and log_path is not None:
             raise ValueError("v5 logging currently requires the legacy engine")
         self.alert_log = AlertLog(log_path)
-        self.engine_events = []  # unfiltered denominator, including hidden capacity events
+        self.engine_events = []  # every emitted event; MVP disables P3 before battery merge
         self._pending_explanations = {}  # request snapshots + private returned-result references
         self._typed_feed = None
         self.latest = None
@@ -48,7 +48,7 @@ class AlertFeed:
         prio = [p.get("priority", 1) for p in path[1:-1]]     # 繞行點視同必經
         self.engine = PredictiveAlertEngine(self._route(path), (0.0, 0.0, 0.0), vehicle,
                                             Config(reserve_pct=vehicle.reserve_pct, cell_empty_v=3.5),
-                                            priorities=prio)
+                                            priorities=prio, capacity_check=False)
         self.explain_fn = (LegacyAlertExplainer(current_state=self.engine.current_state)
                            if explain_fn is _DEFAULT_EXPLAIN else explain_fn)
         self.events = []
@@ -87,14 +87,13 @@ class AlertFeed:
                        soc_pct=rec["battery_pct"], voltage=volt - current * 0.004 * CELLS,
                        current_a=current, used_wh=rec.get("used_wh", 0.0), cell_count=CELLS,
                        next_wp=next_idx, link_pct=95.0, wind=Wind(rec["wind_mps"], rec["wind_from"]))
-        # 模擬電壓只是 soc 的線性函數、沒有老化資訊，容量告警在此情境不可信，略過
+        # 依使用者 11/08 決定，MVP 停用 P3：模擬電壓由電量換算，沒有老化資訊。
+        # 引擎在 battery 合併前停用容量成員；P1/P2 及所有引擎輸出照常保留。
         emitted = self.engine.update(tm)
-        # Retain every engine output; the old capacity filter is legacy-only.
-        # The unified battery event stays visible, including its P3 evidence.
         for ev in emitted:
             self.engine_events.append(deepcopy(ev))
             self.alert_log.append(ev)
-        new = [deepcopy(e) for e in emitted if e["key"] != "battery_capacity"]
+        new = [deepcopy(e) for e in emitted]
         for ev in new:
             if ev["type"] == "resolve":
                 retire = getattr(self.explain_fn, "retire", None)

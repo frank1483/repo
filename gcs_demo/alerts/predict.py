@@ -101,8 +101,16 @@ class Finding:
 
 
 class PredictiveAlertEngine:
-    def __init__(self, route, home, vehicle: Vehicle, config: Config | None = None, priorities=None):
-        """priorities：每個航點的優先級（1 必要、2 選配），None 表示全部一樣重要。"""
+    def __init__(self, route, home, vehicle: Vehicle, config: Config | None = None, priorities=None,
+                 *, capacity_check: bool = True):
+        """priorities：每個航點的優先級（1 必要、2 選配），None 表示全部一樣重要。
+
+        capacity_check=False disables only P3 in the merged battery alert.
+        Shared energy estimates and P1/P2 remain unchanged; default enables P3.
+        """
+        if not isinstance(capacity_check, bool):
+            raise ValueError("capacity_check must be boolean")
+        self.capacity_check = capacity_check
         # Tuple routes do not encode modes, FW turns or a landing approach.
         # Do not issue MC-only landing/slowdown advice for other airframes.
         if vehicle.type != "multirotor":
@@ -807,7 +815,7 @@ class PredictiveAlertEngine:
                     else:
                         self.last_state.update(end_pct=None, pnr_wp=None, pnr_eta_s=None, rem_s=0.0)
                 capacity = (attempt("battery_capacity", lambda: self._battery_capacity(tm, avail, cap))
-                            if fresh["battery_capacity"] else None)
+                            if self.capacity_check and fresh["battery_capacity"] else None)
                 if capacity is not None:
                     findings.append(capacity)
         if not ready(dependencies["link_route"]):
@@ -866,7 +874,8 @@ class PredictiveAlertEngine:
         status, known, signature = {}, [], [self._route_revision, rows["wind"]["status"]]
         changed_sample = False
         for key in keys:
-            disabled = not self.route and key != "battery_capacity"
+            disabled = ((not self.route and key != "battery_capacity")
+                        or (key == "battery_capacity" and not self.capacity_check))
             ready = readiness[key]["status"] == "ready" and not disabled
             if not ready or (fresh[key] and key not in incoming):
                 self._battery_findings.pop(key, None)

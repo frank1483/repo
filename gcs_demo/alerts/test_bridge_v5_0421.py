@@ -149,13 +149,23 @@ class BridgeRetention0421(unittest.TestCase):
             item = AlertFeed(home, [home, home], default_vehicle())
             self.assertEqual(ctor.call_args.kwargs["current_state"], item.engine.current_state)
 
-    def test_hidden_capacity_event_is_retained_in_unfiltered_denominator(self):
+    def test_injected_capacity_event_is_visible_and_retained_in_unfiltered_denominator(self):
         item = feed()
+        self.assertFalse(item.engine.capacity_check)
+        # Synthetic legacy engine output checks retention, not P3 generation.
+        # Actual MVP suppression is covered by test_mvp_disable_p3.
         emitted = arm(item.engine, "battery_capacity")
         with patch.object(item.engine, "update", return_value=emitted):
-            self.assertEqual(item.tick(rec(0), 0), [])
+            visible = item.tick(rec(0), 0)
+        self.assertEqual(visible, emitted)
+        self.assertEqual(item.events, emitted)
         self.assertEqual(len(item.engine_events), 1)
+        self.assertEqual(item.engine_events[0], emitted[0])
         self.assertEqual(item.alert_log.rows[0]["key"], "battery_capacity")
+        # Snapshots are not engine events and do not inflate the denominator.
+        logged_events = [r for r in item.alert_log.rows if "engine_seq" in r]
+        self.assertEqual(len(logged_events), 1)
+        self.assertEqual(logged_events, item.engine_events)
         self.assertEqual(audit(item.engine_events, item.alert_log.rows)["core_valid_rate"], 1)
 
     def test_snapshots_at_zero_ten_twenty_without_rule_events(self):
