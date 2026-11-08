@@ -160,9 +160,22 @@ class AlertSlots:
         out["advice_code"] = opt[0]
         self.h.finish(out, "llm", "filled")
 
+    def _prompt_label(self, e):
+        """提示行用的依據名稱。綁定選項的依據要帶「選項代碼 名稱」，否則多個選項的
+        同一指標（例如各選項的任務完成度）在提示裡看起來一模一樣。"""
+        metric = e.get("metric_label") or e.get("text") or ""
+        oid = e.get("option_id")
+        if not oid:
+            return metric
+        text = e.get("text") or ""
+        if text.startswith(str(oid)):
+            return text                      # 程式已把代碼與名稱寫進 text
+        name = e.get("option_label") or self.labels.get(oid, "")
+        return " ".join(x for x in (str(oid), name, metric) if x)
+
     def header(self, st):
         lines = [f"告警：{self.level_zh}｜{self.title}"]
-        lines += [f"{e['id']}：{e.get('metric_label') or e.get('text')} {_value_text(e)}" for e in self.evidence]
+        lines += [f"{e['id']}：{self._prompt_label(e)} {_value_text(e)}" for e in self.evidence]
         if self.selected:
             lines.append(f"已知：推薦處置={self.selected} {self.labels.get(self.selected, '')}")
         if self.basis:
@@ -177,7 +190,7 @@ class AlertSlots:
             return {"need": "要推薦的處置", "allowed": [{"code": c, "zh": self.labels.get(c, c)} for c in self.allowed]}
         if s == "S_BASIS":
             return {"need": "第一句要引用的主要依據",
-                    "allowed": [{"code": e["id"], "zh": f"{e.get('metric_label') or e.get('text')} {_value_text(e)}"}
+                    "allowed": [{"code": e["id"], "zh": f"{self._prompt_label(e)} {_value_text(e)}"}
                                 for e, _ in self._basis_options()]}
         return {"need": "第二句的操作建議", "allowed": [{"code": c, "zh": t} for c, t, _ in self._advice_options()]}
 

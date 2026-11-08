@@ -79,6 +79,25 @@ class AdviceListTests(unittest.TestCase):
         self.assertEqual(S.advice_group({"key": "link_route"}), "P4")
 
 
+class PromptLabelTests(unittest.TestCase):
+    def lib(self, evidence):
+        return S.AlertSlots(level_zh="警告", title="電量", evidence=evidence, allowed=["C1", "C3"],
+                            labels={"C1": "照原航線繼續", "C3": "飛完 WP13 後返航"}, advice=S.GENERIC_ADVICE,
+                            check=lambda out: None, alert_version="v", rule={})
+
+    def test_option_rows_show_code_and_name(self):
+        ev = [{"id": "E8", "option_id": "C1", "metric_label": "任務完成度", "value": "100%"},
+              {"id": "E9", "option_id": "C3", "metric_label": "任務完成度", "value": "93.3%",
+               "text": "C3 飛完 WP13 後返航 任務完成度"},
+              {"id": "E1", "metric_label": "落地保留電量設定", "value": "20%"}]
+        lib = self.lib(ev)
+        lines = lib.header({"last_observation": ""})
+        self.assertIn("E8：C1 照原航線繼續 任務完成度 100%", lines)
+        self.assertIn("E9：C3 飛完 WP13 後返航 任務完成度 93.3%", lines)
+        self.assertIn("E1：落地保留電量設定 20%", lines)
+        self.assertEqual(len({l.split("：", 1)[1] for l in lines[1:4]}), 3)   # 不再看起來重複
+
+
 class LegacyPathTests(unittest.TestCase):
     def test_every_choice_on_every_sim_alert_passes_the_v5_validator(self):
         n = 0
