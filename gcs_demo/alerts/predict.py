@@ -230,6 +230,19 @@ class PredictiveAlertEngine:
             return "遙測／機型／航線格式不符"
         return None
 
+    def _validate_next_wp(self, tm):
+        """Reject invalid route cursors before mutating any engine state.
+
+        len(route) is the existing completed-route sentinel; zero is valid for
+        an empty route. Integral numeric inputs retain legacy normalization.
+        Contract v5 batch 1 replaces silent boundary clamping with ValueError.
+        """
+        index = tm.next_wp
+        if (not self._finite(index) or index != int(index)
+                or not 0 <= index <= len(self.route)):
+            raise ValueError("next_wp must be an integer in [0, len(route)]")
+        return replace(tm, next_wp=int(index))
+
     # ---------- 線上校正 ----------
     def _update_calib(self, tm: Telemetry):
         gs = math.hypot(tm.vel[0], tm.vel[1])
@@ -578,6 +591,8 @@ class PredictiveAlertEngine:
     # ---------- 主流程 ----------
     def update(self, tm: Telemetry) -> list[dict]:
         """吃一筆遙測，回傳這一刻的告警事件（raise / update / resolve）。"""
+        if isinstance(tm, Telemetry):
+            tm = self._validate_next_wp(tm)
         if isinstance(tm, Telemetry) and self._finite(tm.t):
             if self._last_tm_t is not None and tm.t <= self._last_tm_t:
                 return []  # duplicate/out-of-order snapshots never mutate histories
@@ -593,7 +608,6 @@ class PredictiveAlertEngine:
             self._streak.clear()
             return (self._unknown_all(tm.t) if isinstance(tm, Telemetry)
                     and self._finite(tm.t) else [])
-        tm = replace(tm, next_wp=max(0, min(int(tm.next_wp), len(self.route))))
         self._reached.update(self.route_idx[:tm.next_wp])
 
         def attempt(key, fn):

@@ -68,10 +68,12 @@ class InputRobustness(unittest.TestCase):          # 審查第 1 項
         eng.update(tm(t=1, soc=float("nan")))
         eng.update(tm(t=2, wind=Wind(float("nan"), 90)))
 
-    def test_bad_next_wp_does_not_crash(self):
+    def test_bad_next_wp_raises_value_error(self):
         eng = PredictiveAlertEngine(ROUTE5, (0, 0, 0), default_vehicle())
-        eng.update(tm(next_wp=-3))
-        eng.update(tm(t=1, next_wp=99))
+        with self.assertRaises(ValueError):
+            eng.update(tm(next_wp=-3))
+        with self.assertRaises(ValueError):
+            eng.update(tm(t=1, next_wp=99))
 
 
 class WindAlreadyOverLimit(unittest.TestCase):     # 審查第 2 項
