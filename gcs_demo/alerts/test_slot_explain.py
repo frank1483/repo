@@ -63,6 +63,20 @@ class AdviceListTests(unittest.TestCase):
     def test_every_legacy_key_has_a_list(self):
         for ev in legacy_events():
             self.assertIn(S.LEGACY_GROUP.get(ev["key"]), S.ADVICE, ev["key"])
+            self.assertIn(S.advice_group(ev), S.ADVICE, ev["key"])
+
+    def test_battery_uses_the_most_severe_true_member(self):
+        def ev(**members):
+            return {"key": "battery", "member_status": {k: dict(v) for k, v in members.items()}}
+        warn, crit = {"truth": "TRUE", "severity": 4}, {"truth": "TRUE", "severity": 2}
+        self.assertEqual(S.advice_group(ev(P1=warn, P2={"truth": "FALSE"}, P3=crit)), "P3")
+        self.assertEqual(S.advice_group(ev(P1=warn, P2=crit, P3=warn)), "RTL")
+        self.assertEqual(S.advice_group(ev(P1=warn, P2=warn, P3=warn)), "P1")   # 同等級照 P1、P2、P3
+        self.assertEqual(S.advice_group(ev(P1={"truth": "FALSE", "disabled": True},
+                                           P2={"truth": "UNKNOWN"}, P3=warn)), "P3")
+        self.assertEqual(S.advice_group(ev(P1={"truth": "UNKNOWN"})), "P1")      # 沒有成立的成員 → 預設
+        self.assertEqual(S.advice_group({"key": "battery"}), "P1")
+        self.assertEqual(S.advice_group({"key": "link_route"}), "P4")
 
 
 class LegacyPathTests(unittest.TestCase):

@@ -35,8 +35,28 @@ ADVICE = {
 GENERIC_ADVICE = [("ASSESS", "請操作員依告警內容評估是否調整任務")]
 # 舊多旋翼引擎的告警 key → 建議清單
 LEGACY_GROUP = {"battery_route": "P1", "rtl_point": "RTL", "battery_capacity": "P3",
-                "link_route": "P4", "wind_trend": "P5"}
+                "link_route": "P4", "wind_trend": "P5",
+                # 電量合併告警（CODEX-APP-0390）：沒有成員資訊時用 P1 的清單；
+                # 有 member_status 時由 advice_group() 依成立中、等級最高的成員決定。
+                "battery": "P1"}
+# 合併後的 battery 告警裡，成員代號 → 建議清單（舊引擎的 P2 是最晚返航點，不是探查點）
+BATTERY_MEMBER_GROUP = {"P1": "P1", "P2": "RTL", "P3": "P3"}
 NEUTRAL_SECOND = "請操作員評估。"
+
+
+def advice_group(ev):
+    """告警事件 → 建議清單名稱。battery 依成立中、等級最高（數字最小）的成員；
+    同等級照 P1、P2、P3 的順序；沒有成立中的成員就用預設 P1。"""
+    key = ev.get("key")
+    if key != "battery":
+        return LEGACY_GROUP.get(key)
+    members = ev.get("member_status") or {}
+    order = list(BATTERY_MEMBER_GROUP)
+    live = [(m.get("severity") if isinstance(m.get("severity"), int) else 99, order.index(name), name)
+            for name, m in members.items()
+            if name in BATTERY_MEMBER_GROUP and isinstance(m, dict)
+            and m.get("truth") == "TRUE" and not m.get("disabled")]
+    return BATTERY_MEMBER_GROUP[min(live)[2]] if live else LEGACY_GROUP["battery"]
 
 
 def _value_text(e):

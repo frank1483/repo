@@ -13,7 +13,7 @@ from .core import contract
 from .display import landing_pct_text
 
 from gcs_demo import llm
-from .slot_explain import (ADVICE, GENERIC_ADVICE, LEGACY_GROUP, SEVERITY_ZH, SYSTEM_PROMPT,
+from .slot_explain import (ADVICE, GENERIC_ADVICE, LEGACY_GROUP, advice_group, SEVERITY_ZH, SYSTEM_PROMPT,
                            AlertSlots, run as slot_run)
 
 # MVP（契約 v0.3）：告警預設經共用閘道接模型；設 GCS_LLM_BACKEND 時照環境變數（none 可關閉）
@@ -95,7 +95,7 @@ def _slots(ev, rule):
     state = current_state(ev)
     allowed = [x for x in facts["allowed_ids"] if x in state["feasible_ids"]]
     labels = {c["id"]: c.get("label", c["id"]) for c in ev.get("candidates", [])}
-    group = LEGACY_GROUP.get(ev.get("key"))
+    group = advice_group(ev)
     return AlertSlots(level_zh=SEVERITY_ZH.get(ev.get("severity"), "注意"), title=ev.get("title") or "告警",
                       evidence=[e for e in facts["evidence"] if isinstance(e, dict) and "metric" in e],
                       allowed=allowed, labels=labels, advice=ADVICE.get(group, GENERIC_ADVICE),
