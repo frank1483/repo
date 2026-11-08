@@ -27,6 +27,8 @@ class Round2Extra(unittest.TestCase):
         eng = engine([])
         evs = sum((eng.update(telemetry(t=i, next_wp=0, wind=15)) for i in range(3)), [])
         self.assertTrue(any(e["key"] == "wind_trend" and e["type"] == "raise" for e in evs))
+        self.assertTrue(eng.last_state["battery_members"]["P1"]["disabled"])
+        self.assertTrue(eng.last_state["battery_members"]["P2"]["disabled"])
         self.assertFalse(any(e["key"] in ("battery_route", "rtl_point") for e in evs))
 
     def test_predictor_exception_isolated_and_recorded(self):

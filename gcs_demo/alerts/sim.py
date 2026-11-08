@@ -135,7 +135,7 @@ def run(scenario="gusty", policy="ignore", dt=1.0, seed=7, explain_fn=None, max_
                     ev["explain"] = explain_fn(ev)
                 events.append(ev)
                 if (policy == "follow" and ev["type"] in ("raise", "update")
-                        and ev["key"] in ("battery_route", "rtl_point")):
+                        and ev["key"] in ("battery", "battery_route", "rtl_point")):
                     a = _apply(ev, t, route, target, wp_i)
                     if a and (not applied or (a["action"], a.get("param")) != (applied[-1]["action"], applied[-1].get("param"))):
                         applied = (applied or []) + [a]
@@ -195,4 +195,5 @@ def _frame(t, pos, used, cap_true, veh, wind, soc_fc, eng, phase, link):
             "pnr_wp": st.get("pnr_wp"), "pnr_eta": None if st.get("pnr_eta_s") is None else round(st["pnr_eta_s"]),
             "calib": round(st.get("calib", 1.0), 3), "wind": round(wind.speed_mps, 1),
             "link": round(link, 0) if link else None, "phase": phase,
-            "active": sorted(eng.active().keys())}
+            "active": sorted(eng.active().keys()),
+            "battery_members": {k: dict(v) for k, v in st.get("battery_members", {}).items()}}

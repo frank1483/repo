@@ -113,7 +113,8 @@ class ReturnPoint(unittest.TestCase):              # 審查第 3 項
         evs = []
         for i in range(3):
             evs += eng.update(tm(t=i, next_wp=1))
-        titles = {e["title"] for e in evs if e["key"] == "rtl_point"}
+        titles = {e["member_status"]["P2"]["title"] for e in evs
+                  if e["key"] == "battery" and e["member_status"]["P2"]["truth"] == "TRUE"}
         self.assertTrue(titles)
         self.assertNotIn("已到最晚返航點", titles, "現在就已沒有返航餘裕，要用不同說法")
 
@@ -124,7 +125,7 @@ class FeasibilityContract(unittest.TestCase):      # 審查第 4、6 項
         evs = []
         for i in range(3):
             evs += eng.update(tm(t=i, soc=12.0, used=430.0))
-        b = [e for e in evs if e["key"] == "battery_route" and e["type"] == "raise"]
+        b = [e for e in evs if e["key"] == "battery" and e["type"] == "raise"]
         self.assertTrue(b)
         ev = b[0]
         self.assertIn(ev.get("rule_decision"), ("SELECT", "HOLD"))

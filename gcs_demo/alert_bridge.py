@@ -89,7 +89,8 @@ class AlertFeed:
                        next_wp=next_idx, link_pct=95.0, wind=Wind(rec["wind_mps"], rec["wind_from"]))
         # 模擬電壓只是 soc 的線性函數、沒有老化資訊，容量告警在此情境不可信，略過
         emitted = self.engine.update(tm)
-        # Retain every engine output BEFORE the demo-only capacity display filter.
+        # Retain every engine output; the old capacity filter is legacy-only.
+        # The unified battery event stays visible, including its P3 evidence.
         for ev in emitted:
             self.engine_events.append(deepcopy(ev))
             self.alert_log.append(ev)
@@ -187,6 +188,6 @@ class AlertFeed:
 
 def battery_raise(events) -> dict | None:
     for ev in events:
-        if ev["type"] == "raise" and ev["key"] in ("battery_route", "rtl_point"):
+        if ev["type"] == "raise" and ev["key"] in ("battery", "battery_route", "rtl_point"):
             return ev
     return None

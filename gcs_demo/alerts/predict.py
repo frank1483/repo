@@ -95,6 +95,7 @@ class Finding:
     rule_choice: str | None = None
     lead_s: float | None = None                       # 距離問題發生還有多久
     prediction_expired: bool = False
+    member_status: dict = field(default_factory=dict)
 
 
 class PredictiveAlertEngine:
@@ -129,6 +130,10 @@ class PredictiveAlertEngine:
         self.last_state: dict = {}
         self._source_seen = {}
         self._source_available = None
+        self._battery_findings = {}
+        self._battery_signature = None
+        self._battery_p1_active = False
+        self._battery_p1_states = AlertEngine()  # private P1 hysteresis; never published
 
     def set_route(self, route, indices=None):
         """操作員改了航線。indices＝新航線每點在原航線的索引（省略則視為原航線前段）。
@@ -370,7 +375,7 @@ class PredictiveAlertEngine:
                 break
             pnr = (i, cum_e, cum_t, rtl_e)
         # 遲滯：低於保留值 0.5% 才發，回到保留值 +2% 以上才解除
-        was = "battery_route" in self._active
+        was = self._battery_p1_active
         feasible = end_pct >= self.cfg.reserve_pct + (2.0 if was else -0.5)
 
         ev = [
@@ -710,6 +715,9 @@ class PredictiveAlertEngine:
         if not ready(("wind",)):
             tm = replace(tm, wind=Wind(0.0, 0.0))
         if error:
+            self._battery_findings.clear()
+            self._battery_signature = None
+            self._battery_p1_states.step("P1", now, UNKNOWN)
             self._pending_choice.clear()
             self._streak.clear()
             return self._unknown_all(now)
@@ -811,9 +819,11 @@ class PredictiveAlertEngine:
                         candidate.update(feasible=False, energy_feasible=None,
                                          operational_status="unknown", wind_included=False)
                 finding.rule_choice = self._rule_pick(finding.candidates, self.cfg.emergency_rtl_min_pct)
-        events = []
+        events = self._merge_battery(tm.t, findings, readiness, fresh, rows, dependencies)
+        findings = [f for f in findings if f.key not in
+                    ("battery_route", "rtl_point", "battery_capacity")]
         seen = {f.key for f in findings}
-        for key in ("battery_route", "rtl_point", "battery_capacity", "link_route", "wind_trend"):
+        for key in ("link_route", "wind_trend"):
             if readiness[key]["status"] == "ready" and not fresh[key]:
                 continue  # no new sample: do not manufacture a TRUE/FALSE/UNKNOWN tick
             if key not in seen:               # 預測器缺資料／例外不跨缺口累積遲滯
@@ -827,6 +837,94 @@ class PredictiveAlertEngine:
             events.extend(self._debounce(tm.t, f, sensed_t=sensed_t, recv_t=recv_t,
                                         max_gap_s=min(rows[n]["ttl_s"] for n in dependencies[f.key])))
         return events
+
+    def _merge_battery(self, t, findings, readiness, fresh, rows, dependencies):
+        """Cache valid members BEFORE the sole battery state machine.
+
+        Retained findings never refresh their own source stamps. A pure UI poll
+        cannot confirm TRUE/FALSE, a recommendation, or a downgrade. Validity
+        loss breaks continuity immediately; the next real assessment can use
+        still-valid members. P1 alone owns options, even when it is FALSE.
+        """
+        keys = ("battery_route", "rtl_point", "battery_capacity")
+        predictors = dict(zip(keys, ("P1", "P2", "P3")))
+        incoming = {f.key: f for f in findings if f.key in keys}
+        status, known, signature = {}, [], [self._route_revision, rows["wind"]["status"]]
+        changed_sample = False
+        for key in keys:
+            disabled = not self.route and key != "battery_capacity"
+            ready = readiness[key]["status"] == "ready" and not disabled
+            if not ready or (fresh[key] and key not in incoming):
+                self._battery_findings.pop(key, None)
+            if ready and key in incoming:
+                f = deepcopy(incoming[key])
+                stamp = self._source_seen[key]
+                self._battery_findings[key] = (f, stamp, self._route_revision)
+                changed_sample = True
+                if key == "battery_route":
+                    severity = (SEV_CRITICAL if f.active and not any(
+                        c.get("feasible") is True for c in f.candidates) else f.severity)
+                    self._battery_p1_states.step(
+                        "P1", t, TRUE if f.active else FALSE, severity,
+                        sensed_t=stamp[0], recv_t=stamp[1],
+                        max_gap_s=min(rows[n]["ttl_s"] for n in dependencies[key]))
+                    self._battery_p1_active = self._battery_p1_states.states["P1"].active
+            elif key == "battery_route":
+                if not ready or key not in self._battery_findings:
+                    self._battery_p1_states.step("P1", t, UNKNOWN)
+            cached = self._battery_findings.get(key)
+            if cached and key != "battery_capacity" and cached[2] != self._route_revision:
+                self._battery_findings.pop(key, None)
+                cached = None
+            pred = predictors[key]
+            if disabled:
+                status[pred] = {"truth": "FALSE", "disabled": True}
+                signature.append((pred, "disabled"))
+            elif cached:
+                f, stamp, revision = cached
+                status[pred] = {"truth": "TRUE" if f.active else "FALSE",
+                               "sensed_t": stamp[0], "recv_t": stamp[1],
+                               "severity": f.severity, "title": f.title,
+                               "value": f.value, "lead_s": f.lead_s}
+                signature.append((pred, stamp, revision))
+                known.append((key, f, stamp))
+            else:
+                status[pred] = {"truth": "UNKNOWN"}
+                signature.append((pred, "unknown"))
+        self.last_state["battery_members"] = deepcopy(status)
+        signature = json.dumps(signature, separators=(",", ":"))
+        if signature == self._battery_signature:
+            return []
+        self._battery_signature = signature
+        active = [entry for entry in known if entry[1].active]
+        unknown = any(row["truth"] == "UNKNOWN" for row in status.values())
+        if not changed_sample or (not active and unknown):
+            previous = self._active.get("battery")
+            if previous is not None:
+                previous = replace(previous, member_status=status)
+            return self._unknown(t, "battery", previous)
+        lead = min(active or known, key=lambda entry: (entry[1].severity, keys.index(entry[0])))
+        owner = next((f for key, f, _ in known if key == "battery_route"), None)
+        evidence = []
+        for key, f, stamp in known:
+            for item in f.evidence:
+                evidence.append({**deepcopy(item), "id": f"E{len(evidence) + 1}",
+                                 "source_predictor": predictors[key],
+                                 "source_evidence_id": item.get("id"),
+                                 "sensed_t": stamp[0], "recv_t": stamp[1]})
+        candidates = deepcopy(owner.candidates) if owner is not None else []
+        choice = self._rule_pick(candidates, self.cfg.emergency_rtl_min_pct)
+        group = Finding("battery", bool(active), severity=lead[1].severity,
+                        title=lead[1].title, value=lead[1].value,
+                        evidence=evidence, candidates=candidates,
+                        rule_choice=choice, lead_s=lead[1].lead_s,
+                        member_status=status)
+        # These remain actual source times, never substituted with poll time.
+        sensed_t = max(stamp[0] for _, _, stamp in known)
+        recv_t = max(stamp[1] for _, _, stamp in known)
+        ttl = min(rows[n]["ttl_s"] for key, _, _ in known for n in dependencies[key])
+        return self._debounce(t, group, sensed_t=sensed_t, recv_t=recv_t,
+                              max_gap_s=ttl, assessment_id=signature)
 
     def _assess_advisory(self, f, tm, avail):
         """補齊 P4/P5 飛行候選的能量判斷；失敗保持不可行。"""
@@ -855,10 +953,10 @@ class PredictiveAlertEngine:
             events.extend(self._unknown(t, key))
         return events
 
-    def _unknown(self, t, key):
+    def _unknown(self, t, key, finding=None):
         if key not in self._states.states:
             return []
-        previous = self._active.get(key)
+        previous = finding if finding is not None else self._active.get(key)
         facts = self._event(t, "update", previous) if previous else {}
         rows = self._states.step(key, t, UNKNOWN, **self._state_facts(facts))
         return self._sync_state(key, previous, rows)
@@ -914,12 +1012,13 @@ class PredictiveAlertEngine:
         return (self._finite(raw)
                 and raw >= self.cfg.reserve_pct + (0.0 if retained else 2.0))
 
-    def _debounce(self, t, f: Finding, *, sensed_t=None, recv_t=None, max_gap_s=None):
+    def _debounce(self, t, f: Finding, *, sensed_t=None, recv_t=None, max_gap_s=None,
+                  assessment_id=None):
         """Contract v5 seconds, cooling, downgrade and recommendation timing.
 
         SourceInputs gates each predictor; timestamps follow the newest actual
         dependency sample, while all dependency TTLs are checked individually.
-        Battery merging remains a separate pending batch.
+        Battery members are merged before this single keyed state.
         """
         state = self._states.states.get(f.key)
         if state is not None and state.last_t is not None and t <= state.last_t:
@@ -932,6 +1031,11 @@ class PredictiveAlertEngine:
             f = replace(f, severity=SEV_CRITICAL)
         previous = self._active.get(f.key)
         payload = f if f.active or previous is None else previous
+        if f.key == "battery" and not f.active and previous is not None:
+            # During the ten-second clear hold, retain the displayed cause but
+            # refresh member truth, evidence and P1 feasibility from this sample.
+            payload = replace(f, title=previous.title, value=previous.value,
+                              lead_s=previous.lead_s)
         facts = self._state_facts(self._event(t, "update", payload))
         facts["route_version"] = self._route_revision
         retained = state.recommendation if state is not None and state.active else None
@@ -948,7 +1052,7 @@ class PredictiveAlertEngine:
             f.key, t, TRUE if f.active else FALSE, f.severity, recommendation,
             {self._recommendation_key(c) for c in eligible},
             max_gap_s=max_gap_s if max_gap_s is not None else (10.0 if f.key == "wind_trend" else 3.0),
-            sensed_t=sensed_t, recv_t=recv_t,
+            sensed_t=sensed_t, recv_t=recv_t, assessment_id=assessment_id,
             **facts)
         return self._sync_state(f.key, payload, rows)
 
@@ -967,6 +1071,7 @@ class PredictiveAlertEngine:
     def _event(t, kind, f: Finding):
         return {"t": t, "type": kind, "key": f.key, "severity": f.severity, "title": f.title,
                 "value": f.value, "lead_s": f.lead_s, "evidence": f.evidence,
+                "member_status": deepcopy(f.member_status),
                 "candidates": f.candidates, "rule_choice": f.rule_choice,
                 "rule_decision": PredictiveAlertEngine._rule_decision(f),
                 "rule_decision_zh": PredictiveAlertEngine._decision_zh(

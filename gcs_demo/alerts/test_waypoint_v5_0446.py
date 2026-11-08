@@ -51,10 +51,13 @@ class Waypoint0446(unittest.TestCase):
         before = deepcopy(eng.__dict__)
         with self.assertRaises(ValueError):
             eng.update(telemetry(999, 1))
-        # AlertEngine has identity equality, so compare its field dictionary
-        # separately; all other fields retain their native equality checks.
-        self.assertEqual(eng._states.__dict__, before["_states"].__dict__)
-        for key in before.keys() - {"_states"}:
+        # Both AlertEngine instances use identity equality. Compare EVERY
+        # internal field of both; deepcopy creates a different object even
+        # when rejection has correctly left all state untouched.
+        self.assertEqual(eng.__dict__.keys(), before.keys())
+        for key in ("_states", "_battery_p1_states"):
+            self.assertEqual(eng.__dict__[key].__dict__, before[key].__dict__, key)
+        for key in before.keys() - {"_states", "_battery_p1_states"}:
             self.assertEqual(eng.__dict__[key], before[key], key)
         eng.update(telemetry(1, 1))
         self.assertEqual(eng._last_tm_t, 1)

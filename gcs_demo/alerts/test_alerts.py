@@ -118,7 +118,7 @@ class ScenarioTests(unittest.TestCase):
         cls.follow = sim.run(policy="follow")
 
     def test_predicts_shortfall_well_ahead(self):
-        first = next(e for e in self.ignore["events"] if e["key"] == "battery_route" and e["type"] == "raise")
+        first = next(e for e in self.ignore["events"] if e["key"] == "battery" and e["type"] == "raise")
         # 落地前 8 分鐘以上就發現，而照飛的結果確實低於保留值
         self.assertGreater(self.ignore["summary"]["flight_s"] - first["t"], 480)
         self.assertLess(self.ignore["summary"]["landed_true_pct_of_nominal"], 20)
@@ -128,13 +128,21 @@ class ScenarioTests(unittest.TestCase):
         self.assertGreaterEqual(self.follow["summary"]["landed_true_pct_of_nominal"], 20)
 
     def test_detects_aged_battery(self):
-        self.assertTrue(any(e["key"] == "battery_capacity" for e in self.ignore["events"]))
+        self.assertTrue(any(frame.get("battery_members", {}).get("P3", {}).get("truth") == "TRUE"
+                            for frame in self.ignore["frames"]))
 
     def test_calm_flight_is_quiet(self):
         r = sim.run(scenario="calm", policy="ignore")
         keys = {e["key"] for e in r["events"]}
         self.assertNotIn("rtl_point", keys)
-        self.assertNotIn("battery_route", keys)          # 電夠的任務不誤報
+        # Capacity (P3) can still warn; route-energy members must stay quiet.
+        samples = [frame["battery_members"] for frame in r["frames"]
+                   if frame.get("battery_members")]
+        self.assertTrue(samples)  # do not pass vacuously if instrumentation is lost
+        for members in samples:
+            for predictor in ("P1", "P2"):
+                self.assertIn(predictor, members)
+                self.assertNotEqual(members[predictor]["truth"], "TRUE", predictor)
         self.assertGreaterEqual(r["summary"]["landed_true_pct_of_nominal"], 20)
         self.assertNotIn("wind_trend", keys)
 

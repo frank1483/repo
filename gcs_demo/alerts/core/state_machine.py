@@ -23,6 +23,7 @@ class _State:
     last_t: float | None = None
     last_sensed_t: float | None = None
     last_recv_t: float | None = None
+    last_assessment_id: str | None = None
     since_true: float | None = None
     true_count: int = 0
     since_false: float | None = None
@@ -62,7 +63,8 @@ class AlertEngine:
                 "prediction_expired": s.prediction_expired, "source": "rule"}
 
     def step(self, key, t, truth, severity=NOTICE, recommendation=None,
-             feasible_ids=None, *, max_gap_s=3.0, sensed_t=None, recv_t=None, **facts):
+             feasible_ids=None, *, max_gap_s=3.0, sensed_t=None, recv_t=None,
+             assessment_id=None, **facts):
         """feasible_ids=None means unavailable, not an empty allowed set.
 
         A TRUE assessment must provide feasible_ids when it offers a recommendation.
@@ -77,6 +79,8 @@ class AlertEngine:
             raise ValueError("explicit tri-state and supported severity required")
         if not isinstance(key, str) or not key:
             raise ValueError("nonempty key required")
+        if assessment_id is not None and (not isinstance(assessment_id, str) or not assessment_id):
+            raise ValueError("nonempty composite assessment identity required")
         feasible = None if feasible_ids is None else set(feasible_ids)
         if recommendation is not None and (feasible is None or recommendation not in feasible):
             recommendation = None
@@ -84,8 +88,13 @@ class AlertEngine:
         if s.last_t is not None and t <= s.last_t:
             self.dropped[key] = self.dropped.get(key, 0) + 1
             return []
-        if truth is not UNKNOWN and s.last_sensed_t is not None and (
-                sensed_t <= s.last_sensed_t or recv_t <= s.last_recv_t):
+        # Composite assessments include independently timed member samples.
+        # Their newest timestamp need not advance when a slower member changes.
+        # The caller supplies the complete source signature, never a poll counter.
+        duplicate = (assessment_id == s.last_assessment_id if assessment_id is not None else
+                     s.last_sensed_t is not None and
+                     (sensed_t <= s.last_sensed_t or recv_t <= s.last_recv_t))
+        if truth is not UNKNOWN and duplicate:
             self.dropped[key] = self.dropped.get(key, 0) + 1
             return []
         # Stale TRUE must never raise/upgrade, even when the caller missed gating.
@@ -96,6 +105,7 @@ class AlertEngine:
         s.last_t = t
         if truth is not UNKNOWN:
             s.last_sensed_t, s.last_recv_t = sensed_t, recv_t
+            s.last_assessment_id = assessment_id
         s.facts = deepcopy(facts)
         changed = False
         if s.active and feasible is not None and s.recommendation not in feasible:
