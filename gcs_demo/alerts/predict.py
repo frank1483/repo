@@ -29,6 +29,8 @@ from .energy_api import (Vehicle, Wind, air_power_w, leg_energy, rtl_energy,
 
 # GcpAlertManager 用的 MAV_SEVERITY
 SEV_CRITICAL, SEV_WARNING, SEV_NOTICE = 2, 4, 5
+HOLD_ZH = "無符合條件方案，請人工決策"
+PENDING_ZH = "建議尚待穩定確認，請人工決策"
 
 
 @dataclass
@@ -872,6 +874,10 @@ class PredictiveAlertEngine:
         candidates = finding.candidates if finding is not None else []
         choice = next((c["id"] for c in candidates
                        if self._recommendation_key(c) == state.recommendation), None)
+        decision = "SELECT" if any(c["id"] == choice and c.get("feasible") is True
+                                   for c in candidates) else "HOLD"
+        state.facts["rule_decision"] = decision
+        state.facts["rule_decision_zh"] = self._decision_zh(decision, candidates)
         if state.active and finding is not None:
             self._active[key] = replace(finding, severity=state.severity,
                                         rule_choice=choice,
@@ -888,6 +894,8 @@ class PredictiveAlertEngine:
             row["rule_decision"] = "SELECT" if any(
                 c["id"] == row["rule_choice"] and c.get("feasible") is True
                 for c in row.get("candidates", [])) else "HOLD"
+            row["rule_decision_zh"] = self._decision_zh(
+                row["rule_decision"], row.get("candidates", []))
         return rows
 
     def _recommendation_eligible(self, candidate, retained=False):
@@ -916,6 +924,12 @@ class PredictiveAlertEngine:
         state = self._states.states.get(f.key)
         if state is not None and state.last_t is not None and t <= state.last_t:
             return []
+        # Contract 5.3: no feasible option is an immediate CRITICAL
+        # assessment, not merely a presentation change after debouncing.
+        # An unadopted but feasible option is a recommendation timing issue;
+        # it must not be mislabeled as absence of a feasible plan.
+        if f.active and not any(c.get("feasible") is True for c in f.candidates):
+            f = replace(f, severity=SEV_CRITICAL)
         previous = self._active.get(f.key)
         payload = f if f.active or previous is None else previous
         facts = self._state_facts(self._event(t, "update", payload))
@@ -943,11 +957,20 @@ class PredictiveAlertEngine:
         return "SELECT" if any(c.get("feasible") is True for c in f.candidates) else "HOLD"
 
     @staticmethod
+    def _decision_zh(decision, candidates):
+        if decision == "SELECT":
+            return "依規則建議方案，請操作員確認"
+        return (PENDING_ZH if any(c.get("feasible") is True for c in candidates)
+                else HOLD_ZH)
+
+    @staticmethod
     def _event(t, kind, f: Finding):
         return {"t": t, "type": kind, "key": f.key, "severity": f.severity, "title": f.title,
                 "value": f.value, "lead_s": f.lead_s, "evidence": f.evidence,
                 "candidates": f.candidates, "rule_choice": f.rule_choice,
-                "rule_decision": PredictiveAlertEngine._rule_decision(f)}
+                "rule_decision": PredictiveAlertEngine._rule_decision(f),
+                "rule_decision_zh": PredictiveAlertEngine._decision_zh(
+                    PredictiveAlertEngine._rule_decision(f), f.candidates)}
 
     def current_state(self, key):
         """Live explainer gate, including changes that emitted no rule event."""
