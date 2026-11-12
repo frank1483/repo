@@ -166,10 +166,12 @@ class RankedFacts0455Tests(unittest.TestCase):
         snapshot = deepcopy(original)
         rows = option_evidence(original, [candidate("C1", 30.), candidate("C2", 32.)], "battery")
         self.assertEqual(original, snapshot)
-        self.assertEqual(rows[0], original[0])
+        self.assertEqual(rows[0], dict(original[0], raw_value=2.0,
+                         members=["P3"], member_sources=[{k: original[0][k] for k in
+                         ("source_predictor", "source_evidence_id", "sensed_t", "recv_t")}]))
         self.assert_bound(rows)
         values = {(e["option_id"], e["metric"]): e["value"] for e in rows}
-        self.assertEqual((values["C1", "end_pct"], values["C2", "end_pct"]), (30., 32.))
+        self.assertEqual((values["C1", "end_pct"], values["C2", "end_pct"]), ("30.0", "32.0"))
 
     def test_production_battery_and_capacity_rows_have_complete_bindings(self):
         eng = engine()

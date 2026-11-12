@@ -45,13 +45,14 @@ def ocv_cell(soc_true):
     return v
 
 
-def run(scenario="gusty", policy="ignore", dt=1.0, seed=7, explain_fn=None, max_t=3000):
+def run(scenario="gusty", policy="ignore", dt=1.0, seed=7, explain_fn=None, max_t=3000, *, capacity_check=True):
     """policy: "ignore" 不理告警照飛；"follow" 第一次電量告警時採用它的建議。"""
     rnd = random.Random(seed)
     home = (0.0, 0.0, 0.0)
     route = survey_route()
     veh = default_vehicle()
-    eng = PredictiveAlertEngine(route, home, veh, Config(reserve_pct=veh.reserve_pct))
+    eng = PredictiveAlertEngine(route, home, veh, Config(reserve_pct=veh.reserve_pct),
+                                capacity_check=capacity_check)
 
     cap_true = veh.battery_wh * CAP_TRUE
     pos = [0.0, 0.0, 0.0]

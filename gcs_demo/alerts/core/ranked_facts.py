@@ -1,6 +1,7 @@
 """Legacy v5 facts. No prediction, feasibility threshold or model invocation."""
 from copy import deepcopy
 import math
+import json
 
 
 def finite(value):
@@ -50,13 +51,60 @@ def fact(ident, text, metric, value, unit, segment, *, option_id=None, **extra):
             "value": value, "unit": unit, "segment": segment, "relation": "=", **extra}
 
 
-def option_evidence(evidence, candidates, key):
-    """Append option-scoped scalar metrics; retain every original source row.
+def _display_fact(row):
+    """Round presentation only; prediction and ranking keep their raw scalars."""
+    value, unit = row.get("value"), row.get("unit", "")
+    raw = row.get("raw_value", value)
+    if isinstance(raw, str):
+        token = raw.strip()
+        if unit and token.endswith(unit):
+            token = token[:-len(unit)].strip()
+        try:
+            raw = float(token)
+        except ValueError:
+            return row
+    if not finite(raw):
+        return row
+    row.setdefault("raw_value", raw)
+    places = {"%": 1, "m/s": 1, "Wh": 0, "倍": 2, "s": 0, "°": 0}.get(unit)
+    if places is not None:
+        suffix = unit if isinstance(value, str) and value.strip().endswith(unit) else ""
+        row["value"] = f"{raw:.{places}f}" + suffix
+    return row
 
-    Values come from computed candidate fields, never parsed from prose. Source
-    rows (including battery member timestamps and IDs) are copied unchanged.
+
+def option_evidence(evidence, candidates, key):
+    """Merge exact measurements before rounding; retain first ID and all origins.
+
+    Different segments/options/values remain distinct. Older incomplete fixture
+    rows are retained individually. Sources are copied; no caller is mutated.
     """
-    rows = deepcopy(evidence)
+    rows, seen = [], {}
+    labels = {c["id"]: c.get("label", "") for c in candidates}
+    for source in evidence:
+        row = deepcopy(source)
+        # Compare raw source values, never two values made equal by rounding.
+        identity = json.dumps([row.get(k) for k in
+                               ("metric", "segment", "option_id", "value", "unit")],
+                              sort_keys=True, ensure_ascii=False)
+        member = row.get("source_predictor")
+        if member is not None:
+            row["members"] = list(dict.fromkeys(row.get("members", []) + [member]))
+            row["member_sources"] = [{k: deepcopy(row[k]) for k in
+                                      ("source_predictor", "source_evidence_id", "sensed_t", "recv_t")
+                                      if k in row}]
+        if row.get("metric") is not None and identity in seen:
+            first = seen[identity]
+            for name in row.get("members", []):
+                if name not in first.setdefault("members", []):
+                    first["members"].append(name)
+            for origin in row.get("member_sources", []):
+                if origin not in first.setdefault("member_sources", []):
+                    first["member_sources"].append(origin)
+            continue
+        if row.get("metric") is not None:
+            seen[identity] = row
+        rows.append(row)
     present = {(e.get("option_id"), e.get("metric")) for e in rows}
     next_id = max((int(e["id"][1:]) for e in rows
                    if isinstance(e.get("id"), str) and e["id"][1:].isdigit()), default=0)
@@ -74,4 +122,11 @@ def option_evidence(evidence, candidates, key):
                              option_id=c["id"], source_kind="candidate",
                              source_predictor="P1" if key == "battery" else key))
             present.add((c["id"], metric))
+    for row in rows:
+        ident = row.get("option_id")
+        if ident is not None:
+            label = row.get("text", row.get("metric", ""))
+            row.setdefault("metric_label", label)
+            row["text"] = f"{ident} {labels.get(ident, '')}：{label}"
+        _display_fact(row)
     return rows

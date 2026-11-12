@@ -18,7 +18,8 @@ class _SimulationFeed:
     its own voltage/current; this adapter does not bypass that MVP path.
     """
 
-    def __init__(self, route, home, vehicle, config):
+    def __init__(self, route, home, vehicle, config, *, capacity_check=True):
+        del capacity_check  # Adapter exercises AlertFeed's own MVP policy.
         del config  # AlertFeed owns its MVP config, including cell_empty_v=3.5.
         self.home = {"lat": energy_api.REF_LAT, "lon": energy_api.REF_LON}
         self.m_per_deg = math.pi * 6371000.0 / 180.0

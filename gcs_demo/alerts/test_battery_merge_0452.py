@@ -44,7 +44,7 @@ class BatteryMerge0452Tests(unittest.TestCase):
         self.assertTrue(all(e["source_evidence_id"] == "E1" for e in sources))
         metrics = [e for e in row["evidence"] if e.get("source_kind") == "candidate"]
         self.assertEqual([(e["option_id"], e["metric"], e["value"]) for e in metrics],
-                         [("C4", "end_pct", 30.), ("C4", "completion_pct", 0.)])
+                         [("C4", "end_pct", "30.0"), ("C4", "completion_pct", "0.0")])
         self.assertEqual(len({e["id"] for e in row["evidence"]}), len(row["evidence"]))
         self.assertFalse(set(eng._states.states) & {"battery_route", "rtl_point", "battery_capacity"})
         self.assertEqual(eng.current_state("battery")["feasible_ids"], ["C4"])

@@ -391,13 +391,13 @@ class PredictiveAlertEngine:
         ev = [
             fact("E1", "預估完成航線並返航後的落地電量", "end_pct", f"{end_pct:.1f}%", "%", "remaining_route_and_rtl",
                  option_id="C1", raw_value=end_pct, display_value=landing_pct_text(end_pct)),
-            fact("E2", "落地保留電量設定", "reserve_pct", f"{self.cfg.reserve_pct:.0f}%", "%", "configuration"),
+            fact("E2", "落地保留電量設定", "reserve_pct", f"{self.cfg.reserve_pct:.0f}%", "%", "configuration", raw_value=self.cfg.reserve_pct),
             fact("E3", "目前可用能量", "usable_wh", f"{avail_wh:.0f}", "Wh", "current",
                  basis=basis, raw_value=avail_wh),
-            fact("E4", "實測耗電與模型耗電比", "calibration_ratio", f"{self.calib:.2f}", "倍", "calibration"),
-            fact("E5", "預測用風速", "wind_speed", f"{wind.speed_mps:.1f}", "m/s", "remaining_route"),
+            fact("E4", "實測耗電與模型耗電比", "calibration_ratio", f"{self.calib:.2f}", "倍", "calibration", raw_value=self.calib),
+            fact("E5", "預測用風速", "wind_speed", f"{wind.speed_mps:.1f}", "m/s", "remaining_route", raw_value=wind.speed_mps),
             fact("E6", "剩餘航點數", "remaining_waypoints", n_rem, "個", "remaining_route"),
-            fact("E7", "目前風速", "wind_speed", f"{tm.wind.speed_mps:.1f}", "m/s", "current"),
+            fact("E7", "目前風速", "wind_speed", f"{tm.wind.speed_mps:.1f}", "m/s", "current", raw_value=tm.wind.speed_mps),
             fact("E8", "預測風向", "wind_direction", f"{wind.from_deg:.0f}", "°", "remaining_route"),
         ]
         self.last_state.update({"end_pct": end_pct, "avail_wh": avail_wh, "basis": basis,
@@ -464,10 +464,10 @@ class PredictiveAlertEngine:
                 f3.title = "電池實際容量低於標稱"
                 f3.value = f"約為標稱 {ratio * 100:.0f}%，飛控電量% 偏高約 {gap_pct:.0f}%"
                 f3.evidence = [
-                    fact("E1", "推估總容量", "estimated_capacity_wh", f"{total_cap:.0f}", "Wh", "battery_capacity", basis="voltage"),
-                    fact("E2", "電池標稱容量", "nominal_capacity_wh", f"{self.v.battery_wh:.0f}", "Wh", "battery_capacity"),
-                    fact("E3", "飛控電量", "fc_pct", f"{tm.soc_pct:.0f}%", "%", "current"),
-                    fact("E4", "推估實際剩餘電量", "estimated_remaining_pct", f"{avail_wh / self.v.battery_wh * 100:.0f}%", "%", "current", basis="voltage"),
+                    fact("E1", "推估總容量", "estimated_capacity_wh", f"{total_cap:.0f}", "Wh", "battery_capacity", basis="voltage", raw_value=total_cap),
+                    fact("E2", "電池標稱容量", "nominal_capacity_wh", f"{self.v.battery_wh:.0f}", "Wh", "battery_capacity", raw_value=self.v.battery_wh),
+                    fact("E3", "飛控電量", "fc_pct", f"{tm.soc_pct:.0f}%", "%", "current", raw_value=tm.soc_pct),
+                    fact("E4", "推估實際剩餘電量", "estimated_remaining_pct", f"{avail_wh / self.v.battery_wh * 100:.0f}%", "%", "current", basis="voltage", raw_value=avail_wh / self.v.battery_wh * 100),
                 ]
                 f3.candidates = [
                     {"id": "C1", "action": "A_USE_VOLTAGE_ESTIMATE", "label": "後續預測改用電壓推估", "energy_feasible": None, "feasible": True},
@@ -587,10 +587,10 @@ class PredictiveAlertEngine:
                 f.value = f"WP{wp + 1}（離家 {d / 1000:.2f} km）預估鏈路 {max(0, q):.0f}%，約 {t_cum / 60:.1f} 分鐘後"
                 f.lead_s = t_cum
                 f.evidence = [
-                    fact("E1", "目前鏈路品質", "link_pct", f"{tm.link_pct:.0f}%", "%", "current"),
+                    fact("E1", "目前鏈路品質", "link_pct", f"{tm.link_pct:.0f}%", "%", "current", raw_value=tm.link_pct),
                     fact("E2", "每遠一公里鏈路下降", "link_loss_per_km", f"{-b * 1000:.0f}", "%/km", "remaining_route"),
-                    fact("E3", "預估航點鏈路品質", "predicted_link_pct", f"{max(0, q):.0f}%", "%", f"WP{wp + 1}"),
-                    fact("E4", "弱鏈路門檻", "link_min_pct", f"{self.cfg.link_min_pct:.0f}%", "%", "configuration"),
+                    fact("E3", "預估航點鏈路品質", "predicted_link_pct", f"{max(0, q):.0f}%", "%", f"WP{wp + 1}", raw_value=max(0, q)),
+                    fact("E4", "弱鏈路門檻", "link_min_pct", f"{self.cfg.link_min_pct:.0f}%", "%", "configuration", raw_value=self.cfg.link_min_pct),
                     fact("E5", "目前離家距離", "home_distance", f"{d_now / 1000:.2f}", "km", "current"),
                     fact("E6", "鏈路回歸擬合度", "link_r_squared", f"{r2:.2f}", "", "history"),
                     fact("E7", "預估弱鏈路航點", "link_waypoint", f"WP{wp + 1}", "", "remaining_route", value_kind="categorical_id"),
@@ -634,9 +634,9 @@ class PredictiveAlertEngine:
             f.value = f"現在 {tm.wind.speed_mps:.1f} m/s，每分鐘 +{b * 60:.1f}，約 {tts / 60:.1f} 分鐘後達 {lim:.0f} m/s"
             f.lead_s = tts
             f.evidence = [
-                fact("E1", "目前風速", "wind_speed", f"{tm.wind.speed_mps:.1f}", "m/s", "current"),
+                fact("E1", "目前風速", "wind_speed", f"{tm.wind.speed_mps:.1f}", "m/s", "current", raw_value=tm.wind.speed_mps),
                 fact("E2", "每分鐘風勢增幅", "wind_trend_per_min", f"{b * 60:+.2f}", "m/s/分", "history_180s"),
-                fact("E3", "機體抗風上限", "wind_limit", f"{lim:.0f} m/s", "m/s", "configuration"),
+                fact("E3", "機體抗風上限", "wind_limit", f"{lim:.0f} m/s", "m/s", "configuration", raw_value=lim),
                 fact("E4", "趨勢回歸擬合度", "wind_r_squared", f"{r2:.2f}", "", "history_180s"),
                 fact("E5", "到達抗風上限時間", "eta_s", tts, "s", "wind_limit"),
             ]
