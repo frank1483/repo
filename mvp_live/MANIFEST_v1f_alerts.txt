@@ -1,0 +1,9 @@
+MVP live smoke v1f-alerts (prepared 2026-11-12 TW).
+Sources (frank1483/repo):
+  src/gateway  claude/project-thread-wum8aq  847f5a9  gcs_demo/llm_gateway.py (contract v0.4.4)
+  src/alerts   claude/project-thread-dp0ev4  55284f1  gcs_demo/ (alerts v5 batch1 + MVP P3 capacity off + evidence de-dup/rounding, Codex 0396-0398)
+Runner: run_mvp_live_v1f_alerts.ps1: preflight (no model call) -> gateway -> warm-up -> gcs_demo.alerts.mvp_smoke (S1-S3)
+Model: Ollama gemma4:e2b on the user's PC via gateway 127.0.0.1:8090.
+Expected model calls: about 40 max (warm-up 1; each explanation 2-3 slot calls; cloud fake run made 36).
+Cloud dry run (gateway + fake Ollama): exit 0; S1 llm 3/3, S2 llm 2/2 selected_id null, S3 stale discarded; no capacity alert; no duplicated evidence.
+Queue: after v1e (98dab11d). Run once; output kept as-is.
