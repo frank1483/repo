@@ -8,6 +8,10 @@
 #   CPM_CACHE_SRC     ~/elan_agent_v5/build/cpm_modules（v5 編譯成功時的相依套件快取；複製一份來用，不改原本的）
 #   LIBEVENTS_SOURCE  ~/qgroundcontrol-v5/build/cpm_modules/libevents/1ea2d34e1cc3658140fb45034b187e87d60c899b
 #   JOBS              4
+# v2 (2026-11-13, after build1 failed at configure): the formal UI source has no .git, but QGC's cmake/Git.cmake
+# needs git output, so the copy gets its own throwaway local git repo (one commit; nothing is pushed anywhere).
+# geographiclib: CPM's cache hash includes the absolute PATCHES path, so the v5 cache folder (already patched) is
+# passed explicitly with CPM_geographiclib_SOURCE.
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 [[ $# == 2 ]] || { echo 'usage: bash ubuntu_build_mvp.sh <source-UI> <new-copy-path>' >&2; exit 2; }
@@ -20,7 +24,7 @@ LIBEVENTS_SOURCE="${LIBEVENTS_SOURCE:-$HOME/qgroundcontrol-v5/build/cpm_modules/
 JOBS="${JOBS:-4}"
 
 fail() { echo "STOP: $*" >&2; exit 2; }
-for tool in realpath rsync tee ninja sha256sum; do command -v "$tool" >/dev/null || fail "missing tool: $tool"; done
+for tool in realpath rsync tee ninja sha256sum git; do command -v "$tool" >/dev/null || fail "missing tool: $tool"; done
 [[ "$DST" != / && "$DST" != "$SRC" && "$DST" != "$SRC/"* && "$SRC" != "$DST/"* ]] || fail 'destination must be separate from the source UI'
 [[ ! -e "$DST" && ! -L "$DST" ]] || fail "destination already exists: $DST (each build uses a new folder)"
 [[ -f "$SRC/GCP/GcpMainShell.qml" && ! -e "$SRC/GCP/Agent" ]] || fail 'source must be an uninstalled formal UI tree'
@@ -47,11 +51,20 @@ echo '[2/5] installer dry run ...'
 bash "$HERE/install_mvp_into_ui.sh" --check "$DST" 2>&1 | tee "$LOG/1_install_check.log"
 echo '[3/5] install UI agent + MVP slots + plugins into the copy ...'
 bash "$HERE/install_mvp_into_ui.sh" "$DST" 2>&1 | tee "$LOG/2_install.log"
+echo '      local git snapshot of the copy (QGC version scripts need git; source UI untouched) ...'
+[[ ! -e "$DST/.git" ]] || fail "copy already has .git: $DST/.git"
+{ git -C "$DST" init -q && git -C "$DST" add -A \
+  && git -C "$DST" -c user.name=mvp-build -c user.email=mvp-build@localhost -c commit.gpgsign=false \
+       commit -q -m "MVP build snapshot (local only)" && git -C "$DST" describe --always --tags; } 2>&1 | tee "$LOG/2b_git_snapshot.log"
 echo '[4/5] configure (offline) ...'
 cp -a -- "$CPM_CACHE_SRC" "$DST/build-mvp-cpm-cache"
+mapfile -t GEO < <(find "$DST/build-mvp-cpm-cache/geographiclib" -mindepth 1 -maxdepth 1 -type d)
+[[ ${#GEO[@]} == 1 ]] || fail "expected exactly one geographiclib folder in the cache, found ${#GEO[@]}"
+echo "geographiclib=${GEO[0]}" >> "$LOG/build_info.txt"
 "$CMAKE" -S "$DST" -B "$DST/build-mvp" -G Ninja \
     -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_PREFIX_PATH=$QT_PREFIX" "-DCMAKE_MAKE_PROGRAM=$(command -v ninja)" \
     "-DCPM_SOURCE_CACHE=$DST/build-mvp-cpm-cache" "-DCPM_libevents_SOURCE=$LIBEVENTS_SOURCE" \
+    "-DCPM_geographiclib_SOURCE=${GEO[0]}" \
     -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
     2>&1 | tee "$LOG/3_configure.log"
 echo '[5/5] build ...'
