@@ -25,6 +25,12 @@ Item {
     property color cLlm: "#C4B5FD"
     property real fs: 14
 
+    // 由 UI 串插槽設定：GcpAlertManager 單例（沒裝在正式 UI 時為 null）、envValue、目前載具 id
+    property var alertManager: null
+    property var envValue: function (name, fallback) { return fallback }
+    property int vehicleId: 0
+    property var _rows: ({})
+
     property bool online: false
     property string modelName: ""
     property var cardList: []
@@ -52,8 +58,20 @@ Item {
     function poll() {
         request("GET", "/api/alerts", null, function (j) {
             root.online = j !== null
-            if (j) root.cardList = Core.cards(j.alerts, root.dismissed)
+            if (j) { root.cardList = Core.cards(j.alerts, root.dismissed); root.syncManager(j.alerts) }
         })
+    }
+
+    function syncManager(alerts) {
+        if (!alertManager) return
+        const plan = Core.managerSync(alerts, _rows)
+        const rows = Object.assign({}, _rows)
+        plan.resolve.forEach(r => { alertManager.resolveCondition(r.rowId); delete rows[r.condKey] })
+        plan.add.forEach(a => {
+            const id = alertManager.addConditionAlert(a.severity, qsTr("預測告警"), vehicleId, a.message, a.value)
+            if (id) rows[a.condKey] = id
+        })
+        _rows = rows
     }
 
     function refreshInfo() {
@@ -71,6 +89,7 @@ Item {
         if (_busy) return
         _busy = true; status = qsTr("規劃中…")
         request("POST", "/api/reset", {}, function () {
+            root.syncManager([])
             request("POST", "/api/plan", {}, function (plan) {
                 const body = Core.startBody(plan)
                 if (!body) { root._busy = false; root.status = qsTr("沒有可執行的示範方案"); return }

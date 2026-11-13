@@ -19,3 +19,18 @@ t("startBody prefers rule_choice", () => {
   assert.equal(C.startBody({ rule_choice: "C1", mission_version: "v", candidates: [{ id: "C1", feasible: false }, { id: "C3", feasible: true }] }).choice_id, "C3")
 })
 console.log(n + " tests OK")
+// ---- GcpAlertManager 同步
+const S = C.managerSync
+t("manager add once, then no duplicate", () => {
+  const a = A({ severity: 4 }); const p1 = S([a], {}); assert.equal(p1.add.length, 1); assert.equal(p1.add[0].severity, 4)
+  assert.equal(p1.add[0].condKey, "a1|4"); assert.deepEqual(S([A({ alert_version: 3, text_zh: "AI 說明" })], { "a1|4": "u1" }), { add: [], resolve: [] })
+})
+t("manager severity change resolves old row", () => {
+  const p = S([A({ severity: 2 })], { "a1|4": "u1" }); assert.equal(p.add[0].condKey, "a1|2"); assert.deepEqual(p.resolve, [{ condKey: "a1|4", rowId: "u1" }])
+})
+t("manager resolve on inactive or gone", () => {
+  assert.deepEqual(S([A({ active: false })], { "a1|4": "u1" }).resolve, [{ condKey: "a1|4", rowId: "u1" }])
+  assert.equal(S([], { "a1|4": "u1", "b|5": "u2" }).resolve.length, 2)
+})
+t("manager levels map 5/4/2", () => { assert.deepEqual(S([A({ alert_id: "x", severity: 5 }), A({ alert_id: "y", severity: 1 })], {}).add.map(x => x.severity), [5, 2]) })
+console.log(n + " tests OK (with manager)")

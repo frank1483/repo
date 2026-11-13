@@ -57,5 +57,25 @@ function startBody(plan) {
     return pick ? { mission_version: plan.mission_version, choice_id: pick.id } : null
 }
 
+// 寫進正式 UI 的告警清單（GcpAlertManager）。它的 addConditionAlert 不去重，所以這裡記「條件 key → 列 id」。
+// 條件 key = alert_id + 等級：同一則告警升降級時舊列 resolve、新列 add；說明文字改變不重寫（避免嚴重等級重複語音），
+// 列上的訊息是發出當下的規則文字，模型說明只在面板上補。告警解除或從清單消失時 resolve。
+// rows: { condKey: rowId }；回傳 { add: [{condKey, severity, message, value}], resolve: [{condKey, rowId}] }
+function managerSync(alerts, rows) {
+    var want = {}
+    var add = [], resolve = []
+    var list = alerts || []
+    for (var i = 0; i < list.length; i++) {
+        var a = list[i]
+        if (a.active === false) continue
+        var sev = levelOf(a.severity) === LEVELS[2] ? 2 : (levelOf(a.severity) === LEVELS[4] ? 4 : 5)
+        var k = String(a.alert_id || a.key) + "|" + sev
+        want[k] = true
+        if (!rows || !rows[k]) add.push({ condKey: k, severity: sev, message: a.text_zh || a.title || "", value: String(a.value === undefined ? "" : a.value) })
+    }
+    for (var key in (rows || {})) if (!want[key]) resolve.push({ condKey: key, rowId: rows[key] })
+    return { add: add, resolve: resolve }
+}
+
 if (typeof module !== "undefined") module.exports = { levelOf: levelOf, explainBadge: explainBadge, dismissKey: dismissKey,
-    canDismiss: canDismiss, cards: cards, startBody: startBody }
+    canDismiss: canDismiss, cards: cards, startBody: startBody, managerSync: managerSync }
