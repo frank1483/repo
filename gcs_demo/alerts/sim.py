@@ -45,13 +45,14 @@ def ocv_cell(soc_true):
     return v
 
 
-def run(scenario="gusty", policy="ignore", dt=1.0, seed=7, explain_fn=None, max_t=3000):
+def run(scenario="gusty", policy="ignore", dt=1.0, seed=7, explain_fn=None, max_t=3000, *, capacity_check=True):
     """policy: "ignore" 不理告警照飛；"follow" 第一次電量告警時採用它的建議。"""
     rnd = random.Random(seed)
     home = (0.0, 0.0, 0.0)
     route = survey_route()
     veh = default_vehicle()
-    eng = PredictiveAlertEngine(route, home, veh, Config(reserve_pct=veh.reserve_pct))
+    eng = PredictiveAlertEngine(route, home, veh, Config(reserve_pct=veh.reserve_pct),
+                                capacity_check=capacity_check)
 
     cap_true = veh.battery_wh * CAP_TRUE
     pos = [0.0, 0.0, 0.0]
@@ -127,11 +128,15 @@ def run(scenario="gusty", policy="ignore", dt=1.0, seed=7, explain_fn=None, max_
         if phase in ("cruise", "home"):
             new = eng.update(tm)
             for ev in new:
+                if ev["type"] == "resolve":
+                    retire = getattr(explain_fn, "retire", None)
+                    if retire is not None:
+                        retire(ev["key"])
                 if explain_fn and ev["type"] != "resolve":
                     ev["explain"] = explain_fn(ev)
                 events.append(ev)
                 if (policy == "follow" and ev["type"] in ("raise", "update")
-                        and ev["key"] in ("battery_route", "rtl_point")):
+                        and ev["key"] in ("battery", "battery_route", "rtl_point")):
                     a = _apply(ev, t, route, target, wp_i)
                     if a and (not applied or (a["action"], a.get("param")) != (applied[-1]["action"], applied[-1].get("param"))):
                         applied = (applied or []) + [a]
@@ -191,4 +196,5 @@ def _frame(t, pos, used, cap_true, veh, wind, soc_fc, eng, phase, link):
             "pnr_wp": st.get("pnr_wp"), "pnr_eta": None if st.get("pnr_eta_s") is None else round(st["pnr_eta_s"]),
             "calib": round(st.get("calib", 1.0), 3), "wind": round(wind.speed_mps, 1),
             "link": round(link, 0) if link else None, "phase": phase,
-            "active": sorted(eng.active().keys())}
+            "active": sorted(eng.active().keys()),
+            "battery_members": {k: dict(v) for k, v in st.get("battery_members", {}).items()}}

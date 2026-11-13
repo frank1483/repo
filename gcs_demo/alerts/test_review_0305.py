@@ -6,6 +6,8 @@ import math
 import unittest
 
 from . import explain
+from .slot_test_helpers import SlotBackend
+from .test_v5_explain_fixtures import event, answer
 from .energy_api import Wind, default_vehicle
 from .predict import Config, Finding, PredictiveAlertEngine, Telemetry
 
@@ -41,9 +43,15 @@ EV = {
 }
 
 
+EV = event(EV)
+
+
 def ok_answer(**kw):
-    d = {"decision": "SELECT", "choice_id": "C3", "reason_zh": "可行且保留最多進度。", "evidence_ids": ["E1"],
-         "summary_zh": "建議飛完 WP13 後返航。"}
+    d = answer(EV, "C3", ["建議飛完 WP13 後返航。", "請操作員評估。"])
+    if "summary_zh" in kw:
+        d["sentences"][0] = kw.pop("summary_zh")
+    if "reason_zh" in kw:
+        d["sentences"][1] = kw.pop("reason_zh")
     d.update(kw)
     return d
 
@@ -60,10 +68,12 @@ class InputRobustness(unittest.TestCase):          # 審查第 1 項
         eng.update(tm(t=1, soc=float("nan")))
         eng.update(tm(t=2, wind=Wind(float("nan"), 90)))
 
-    def test_bad_next_wp_does_not_crash(self):
+    def test_bad_next_wp_raises_value_error(self):
         eng = PredictiveAlertEngine(ROUTE5, (0, 0, 0), default_vehicle())
-        eng.update(tm(next_wp=-3))
-        eng.update(tm(t=1, next_wp=99))
+        with self.assertRaises(ValueError):
+            eng.update(tm(next_wp=-3))
+        with self.assertRaises(ValueError):
+            eng.update(tm(t=1, next_wp=99))
 
 
 class WindAlreadyOverLimit(unittest.TestCase):     # 審查第 2 項
@@ -103,7 +113,8 @@ class ReturnPoint(unittest.TestCase):              # 審查第 3 項
         evs = []
         for i in range(3):
             evs += eng.update(tm(t=i, next_wp=1))
-        titles = {e["title"] for e in evs if e["key"] == "rtl_point"}
+        titles = {e["member_status"]["P2"]["title"] for e in evs
+                  if e["key"] == "battery" and e["member_status"]["P2"]["truth"] == "TRUE"}
         self.assertTrue(titles)
         self.assertNotIn("已到最晚返航點", titles, "現在就已沒有返航餘裕，要用不同說法")
 
@@ -114,7 +125,7 @@ class FeasibilityContract(unittest.TestCase):      # 審查第 4、6 項
         evs = []
         for i in range(3):
             evs += eng.update(tm(t=i, soc=12.0, used=430.0))
-        b = [e for e in evs if e["key"] == "battery_route" and e["type"] == "raise"]
+        b = [e for e in evs if e["key"] == "battery" and e["type"] == "raise"]
         self.assertTrue(b)
         ev = b[0]
         self.assertIn(ev.get("rule_decision"), ("SELECT", "HOLD"))
@@ -126,8 +137,10 @@ class FeasibilityContract(unittest.TestCase):      # 審查第 4、6 項
 
     def test_feasibility_uses_unrounded_value(self):
         eng = PredictiveAlertEngine(ROUTE5, (0, 0, 0), default_vehicle())
-        self.assertFalse(eng._is_feasible(19.96))
-        self.assertTrue(eng._is_feasible(20.0))
+        self.assertFalse(eng._is_feasible(19.96, "C1"))
+        self.assertFalse(eng._is_feasible(20.0, "C1"))  # lost: regain at 22 (5.2)
+        self.assertTrue(eng._is_feasible(22.0, "C1"))
+        self.assertTrue(eng._is_feasible(20.0, "C4"))  # independent first qualification
 
 
 class CompletionAfterReroute(unittest.TestCase):   # 審查第 5 項
@@ -158,7 +171,10 @@ class Hysteresis(unittest.TestCase):               # 審查第 7 項（pending�
 
 class ExplainContract(unittest.TestCase):          # 審查第 8、9 項
     def fb(self, **kw):
-        return explain.explain(EV, FakeBackend(ok_answer(**kw)))
+        # 範本句＋選格後模型不寫句子：成功路徑走選格假後端；不合規的回答改由同一個驗證器直接檢查
+        if not kw:
+            return explain.explain(EV, SlotBackend())
+        return {"source": "rule" if explain.validate(ok_answer(**kw), EV) else "llm"}
 
     def test_valid_answer_passes(self):
         self.assertEqual(self.fb()["source"], "llm")
@@ -169,8 +185,8 @@ class ExplainContract(unittest.TestCase):          # 審查第 8、9 項
         self.assertEqual(self.fb(evidence_ids=[["E1"]])["source"], "rule")
 
     def test_decision_must_be_valid(self):
-        self.assertEqual(self.fb(decision="MAYBE")["source"], "rule")
-        self.assertEqual(self.fb(decision="HOLD")["source"], "rule")   # 有可行選項時不能 HOLD
+        self.assertEqual(self.fb(selected_id="MAYBE")["source"], "rule")
+        self.assertEqual(self.fb(selected_id=None)["source"], "rule")   # 有可行選項時不能 HOLD
 
     def test_numbers_must_match_exactly(self):
         self.assertEqual(self.fb(summary_zh="預估落地 5%，建議返航。")["source"], "rule")   # 只有 15%

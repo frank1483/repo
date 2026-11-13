@@ -6,7 +6,9 @@ import unittest
 from unittest import mock
 
 from gcs_demo import llm
+from .test_v5_explain_fixtures import event, answer
 from gcs_demo.alerts import explain, typed_explain as tx
+from gcs_demo.alerts.slot_test_helpers import SlotBackend
 from gcs_demo.test_typed_orchestration import feed, measurement, request
 
 
@@ -49,9 +51,11 @@ class TypedViewTests(unittest.TestCase):
         self.assertTrue(self.view["evidence"])
         facts = tx._facts(self.view)
         text = str(facts)
-        for key in ("nominal_end_pct", "low_pct", "reserve_pct", "_key"):
+        for key in ("_key",):
             self.assertNotIn(key, text)
         self.assertEqual(facts["allowed_ids"], [])
+        self.assertEqual(facts["evidence"][0]["metric"], self.view["evidence"][0]["_key"])
+        self.assertIn("option_id", facts["evidence"][0])
         self.assertIn(self.view["severity_zh"], ("注意", "警告", "嚴重"))
 
     def test_resolve_and_inactive_not_explained(self):
@@ -60,15 +64,25 @@ class TypedViewTests(unittest.TestCase):
         self.assertIsNone(tx.typed_view(dict(self.events[0], active=False)))
 
     def test_rule_text_passes_own_validator(self):
-        self.assertIsNone(tx.validate(tx.rule_text(self.view), self.view))
+        self.assertGreaterEqual(len(self.events), 2)
+        for event in self.events:
+            view = tx.typed_view(event)
+            with self.subTest(predictor=event.get("predictor"), key=event["key"]):
+                self.assertIsNotNone(view)
+                self.assertIsNone(tx.validate(tx.rule_text(view), view))
 
     def test_valid_model_reply_used(self):
-        r = tx.explain_typed(self.view, FakeBackend(good_reply(self.view)))
+        backend = SlotBackend()
+        r = tx.explain_typed(self.view, backend)
         self.assertEqual(r["source"], "llm", r["fallback_reason"])
+        self.assertGreaterEqual(backend.calls, 1)
+        self.assertTrue(all('{"value":"代碼"}' in u for u in backend.users))   # 模型只填代碼
 
     def _bad(self, **change):
+        # 範本句＋選格後模型不寫句子；不合規的回答改由同一個驗證器直接檢查
         d = dict(good_reply(self.view), **change)
-        return tx.explain_typed(self.view, FakeBackend(d))
+        reason = tx.validate(d, self.view)
+        return {"source": "rule" if reason else "llm", "fallback_reason": reason}
 
     def test_rejections_fall_back_to_rule(self):
         cases = {
@@ -97,13 +111,8 @@ class TypedViewTests(unittest.TestCase):
 class AsyncTests(unittest.TestCase):
     def test_rule_shown_immediately_model_later(self):
         events = raised_events()
-        backend = FakeBackend(lambda user: None, delay=0.3)
+        backend = SlotBackend(delay=0.3)
         ex = tx.TypedAlertExplainer(backend)
-        views = {}
-        backend.reply = lambda user: good_reply(next(v for v in views.values() if v["alert_version"] in user))
-        for e in events:
-            v = tx.typed_view(e)
-            views[v["key"]] = v
         t0 = time.perf_counter()
         shown = ex.on_output({"events": events})
         self.assertLess(time.perf_counter() - t0, 0.1)          # 不等模型
@@ -117,7 +126,7 @@ class AsyncTests(unittest.TestCase):
         events = raised_events()[:1]
         gate = threading.Event()
         view = tx.typed_view(events[0])
-        ex = tx.TypedAlertExplainer(FakeBackend(good_reply(view), gate=gate))
+        ex = tx.TypedAlertExplainer(SlotBackend(gate=gate))
         ex.on_output({"events": events})
         ex.on_output({"events": [dict(events[0], type="resolve", active=False)]})
         gate.set()
@@ -143,9 +152,9 @@ class AsyncTests(unittest.TestCase):
               "evidence": [{"id": "E1", "text": "預估落地", "value": "5%"}],
               "candidates": [{"id": "C1", "label": "立即返航", "feasible": True, "end_pct": 25.0}],
               "rule_choice": "C1"}
-        reply = {"decision": "SELECT", "choice_id": "C1", "reason_zh": "可行。", "evidence_ids": ["E1"],
-                 "summary_zh": "預估落地 5%，建議立即返航。"}
-        ex = tx.LegacyAlertExplainer(FakeBackend(reply, delay=0.3))
+        ev = event(ev)
+        reply = answer(ev, "C1")
+        ex = tx.LegacyAlertExplainer(SlotBackend(delay=0.3))
         t0 = time.perf_counter()
         r = ex(ev)
         self.assertLess(time.perf_counter() - t0, 0.1)
@@ -163,18 +172,25 @@ class AlertFeedDefaultTests(unittest.TestCase):
         f = AlertFeed(home, path, load_airframe("x500"))
         self.assertIsInstance(f.explain_fn, tx.LegacyAlertExplainer)
         self.assertIsNone(AlertFeed(home, path, load_airframe("x500"), explain_fn=None).explain_fn)
-        ev = {"key": "battery_route", "t": 3, "type": "raise", "title": "電量", "value": "預估落地 5%",
-              "evidence": [{"id": "E1", "text": "預估落地", "value": "5%"}],
-              "candidates": [{"id": "C1", "label": "立即返航", "feasible": True}], "rule_choice": "C1"}
-        reply = {"decision": "SELECT", "choice_id": "C1", "reason_zh": "可行。", "evidence_ids": ["E1"],
-                 "summary_zh": "預估落地 5%，建議立即返航。"}
-        f.explain_fn = tx.LegacyAlertExplainer(FakeBackend(reply))
-        ev["explain"] = f.explain_fn(ev)
-        f.events.append(ev)
-        self.assertEqual(ev["explain"]["source"], "rule_pending")
+        from copy import deepcopy
+        from .test_bridge_v5_0421 import arm, rec
+        # Use real engine outputs, not an event detached from live engine state.
+        emitted = arm(f.engine)
+        emitted[0]["allowed_ids"] = ["C1"]  # explicit structured fixture, not production inference
+        reply = answer(emitted[0], "C1", ["請評估 C1。", "請操作員確認。"], ["E1"])
+        f.explain_fn.close(wait=True)
+        f.explain_fn = tx.LegacyAlertExplainer(SlotBackend(), current_state=f.engine.current_state)
+        self.addCleanup(f.explain_fn.close, True)
+        with mock.patch.object(f.engine, "update", return_value=emitted):
+            f.tick(rec(0), 0)
+        original = deepcopy(f.events[0])
+        self.assertEqual(original["explain"]["source"], "rule_pending")
         f.explain_fn.close(wait=True)
         self.assertEqual(len(f.poll_explanations()), 1)
-        self.assertEqual(ev["explain"]["source"], "llm")
+        self.assertEqual(f.events[0], original)
+        self.assertEqual(f.events[-1]["explain"]["source"], "llm")
+        self.assertGreater(f.events[-1]["engine_seq"], original["engine_seq"])
+        self.assertEqual(f.poll_explanations(), [])
 
 
 class DefaultBackendTests(unittest.TestCase):

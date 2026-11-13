@@ -2,6 +2,8 @@
 import unittest
 
 from . import explain, sim
+from .slot_test_helpers import SlotBackend
+from .test_v5_explain_fixtures import event, answer
 from .energy_api import Wind, default_vehicle, leg_energy, rtl_energy
 from .predict import linfit
 
@@ -27,6 +29,9 @@ EV = {
     ],
 }
 
+EV = event(EV)
+EV["evidence"][0].update(option_id="C4", value="40.0%")
+
 
 class EnergyTests(unittest.TestCase):
     def test_headwind_costs_more(self):
@@ -47,33 +52,33 @@ class EnergyTests(unittest.TestCase):
 class ExplainTests(unittest.TestCase):
     def test_valid_llm_choice_kept(self):
         # review_0305 第 8 項後，引用必須全部存在：混合 [E1,E9] 改為退回規則（原斷言保留 E1 已作廢）
-        d = {"decision": "SELECT", "choice_id": "C4", "reason_zh": "x", "evidence_ids": ["E1"],
-             "summary_zh": "預估落地 5%，建議返航。"}
-        r = explain.explain(EV, FakeBackend(d))
-        self.assertEqual(r["source"], "llm")
+        # 範本句＋選格：模型選 C4，依據 E1（屬於 C4 的落地電量），句子由程式寫
+        r = explain.explain(EV, SlotBackend(lambda cs, user: "C4" if "C4" in cs else cs[0]))
+        self.assertEqual(r["source"], "llm", r["fallback_reason"])
         self.assertEqual(r["text"]["choice_id"], "C4")
         self.assertEqual(r["text"]["evidence_ids"], ["E1"])
+        self.assertIn("C4 預估落地 40.0%", r["text"]["sentences"][0])
         self.assertFalse(r["text"]["rule_agrees"])
-        mixed = explain.explain(EV, FakeBackend(dict(d, evidence_ids=["E1", "E9"])))
-        self.assertEqual(mixed["source"], "rule")
+        d = answer(EV, "C4", ["C4 預估落地 40.0%。", "請操作員評估返航。"])
+        self.assertIsNotNone(explain.validate(dict(d, evidence_ids=["E1", "E9"]), EV))
 
     def test_infeasible_choice_falls_back(self):
-        d = {"decision": "SELECT", "choice_id": "C1", "reason_zh": "x", "evidence_ids": ["E1"], "summary_zh": "繼續"}
+        d = answer(EV, "C1")
         r = explain.explain(EV, FakeBackend(d))
         self.assertEqual((r["source"], r["text"]["choice_id"]), ("rule", "C3"))
 
     def test_unknown_id_and_made_up_number_fall_back(self):
-        d = {"decision": "SELECT", "choice_id": "C9", "reason_zh": "x", "evidence_ids": [], "summary_zh": "a"}
-        self.assertEqual(explain.explain(EV, FakeBackend(d))["source"], "rule")
-        d = {"decision": "SELECT", "choice_id": "C3", "reason_zh": "x", "evidence_ids": ["E1"], "summary_zh": "剩 63%"}
-        self.assertIn("63", explain.explain(EV, FakeBackend(d))["fallback_reason"])
+        r = explain.explain(EV, SlotBackend(raw='{"value":"C9"}'))   # 不在清單：修正一次仍錯 → 規則
+        self.assertEqual(r["source"], "rule")
+        self.assertIn("C9", r["fallback_reason"])
+        d = answer(EV, "C3", ["C3 落地 63%。", "請注意。"])
+        self.assertIn("63", explain.validate(d, EV))
 
     def test_simplified_or_field_names_fall_back(self):
-        d = {"decision": "SELECT", "choice_id": "C3", "reason_zh": "x", "evidence_ids": ["E1"],
-             "summary_zh": "电量不足以完成原航线，建议返航。"}
-        self.assertEqual(explain.explain(EV, FakeBackend(d))["fallback_reason"], "說明用了簡體字")
-        d["summary_zh"], d["reason_zh"] = "建議返航。", "missed_required 為 0"
-        self.assertEqual(explain.explain(EV, FakeBackend(d))["fallback_reason"], "說明寫出內部欄位名稱")
+        d = answer(EV, "C3", ["电量不足以完成原航线，建议返航。", "請注意。"])
+        self.assertEqual(explain.validate(d, EV), "說明用了簡體字")
+        d["sentences"] = ["建議返航。", "missed_required 為 0"]
+        self.assertEqual(explain.validate(d, EV), "說明寫出內部欄位名稱")
 
     def test_backend_down_still_alerts(self):
         r = explain.explain(EV, FakeBackend(None, ok=False))
@@ -113,7 +118,7 @@ class ScenarioTests(unittest.TestCase):
         cls.follow = sim.run(policy="follow")
 
     def test_predicts_shortfall_well_ahead(self):
-        first = next(e for e in self.ignore["events"] if e["key"] == "battery_route" and e["type"] == "raise")
+        first = next(e for e in self.ignore["events"] if e["key"] == "battery" and e["type"] == "raise")
         # 落地前 8 分鐘以上就發現，而照飛的結果確實低於保留值
         self.assertGreater(self.ignore["summary"]["flight_s"] - first["t"], 480)
         self.assertLess(self.ignore["summary"]["landed_true_pct_of_nominal"], 20)
@@ -123,13 +128,21 @@ class ScenarioTests(unittest.TestCase):
         self.assertGreaterEqual(self.follow["summary"]["landed_true_pct_of_nominal"], 20)
 
     def test_detects_aged_battery(self):
-        self.assertTrue(any(e["key"] == "battery_capacity" for e in self.ignore["events"]))
+        self.assertTrue(any(frame.get("battery_members", {}).get("P3", {}).get("truth") == "TRUE"
+                            for frame in self.ignore["frames"]))
 
     def test_calm_flight_is_quiet(self):
         r = sim.run(scenario="calm", policy="ignore")
         keys = {e["key"] for e in r["events"]}
         self.assertNotIn("rtl_point", keys)
-        self.assertNotIn("battery_route", keys)          # 電夠的任務不誤報
+        # Capacity (P3) can still warn; route-energy members must stay quiet.
+        samples = [frame["battery_members"] for frame in r["frames"]
+                   if frame.get("battery_members")]
+        self.assertTrue(samples)  # do not pass vacuously if instrumentation is lost
+        for members in samples:
+            for predictor in ("P1", "P2"):
+                self.assertIn(predictor, members)
+                self.assertNotEqual(members[predictor]["truth"], "TRUE", predictor)
         self.assertGreaterEqual(r["summary"]["landed_true_pct_of_nominal"], 20)
         self.assertNotIn("wind_trend", keys)
 

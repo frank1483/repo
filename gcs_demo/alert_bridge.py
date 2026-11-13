@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 import math
+from copy import deepcopy
+
+from .alerts.core.log import AlertLog
 
 from .alerts import energy_api
 from .alerts.typed_explain import LegacyAlertExplainer, legacy_version
@@ -18,9 +21,15 @@ _M = math.pi * 6371000.0 / 180.0
 
 class AlertFeed:
     def __init__(self, home: dict, path: list, vehicle, explain_fn=_DEFAULT_EXPLAIN,
-                 typed_geographic=False, typed_raise_ticks=3, typed_clear_ticks=10):
+                 typed_geographic=False, typed_raise_ticks=3, typed_clear_ticks=10,
+                 log_path=None):
         if not isinstance(typed_geographic, bool):
             raise ValueError("typed_geographic must be boolean")
+        if typed_geographic and log_path is not None:
+            raise ValueError("v5 logging currently requires the legacy engine")
+        self.alert_log = AlertLog(log_path)
+        self.engine_events = []  # every emitted event; MVP disables P3 before battery merge
+        self._pending_explanations = {}  # request snapshots + private returned-result references
         self._typed_feed = None
         self.latest = None
         if typed_geographic:
@@ -39,8 +48,9 @@ class AlertFeed:
         prio = [p.get("priority", 1) for p in path[1:-1]]     # 繞行點視同必經
         self.engine = PredictiveAlertEngine(self._route(path), (0.0, 0.0, 0.0), vehicle,
                                             Config(reserve_pct=vehicle.reserve_pct, cell_empty_v=3.5),
-                                            priorities=prio)
-        self.explain_fn = LegacyAlertExplainer() if explain_fn is _DEFAULT_EXPLAIN else explain_fn
+                                            priorities=prio, capacity_check=False)
+        self.explain_fn = (LegacyAlertExplainer(current_state=self.engine.current_state)
+                           if explain_fn is _DEFAULT_EXPLAIN else explain_fn)
         self.events = []
 
     def enu(self, lat, lon, alt=0.0):
@@ -77,30 +87,106 @@ class AlertFeed:
                        soc_pct=rec["battery_pct"], voltage=volt - current * 0.004 * CELLS,
                        current_a=current, used_wh=rec.get("used_wh", 0.0), cell_count=CELLS,
                        next_wp=next_idx, link_pct=95.0, wind=Wind(rec["wind_mps"], rec["wind_from"]))
-        # 模擬電壓只是 soc 的線性函數、沒有老化資訊，容量告警在此情境不可信，略過
-        new = [e for e in self.engine.update(tm) if e["key"] != "battery_capacity"]
+        # 依使用者 11/08 決定，MVP 停用 P3：模擬電壓由電量換算，沒有老化資訊。
+        # 引擎在 battery 合併前停用容量成員；P1/P2 及所有引擎輸出照常保留。
+        emitted = self.engine.update(tm)
+        for ev in emitted:
+            self.engine_events.append(deepcopy(ev))
+            self.alert_log.append(ev)
+        new = [deepcopy(e) for e in emitted]
         for ev in new:
+            if ev["type"] == "resolve":
+                retire = getattr(self.explain_fn, "retire", None)
+                if retire is not None:
+                    retire(ev["key"])
             if ev["type"] != "resolve" and self.explain_fn:
-                ev["explain"] = self.explain_fn(ev)
+                returned = self.explain_fn(deepcopy(ev))
+                ev["explain"] = deepcopy(returned)
+                if isinstance(returned, dict) and returned.get("source") == "rule_pending":
+                    self._pending_explanations[(ev["key"], legacy_version(ev))] = {
+                        "event": deepcopy(ev), "returned": returned}
             self.events.append(ev)
+        self._settle_explanations()
+        if self.alert_log.last_snapshot_t is None or tm.t >= self.alert_log.last_snapshot_t:
+            self.alert_log.snapshot(tm.t, {"last_state": deepcopy(self.engine.last_state),
+                                          "alerts": self.engine._states.snapshot()})
         return new
 
+    def _append_explanation(self, event):
+        self.engine_events.append(deepcopy(event))
+        self.alert_log.append(event)
+        self.events.append(deepcopy(event))
+
+    def _close_pending(self, request, reason):
+        pending = self._pending_explanations.pop(request, None)
+        if pending is not None:
+            # Rejected model content must not retire a still-live rule alert.
+            fallback = None
+            if reason == "result_rejected":
+                fallback = self.engine.apply_explanation(*request, {
+                    "source": "rule", "text": {}, "fallback_reason": reason})
+            self._append_explanation(fallback if fallback is not None else
+                                     self.engine.close_explanation(pending["event"], reason))
+
+    def _invalid_reason(self, request):
+        key, version = request
+        current = self.engine.current_state(key)
+        if current is None:
+            return "state_unavailable"
+        if current["alert_version"] != version:
+            return "version_superseded"
+        if current["active"] is not True:
+            state = self.engine._states.states.get(key)
+            if state and state.prediction_expired:
+                return "prediction_expired"
+            if state and state.facts.get("route_version") != self.engine._route_revision:
+                return "route_superseded"
+            return "alert_retired"
+        return None
+
+    def _settle_explanations(self):
+        # LegacyAlertExplainer may drop a completion before returning poll rows.
+        # Its private returned-result object settles to rule on retire/rejection;
+        # retain that reference separately, never share it with stored history.
+        for request, pending in list(self._pending_explanations.items()):
+            reason = self._invalid_reason(request)
+            if reason:
+                self._close_pending(request, reason)
+            elif pending["returned"].get("source") == "rule":
+                event = self.engine.apply_explanation(*request, pending["returned"])
+                if event is None:
+                    self._close_pending(request, "result_rejected")
+                else:
+                    self._pending_explanations.pop(request)
+                    self._append_explanation(event)
+
     def poll_explanations(self) -> list:
-        """取回背景完成的模型說明，套回對應的告警事件（版本不符的已在背景丟棄）。"""
-        poll = getattr(self.explain_fn, "poll", None)
-        if poll is None:
+        """Append completions/closures; old request and event rows stay immutable."""
+        if self._typed_feed is not None:
             return []
-        ready = poll()
-        for item in ready:
-            for ev in reversed(self.events):
-                if legacy_version(ev) == item["version"]:
-                    ev["explain"] = item["result"]
-                    break
-        return ready
+        poll = getattr(self.explain_fn, "poll", None)
+        accepted = []
+        for item in (poll() if poll is not None else []):
+            request = (item["key"], item["version"])
+            # Retired/settled/duplicate results can no longer affect the engine.
+            if request not in self._pending_explanations:
+                continue
+            reason = self._invalid_reason(request)
+            event = None if reason else self.engine.apply_explanation(*request, item["result"])
+            if event is None:
+                self._close_pending(request, reason or "result_rejected")
+                continue
+            self._pending_explanations.pop(request)
+            self._append_explanation(event)
+            accepted.append({**deepcopy(item), "result": deepcopy(event["explain"]),
+                             "event": deepcopy(event)})
+        self._settle_explanations()
+        return accepted
+
 
 
 def battery_raise(events) -> dict | None:
     for ev in events:
-        if ev["type"] == "raise" and ev["key"] in ("battery_route", "rtl_point"):
+        if ev["type"] == "raise" and ev["key"] in ("battery", "battery_route", "rtl_point"):
             return ev
     return None

@@ -14,14 +14,24 @@
 from __future__ import annotations
 
 import math
+import json
 from collections import deque
 from dataclasses import dataclass, field, replace
+from copy import deepcopy
+
+from .display import landing_pct_text
+from .core.state_machine import AlertEngine
+from .core.freshness import TRUE, FALSE, UNKNOWN
+from .core.source_inputs import SourceInputs
+from .core.ranked_facts import ranked_ids, fact, option_evidence
 
 from .energy_api import (Vehicle, Wind, air_power_w, leg_energy, rtl_energy,
                          with_calib, profile_limits)
 
 # GcpAlertManager 用的 MAV_SEVERITY
 SEV_CRITICAL, SEV_WARNING, SEV_NOTICE = 2, 4, 5
+HOLD_ZH = "無符合條件方案，請人工決策"
+PENDING_ZH = "建議尚待穩定確認，請人工決策"
 
 
 @dataclass
@@ -41,9 +51,13 @@ class Telemetry:
 
 @dataclass
 class Config:
+    """raise_ticks/clear_ticks are compatibility fields; v5 uses seconds."""
     reserve_pct: float = 20.0
     wind_limit_mps: float = 12.0
     link_min_pct: float = 35.0
+    # 第一階段假設門檻，待回放敏感度驗證。
+    link_warn_enter_s: float = 120.0
+    link_warn_exit_s: float = 150.0
     cell_r_ohm: float = 0.004         # 單芯內阻（電壓補償用）
     cell_empty_v: float = 3.55        # 補償後單芯電壓到這裡視為 0%
     raise_ticks: int = 3              # 連續成立幾次才發
@@ -81,11 +95,22 @@ class Finding:
     candidates: list = field(default_factory=list)   # [{"id","action","label","end_pct","completion_pct","feasible"}]
     rule_choice: str | None = None
     lead_s: float | None = None                       # 距離問題發生還有多久
+    prediction_expired: bool = False
+    member_status: dict = field(default_factory=dict)
+    allowed_ids: list = field(default_factory=list)
 
 
 class PredictiveAlertEngine:
-    def __init__(self, route, home, vehicle: Vehicle, config: Config | None = None, priorities=None):
-        """priorities：每個航點的優先級（1 必要、2 選配），None 表示全部一樣重要。"""
+    def __init__(self, route, home, vehicle: Vehicle, config: Config | None = None, priorities=None,
+                 *, capacity_check: bool = True):
+        """priorities：每個航點的優先級（1 必要、2 選配），None 表示全部一樣重要。
+
+        capacity_check=False disables only P3 in the merged battery alert.
+        Shared energy estimates and P1/P2 remain unchanged; default enables P3.
+        """
+        if not isinstance(capacity_check, bool):
+            raise ValueError("capacity_check must be boolean")
+        self.capacity_check = capacity_check
         # Tuple routes do not encode modes, FW turns or a landing approach.
         # Do not issue MC-only landing/slowdown advice for other airframes.
         if vehicle.type != "multirotor":
@@ -103,12 +128,22 @@ class PredictiveAlertEngine:
         self._cell_hist = deque()             # (t, used_wh, 補償後單芯電壓)，僅留 600 秒
         self._link_hist = deque(maxlen=900)    # (離家距離, 品質)
         self._wind_hist = deque(maxlen=180)    # (t, 風速)
-        self._streak: dict[str, int] = {}
+        self._route_revision = 0
+        self._option_energy_ok: dict[str, bool] = {}  # option identity, independent of alerts
+        self._states = AlertEngine()
+        self._last_tm_t = None
+        self._streak: dict[str, int] = {}  # compatibility only; never used for timing
         self._active: dict[str, Finding] = {}
         self._announced: dict[str, tuple] = {}   # key -> (severity, choice) 最後一次說明時
         self._pending_choice: dict[str, tuple] = {}
         self._wind_trend = (0.0, 0.0)            # (每秒變化, R²)
         self.last_state: dict = {}
+        self._source_seen = {}
+        self._source_available = None
+        self._battery_findings = {}
+        self._battery_signature = None
+        self._battery_p1_active = False
+        self._battery_p1_states = AlertEngine()  # private P1 hysteresis; never published
 
     def set_route(self, route, indices=None):
         """操作員改了航線。indices＝新航線每點在原航線的索引（省略則視為原航線前段）。
@@ -120,6 +155,9 @@ class PredictiveAlertEngine:
                        or not 0 <= k < self.total_wps for k in new_idx)
                 or any(len(p) != 3 or not all(self._finite(x) for x in p) for p in new_route)):
             raise ValueError("航線須為有限三維座標，並逐點對應有效的原航點索引")
+        if new_route != self.route or new_idx != self.route_idx:
+            self._route_revision += 1
+            self._option_energy_ok.clear()
         self.route, self.route_idx = new_route, new_idx
 
     def _orig(self, pos_in_route: int) -> int:
@@ -138,9 +176,36 @@ class PredictiveAlertEngine:
         """已到達 ∪ 計畫會到達的原索引；不把被刪除的航點當成已完成。"""
         return len(self._reached | set(planned)) / self.total_wps * 100.0 if self.total_wps else 0.0
 
-    def _is_feasible(self, end_pct_raw):
-        need = self.cfg.reserve_pct + (2.0 if "battery_route" in self._active else 0.0)
-        return self._finite(end_pct_raw) and end_pct_raw >= need
+    def _option_identity(self, ident, action, param=None, scope="battery"):
+        # Numeric predictions change each sample; only execution parameters and
+        # route revision distinguish options. Do not round parameters together.
+        if scope == "battery" and param is None and self._route_revision == 0:
+            return ident
+        return json.dumps([scope, self._route_revision, ident, action, param],
+                          ensure_ascii=True, separators=(",", ":"), allow_nan=False)
+
+    @staticmethod
+    def _recommendation_key(candidate):
+        return candidate.get("option_identity", candidate["id"])
+
+    def _is_feasible(self, end_pct_raw, option_id="C1"):
+        """Energy qualification, contract 5.2; this is not joint feasibility.
+
+        First qualification and retention use reserve (normally 20%). Once an
+        option loses qualification it needs reserve + 2 (normally 22%) to regain
+        it. Alert state and rounding never affect this per-option memory.
+        Invalid/missing estimates reject this assessment without rewriting memory.
+        Advisory IDs are namespaced because their C1/C2 are different options.
+        """
+        if not isinstance(option_id, str) or not option_id:
+            raise ValueError("nonempty option identity required")
+        if not self._finite(end_pct_raw):
+            return False
+        previous = self._option_energy_ok.get(option_id)
+        threshold = self.cfg.reserve_pct + (2.0 if previous is False else 0.0)
+        qualified = end_pct_raw >= threshold
+        self._option_energy_ok[option_id] = qualified
+        return qualified
 
     @staticmethod
     def _finite(value):
@@ -149,42 +214,81 @@ class PredictiveAlertEngine:
         except (TypeError, ValueError, OverflowError):
             return False
 
-    def _input_error(self, tm):
-        """先檢核完整快照；壞資料不寫入歷史、不宣告恢復正常。"""
+    @staticmethod
+    def new_source_inputs(ttl=None):
+        """Scalar legacy fields; companion TTLs inherit their owning source.
+
+        position/velocity/next_wp are separate samples, as are voltage,
+        cell_count and used_wh. Callers may explicitly override every TTL.
+        update_sources consumes these values, never an unrelated snapshot.
+        """
+        configured = dict(ttl or {})
+        defaults = SourceInputs(configured).freshness.ttl
+        for name, owner in (("velocity", "position"), ("next_wp", "position"),
+                            ("cell_count", "voltage"), ("used_wh", "voltage")):
+            configured.setdefault(name, defaults[owner])
+        return SourceInputs(configured)
+
+    def _source_valid(self, name, value):
         try:
-            if not isinstance(tm, Telemetry):
-                return "遙測須為 Telemetry 快照"
-            if len(tm.pos) != 3 or len(tm.vel) != 3:
-                return "位置／速度須為三維"
-            values = [tm.t, *tm.pos, *tm.vel, tm.soc_pct, tm.voltage, tm.current_a,
-                      tm.used_wh, tm.cell_count, tm.next_wp, tm.link_pct,
-                      tm.wind.speed_mps, tm.wind.from_deg]
-            values += [v for k, v in vars(self.v).items() if k not in ("vehicle_id", "airframe_profile")]  # 機型檔由 load_airframe 驗證
+            if name in ("position", "velocity"):
+                return len(value) == 3 and all(self._finite(x) for x in value)
+            if name == "wind":
+                return (isinstance(value, Wind) and self._finite(value.speed_mps)
+                        and value.speed_mps >= 0 and self._finite(value.from_deg))
+            if not self._finite(value):
+                return False
+            if name in ("fc_pct", "link"):
+                return 0 <= value <= 100
+            if name == "voltage":
+                return value > 0
+            if name == "cell_count":
+                return value > 0 and value == int(value)
+            if name == "used_wh":
+                return value >= 0
+            if name == "next_wp":
+                return value == int(value) and 0 <= value <= len(self.route)
+            return True  # current is already A; MAVLink ingestion is separate
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False
+
+    def _input_error(self):
+        """Shared configuration only; telemetry errors belong to each source."""
+        try:
+            values = [v for k, v in vars(self.v).items()
+                      if k not in ("vehicle_id", "airframe_profile")]
             values += list(vars(self.cfg).values()) + [self.calib, *self.home]
             if not all(self._finite(x) for x in values):
-                return "遙測／機型／設定含非有限數值"
-            if (tm.cell_count <= 0 or tm.cell_count != int(tm.cell_count)
-                    or self.v.battery_wh <= 0 or self.v.eta <= 0 or self.v.cruise_mps <= 0
+                return "機型／設定含非有限數值"
+            if (self.v.battery_wh <= 0 or self.v.eta <= 0 or self.v.cruise_mps <= 0
                     or self.calib <= 0 or self.v.calib <= 0):
-                return "芯數、容量、效率、速度與校正係數須為正值"
-            if (tm.next_wp != int(tm.next_wp) or not 0 <= tm.soc_pct <= 100
-                    or not 0 <= tm.link_pct <= 100 or tm.voltage <= 0
-                    or tm.used_wh < 0 or tm.wind.speed_mps < 0):
-                return "遙測超出有效範圍"
-            if (self.cfg.raise_ticks < 1 or self.cfg.clear_ticks < 1
-                    or self.cfg.wind_limit_mps <= 0 or self.cfg.horizon_s < 0
+                return "容量、效率、速度與校正係數須為正值"
+            if (self.cfg.wind_limit_mps <= 0 or self.cfg.horizon_s < 0
                     or not 0 <= self.cfg.reserve_pct <= 100
                     or not 0 <= self.cfg.emergency_rtl_min_pct <= 100):
                 return "告警設定超出有效範圍"
             if (len(self.home) != 3 or len(self.route_idx) != len(self.route)
-                    or any(len(p) != 3 or not all(self._finite(x) for x in p) for p in self.route)
+                    or any(len(q) != 3 or not all(self._finite(x) for x in q) for q in self.route)
                     or any(not isinstance(k, int) or isinstance(k, bool)
                            or not 0 <= k < self.total_wps for k in self.route_idx)
                     or (self.prio is not None and len(self.prio) != self.total_wps)):
                 return "航線／原索引／優先級不一致"
         except (AttributeError, TypeError, ValueError, OverflowError):
-            return "遙測／機型／航線格式不符"
+            return "機型／航線格式不符"
         return None
+
+    def _validate_next_wp(self, tm):
+        """Reject invalid route cursors before mutating any engine state.
+
+        len(route) is the existing completed-route sentinel; zero is valid for
+        an empty route. Integral numeric inputs retain legacy normalization.
+        Contract v5 batch 1 replaces silent boundary clamping with ValueError.
+        """
+        index = tm.next_wp
+        if (not self._finite(index) or index != int(index)
+                or not 0 <= index <= len(self.route)):
+            raise ValueError("next_wp must be an integer in [0, len(route)]")
+        return replace(tm, next_wp=int(index))
 
     # ---------- 線上校正 ----------
     def _update_calib(self, tm: Telemetry):
@@ -270,21 +374,31 @@ class PredictiveAlertEngine:
         pnr = None
         unsafe = False
         for i, cum_e, cum_t, rtl_e in walk:
-            if avail_wh - cum_e - rtl_e - reserve_wh < 0:
+            ident = (self._option_identity("C4", "A_RTL_NOW") if i == 0 else
+                     self._option_identity("C3", "A_RTL_AFTER_WP",
+                                           self._orig(tm.next_wp + i - 1)))
+            raw = (avail_wh - cum_e - rtl_e) / self.v.battery_wh * 100.0
+            # Apply each physical return point's 20/22 memory BEFORE selection.
+            # Stop at the first disqualified point; never leap over an unsafe leg.
+            if not self._is_feasible(raw, ident):
                 unsafe = True
                 break
             pnr = (i, cum_e, cum_t, rtl_e)
         # 遲滯：低於保留值 0.5% 才發，回到保留值 +2% 以上才解除
-        was = "battery_route" in self._active
+        was = self._battery_p1_active
         feasible = end_pct >= self.cfg.reserve_pct + (2.0 if was else -0.5)
 
         ev = [
-            {"id": "E1", "text": "預估完成航線並返航後的落地電量", "value": f"{end_pct:.1f}%"},
-            {"id": "E2", "text": "落地保留電量設定", "value": f"{self.cfg.reserve_pct:.0f}%"},
-            {"id": "E3", "text": "目前可用能量（依據）", "value": f"{avail_wh:.0f} Wh（{'電壓趨勢' if basis == 'voltage' else '飛控電量%'}）"},
-            {"id": "E4", "text": "實測耗電 / 模型耗電", "value": f"{self.calib:.2f} 倍"},
-            {"id": "E5", "text": "預測用風速（目前＋趨勢外推）、風向", "value": f"{wind.speed_mps:.1f} m/s（目前 {tm.wind.speed_mps:.1f}）、{wind.from_deg:.0f}°"},
-            {"id": "E6", "text": "剩餘航點數", "value": f"{n_rem}"},
+            fact("E1", "預估完成航線並返航後的落地電量", "end_pct", f"{end_pct:.1f}%", "%", "remaining_route_and_rtl",
+                 option_id="C1", raw_value=end_pct, display_value=landing_pct_text(end_pct)),
+            fact("E2", "落地保留電量設定", "reserve_pct", f"{self.cfg.reserve_pct:.0f}%", "%", "configuration", raw_value=self.cfg.reserve_pct),
+            fact("E3", "目前可用能量", "usable_wh", f"{avail_wh:.0f}", "Wh", "current",
+                 basis=basis, raw_value=avail_wh),
+            fact("E4", "實測耗電與模型耗電比", "calibration_ratio", f"{self.calib:.2f}", "倍", "calibration", raw_value=self.calib),
+            fact("E5", "預測用風速", "wind_speed", f"{wind.speed_mps:.1f}", "m/s", "remaining_route", raw_value=wind.speed_mps),
+            fact("E6", "剩餘航點數", "remaining_waypoints", n_rem, "個", "remaining_route"),
+            fact("E7", "目前風速", "wind_speed", f"{tm.wind.speed_mps:.1f}", "m/s", "current", raw_value=tm.wind.speed_mps),
+            fact("E8", "預測風向", "wind_direction", f"{wind.from_deg:.0f}", "°", "remaining_route"),
         ]
         self.last_state.update({"end_pct": end_pct, "avail_wh": avail_wh, "basis": basis,
                                 "calib": self.calib, "pnr_wp": None, "pnr_eta_s": None})
@@ -296,7 +410,7 @@ class PredictiveAlertEngine:
             short = self.cfg.reserve_pct - end_pct
             f1.severity = SEV_WARNING if end_pct > 5 else SEV_CRITICAL
             f1.title = "電量不足以飛完航線" if n_rem > 0 else "返航落地電量將低於保留值"
-            f1.value = f"預估落地 {end_pct:.0f}%（保留 {self.cfg.reserve_pct:.0f}%，差 {max(0.0, short):.0f}%）"
+            f1.value = f"預估落地 {landing_pct_text(end_pct)}（保留 {self.cfg.reserve_pct:.0f}%，差 {max(0.0, short):.0f}%）"
             f1.rule_choice = self._rule_pick(cands, self.cfg.emergency_rtl_min_pct)
         out.append(f1)
 
@@ -325,8 +439,12 @@ class PredictiveAlertEngine:
                     f2.title = "即將到達最晚返航點"
                     f2.value = f"WP{wp_idx + 1}，約 {eta / 60:.1f} 分鐘後"
                     f2.lead_s = eta
-            f2.evidence = ev + [{"id": "E7", "text": "最晚返航點與到達時間",
-                                 "value": f2.value or "—"}]
+            f2.evidence = deepcopy(ev)
+            if f2.lead_s is not None:
+                f2.evidence.append(fact("E9", "距最晚返航點時間", "eta_s", f2.lead_s, "s", "safe_return_boundary"))
+            if pnr is not None and pnr[0] > 0:
+                f2.evidence.append(fact("E10", "最晚返航點", "return_waypoint", f"WP{self._orig(tm.next_wp + pnr[0] - 1) + 1}",
+                                       "", "safe_return_boundary", value_kind="categorical_id"))
             f2.rule_choice = self._rule_pick(cands, self.cfg.emergency_rtl_min_pct)
         out.append(f2)
 
@@ -346,10 +464,10 @@ class PredictiveAlertEngine:
                 f3.title = "電池實際容量低於標稱"
                 f3.value = f"約為標稱 {ratio * 100:.0f}%，飛控電量% 偏高約 {gap_pct:.0f}%"
                 f3.evidence = [
-                    {"id": "E1", "text": "電壓趨勢推估的總容量", "value": f"{total_cap:.0f} Wh"},
-                    {"id": "E2", "text": "電池標稱容量", "value": f"{self.v.battery_wh:.0f} Wh"},
-                    {"id": "E3", "text": "飛控電量%", "value": f"{tm.soc_pct:.0f}%"},
-                    {"id": "E4", "text": "電壓推估的實際剩餘", "value": f"{avail_wh / self.v.battery_wh * 100:.0f}%"},
+                    fact("E1", "推估總容量", "estimated_capacity_wh", f"{total_cap:.0f}", "Wh", "battery_capacity", basis="voltage", raw_value=total_cap),
+                    fact("E2", "電池標稱容量", "nominal_capacity_wh", f"{self.v.battery_wh:.0f}", "Wh", "battery_capacity", raw_value=self.v.battery_wh),
+                    fact("E3", "飛控電量", "fc_pct", f"{tm.soc_pct:.0f}%", "%", "current", raw_value=tm.soc_pct),
+                    fact("E4", "推估實際剩餘電量", "estimated_remaining_pct", f"{avail_wh / self.v.battery_wh * 100:.0f}%", "%", "current", basis="voltage", raw_value=avail_wh / self.v.battery_wh * 100),
                 ]
                 f3.candidates = [
                     {"id": "C1", "action": "A_USE_VOLTAGE_ESTIMATE", "label": "後續預測改用電壓推估", "energy_feasible": None, "feasible": True},
@@ -370,10 +488,11 @@ class PredictiveAlertEngine:
             raw = pct(energy)
             if not self._finite(raw):
                 raise ValueError("候選電量估計非有限數值")
-            energy_ok = self._is_feasible(raw)
-            c = {"id": ident, "action": action, "label": label, "end_pct_raw": raw,
-                 "end_pct": round(raw, 1), "completion_pct": round(self._completion(planned), 1),
-                 "energy_feasible": energy_ok, "feasible": energy_ok, **extra}
+            identity = self._option_identity(ident, action, extra.get("param"))
+            energy_ok = self._is_feasible(raw, identity)
+            c = {"id": ident, "option_identity": identity, "action": action, "label": label, "end_pct_raw": raw,
+                 "end_pct": round(raw, 1), "end_pct_zh": landing_pct_text(raw), "completion_pct": round(self._completion(planned), 1),
+                 "energy_feasible": energy_ok, "feasible": energy_ok, "missed_required": 0, **extra}
             if action == "A_LAND_NOW":
                 c.update(operational_status="unknown", feasible=False)
             return c
@@ -425,10 +544,9 @@ class PredictiveAlertEngine:
             return None
         if emergency_rtl_min_pct is None:
             emergency_rtl_min_pct = Config().emergency_rtl_min_pct
-        ok = [c for c in cands if c["feasible"] and c["action"] != "A_LAND_NOW"]
-        if ok:   # 先保住必要目標，再看完成度、剩餘電量
-            return max(ok, key=lambda c: (-c.get("missed_required", 0), c.get("completion_pct", 0),
-                                          c.get("end_pct_raw", c.get("end_pct", -math.inf))))["id"]
+        allowed = ranked_ids(cands)
+        if allowed:
+            return allowed[0]
         rtl = next((c for c in cands if c["action"] == "A_RTL_NOW"), None)
         if rtl and rtl.get("end_pct_raw", rtl.get("end_pct", -math.inf)) >= emergency_rtl_min_pct:
             return rtl["id"]
@@ -457,15 +575,26 @@ class PredictiveAlertEngine:
             if q < self.cfg.link_min_pct:
                 wp = self._orig(tm.next_wp + i - 1)
                 f.active = True
-                f.severity = SEV_WARNING if t_cum < 120 else SEV_NOTICE
+                # The committed alert level owns hysteresis; the core still
+                # requires ten continuous seconds before a downgrade commits.
+                state = self._states.states.get(f.key)
+                was_warning = (state is not None and state.active
+                               and state.severity <= SEV_WARNING)
+                warn = (t_cum <= self.cfg.link_warn_enter_s
+                        or (was_warning and t_cum <= self.cfg.link_warn_exit_s))
+                f.severity = SEV_WARNING if warn else SEV_NOTICE
                 f.title = "航線前方可能斷訊"
                 f.value = f"WP{wp + 1}（離家 {d / 1000:.2f} km）預估鏈路 {max(0, q):.0f}%，約 {t_cum / 60:.1f} 分鐘後"
                 f.lead_s = t_cum
                 f.evidence = [
-                    {"id": "E1", "text": "目前鏈路品質／離家距離", "value": f"{tm.link_pct:.0f}%／{d_now / 1000:.2f} km"},
-                    {"id": "E2", "text": "每遠 1 km 鏈路下降", "value": f"{-b * 1000:.0f}%（R²={r2:.2f}）"},
-                    {"id": "E3", "text": "預估最差航點", "value": f"WP{wp + 1}，{max(0, q):.0f}%"},
-                    {"id": "E4", "text": "弱鏈路門檻", "value": f"{self.cfg.link_min_pct:.0f}%"},
+                    fact("E1", "目前鏈路品質", "link_pct", f"{tm.link_pct:.0f}%", "%", "current", raw_value=tm.link_pct),
+                    fact("E2", "每遠一公里鏈路下降", "link_loss_per_km", f"{-b * 1000:.0f}", "%/km", "remaining_route"),
+                    fact("E3", "預估航點鏈路品質", "predicted_link_pct", f"{max(0, q):.0f}%", "%", f"WP{wp + 1}", raw_value=max(0, q)),
+                    fact("E4", "弱鏈路門檻", "link_min_pct", f"{self.cfg.link_min_pct:.0f}%", "%", "configuration", raw_value=self.cfg.link_min_pct),
+                    fact("E5", "目前離家距離", "home_distance", f"{d_now / 1000:.2f}", "km", "current"),
+                    fact("E6", "鏈路回歸擬合度", "link_r_squared", f"{r2:.2f}", "", "history"),
+                    fact("E7", "預估弱鏈路航點", "link_waypoint", f"WP{wp + 1}", "", "remaining_route", value_kind="categorical_id"),
+                    fact("E8", "抵達弱鏈路航點時間", "eta_s", t_cum, "s", f"WP{wp + 1}"),
                 ]
                 f.candidates = [
                     {"id": "C1", "action": "A_CONTINUE_MONITOR", "label": "繼續並確認失聯保護（RTL）已開", "energy_feasible": None, "feasible": True},
@@ -505,9 +634,11 @@ class PredictiveAlertEngine:
             f.value = f"現在 {tm.wind.speed_mps:.1f} m/s，每分鐘 +{b * 60:.1f}，約 {tts / 60:.1f} 分鐘後達 {lim:.0f} m/s"
             f.lead_s = tts
             f.evidence = [
-                {"id": "E1", "text": "目前風速", "value": f"{tm.wind.speed_mps:.1f} m/s"},
-                {"id": "E2", "text": "近 3 分鐘風速趨勢", "value": f"+{b * 60:.2f} m/s/分（R²={r2:.2f}）"},
-                {"id": "E3", "text": "機體抗風上限", "value": f"{lim:.0f} m/s"},
+                fact("E1", "目前風速", "wind_speed", f"{tm.wind.speed_mps:.1f}", "m/s", "current", raw_value=tm.wind.speed_mps),
+                fact("E2", "每分鐘風勢增幅", "wind_trend_per_min", f"{b * 60:+.2f}", "m/s/分", "history_180s"),
+                fact("E3", "機體抗風上限", "wind_limit", f"{lim:.0f} m/s", "m/s", "configuration", raw_value=lim),
+                fact("E4", "趨勢回歸擬合度", "wind_r_squared", f"{r2:.2f}", "", "history_180s"),
+                fact("E5", "到達抗風上限時間", "eta_s", tts, "s", "wind_limit"),
             ]
             f.candidates = [
                 {"id": "C1", "action": "A_CONTINUE_MONITOR", "label": "持續觀察風速", "energy_feasible": None, "feasible": True},
@@ -518,19 +649,119 @@ class PredictiveAlertEngine:
 
     # ---------- 主流程 ----------
     def update(self, tm: Telemetry) -> list[dict]:
-        """吃一筆遙測，回傳這一刻的告警事件（raise / update / resolve）。"""
-        error = self._input_error(tm)
-        self.last_state.update({"data_status": "insufficient" if error else "ok", "input_error": error,
-                                "predictor_errors": {}, "end_pct": None, "pnr_wp": None,
-                                "pnr_eta_s": None,
-                                "rem_s": self.last_state.get("rem_s", 0.0) if not error and self.route else 0.0,
-                                "capacity_ratio": None, "avail_wh": None})
+        """Compatibility adapter: an explicit synchronous sample per field.
+
+        Telemetry.current_a is already amperes, NOT a MAVLink raw integer.
+        Asynchronous feeds should use new_source_inputs / update_sources and
+        put_mavlink_current for SYS_STATUS / BATTERY_STATUS raw current.
+        """
+        if not isinstance(tm, Telemetry):
+            return []
+        tm = self._validate_next_wp(tm)  # reject before any state mutation
+        if not self._finite(tm.t):
+            return []
+        if self._last_tm_t is not None and tm.t <= self._last_tm_t:
+            return []
+        sources = self.new_source_inputs()
+        values = {"position": tm.pos, "velocity": tm.vel, "next_wp": tm.next_wp,
+                  "fc_pct": tm.soc_pct, "voltage": tm.voltage,
+                  "current": tm.current_a, "used_wh": tm.used_wh,
+                  "cell_count": tm.cell_count, "link": tm.link_pct, "wind": tm.wind}
+        for name, value in values.items():
+            sources.put(name, value, tm.t, tm.t, valid=self._source_valid(name, value),
+                        invalid_reason="invalid_value")
+        return self.update_sources(sources, tm.t)
+
+    def update_sources(self, sources: SourceInputs, now: float) -> list[dict]:
+        """Consume independently timed source values in one monotonic domain.
+
+        No source is refreshed by merely calling this method. Unknown / stale
+        values are never substituted with a snapshot field or a normal value.
+        """
+        if not isinstance(sources, SourceInputs) or not self._finite(now):
+            raise ValueError("SourceInputs and finite monotonic now required")
+        names = ("position", "velocity", "next_wp", "fc_pct", "voltage",
+                 "current", "used_wh", "cell_count", "link", "wind")
+        rows = {name: sources.status(name, now) for name in names}
+        # A fresh cursor must satisfy the same fail-before-mutation contract.
+        cursor = rows["next_wp"]
+        if cursor["status"] == "ready" and not self._source_valid("next_wp", cursor["value"]):
+            raise ValueError("next_wp must be an integer in [0, len(route)]")
+        if self._last_tm_t is not None and now <= self._last_tm_t:
+            return []
+        for name, row in rows.items():
+            if row["status"] == "ready" and not self._source_valid(name, row["value"]):
+                row.update(status="unknown", reason="invalid_value")
+        def ready(required):
+            return all(rows[name]["status"] == "ready" for name in required)
+        energy = ("fc_pct", "voltage", "current", "used_wh", "cell_count")
+        geometry = ("position", "next_wp")
+        dependencies = {"battery_route": energy + geometry,
+                        "rtl_point": energy + geometry,
+                        "battery_capacity": energy,
+                        "link_route": geometry + ("link", "wind"), "wind_trend": ("wind",)}
+        readiness = {key: {"status": "ready" if ready(required) else "unknown",
+                           "unknown_sources": [n for n in required if rows[n]["status"] != "ready"]}
+                     for key, required in dependencies.items()}
+        values = {name: row["value"] if row["status"] == "ready" else None
+                  for name, row in rows.items()}
+        if values["next_wp"] is not None:
+            values["next_wp"] = int(values["next_wp"])
+        tm = Telemetry(now, values["position"], values["velocity"], values["fc_pct"],
+                       values["voltage"], values["current"], values["used_wh"],
+                       values["cell_count"], values["next_wp"], values["link"], values["wind"])
+        self._last_tm_t = now
+        error = self._input_error()
+        available_count = sum(row["status"] == "ready" for row in readiness.values())
+        previous_metrics = dict(self.last_state)
+        self.last_state.update({"data_status": "insufficient" if error or not available_count
+                                else "ok" if available_count == len(readiness) else "partial",
+                                "input_error": error, "predictor_errors": {},
+                                "source_status": {name: {k: v for k, v in row.items() if k != "value"}
+                                                  for name, row in rows.items()},
+                                "predictor_readiness": readiness,
+                                "end_pct": None, "pnr_wp": None, "pnr_eta_s": None,
+                                # _plan_wind consumes the PREVIOUS valid route duration
+                                # before _battery_route computes this assessment's walk.
+                                # Resetting every fresh sample silently disables trend
+                                # extrapolation and delays battery/PNR warnings (0450).
+                                "rem_s": (previous_metrics.get("rem_s", 0.0)
+                                          if not error and self.route
+                                          and readiness["battery_route"]["status"] == "ready"
+                                          else 0.0),
+                                "capacity_ratio": None, "avail_wh": None,
+                                "basis": None})
+        self.last_state["wind_included"] = ready(("wind",))
+        # Contract 2.2: energy still computes explicitly WITHOUT wind. This is
+        # a model input only, never a fresh source or a measured calm wind.
+        if not ready(("wind",)):
+            tm = replace(tm, wind=Wind(0.0, 0.0))
         if error:
-            self._pending_choice.clear()       # 資料缺口不算建議連續成立
+            self._battery_findings.clear()
+            self._battery_signature = None
+            self._battery_p1_states.step("P1", now, UNKNOWN)
+            self._pending_choice.clear()
             self._streak.clear()
-            return []                          # 不把缺資料當成 finding=False 而解除告警
-        tm = replace(tm, next_wp=max(0, min(int(tm.next_wp), len(self.route))))
-        self._reached.update(self.route_idx[:tm.next_wp])
+            return self._unknown_all(now)
+        if ready(("position", "next_wp")):
+            self._reached.update(self.route_idx[:int(tm.next_wp)])
+        def new_sample(key, required):
+            if not ready(required):
+                self._source_seen.pop(key, None)
+                return False
+            stamp = (max(rows[n]["sensed_t"] for n in required),
+                     max(rows[n]["recv_t"] for n in required))
+            previous = self._source_seen.get(key)
+            if previous is not None and (stamp[0] <= previous[0] or stamp[1] <= previous[1]):
+                return False
+            self._source_seen[key] = stamp
+            return True
+        fresh = {key: new_sample(key, required) for key, required in dependencies.items()}
+        for key, metrics in (("battery_route", ("end_pct", "pnr_wp", "pnr_eta_s", "rem_s")),
+                             ("battery_capacity", ("capacity_ratio",))):
+            if readiness[key]["status"] == "ready" and not fresh[key]:
+                for metric in metrics:
+                    self.last_state[metric] = previous_metrics.get(metric)
 
         def attempt(key, fn):
             try:
@@ -551,11 +782,20 @@ class PredictiveAlertEngine:
                 self.calib = before
                 raise
 
-        attempt("calibration", calibrate)
-        wind_f = attempt("wind_trend", lambda: self._wind(tm))  # 先算趨勢，P1/P2 要用
-        if wind_f is None:
+        if new_sample("calibration", ("position", "velocity", "voltage", "current", "wind")):
+            attempt("calibration", calibrate)
+        if not ready(("wind",)):
+            self._wind_hist.clear()
+        wind_f = attempt("wind_trend", lambda: self._wind(replace(tm, t=rows["wind"]["sensed_t"]))) if fresh["wind_trend"] else None
+        if not ready(("wind",)) or (fresh["wind_trend"] and wind_f is None):
             self._wind_trend = (0.0, 0.0)
-        available = attempt("available_energy", lambda: self._available_wh(tm))
+        if not ready(energy):
+            self._cell_hist.clear()
+            self._source_available = None
+        if new_sample("available_energy", energy):
+            self._source_available = attempt("available_energy", lambda: self._available_wh(
+                replace(tm, t=max(rows[n]["sensed_t"] for n in energy))))
+        available = self._source_available
         findings = []
         avail = None
         if available is not None:
@@ -565,35 +805,149 @@ class PredictiveAlertEngine:
                 avail = None
             else:
                 self.last_state.update(avail_wh=avail, basis=basis, calib=self.calib)
-                if self.route:
+                if self.route and fresh["battery_route"]:
+                    before_options = dict(self._option_energy_ok)
                     battery = attempt("battery_route", lambda: self._battery_route(tm, avail, basis, cap))
+                    if not ready(("wind",)):
+                        self._option_energy_ok = before_options  # unmodelled wind cannot qualify options
                     if battery is not None:
                         findings.extend(battery)
                     else:
                         self.last_state.update(end_pct=None, pnr_wp=None, pnr_eta_s=None, rem_s=0.0)
-                capacity = attempt("battery_capacity", lambda: self._battery_capacity(tm, avail, cap))
+                capacity = (attempt("battery_capacity", lambda: self._battery_capacity(tm, avail, cap))
+                            if self.capacity_check and fresh["battery_capacity"] else None)
                 if capacity is not None:
                     findings.append(capacity)
-        link_f = attempt("link_route", lambda: self._link(tm))
+        if not ready(dependencies["link_route"]):
+            self._link_hist.clear()
+        link_f = (attempt("link_route", lambda: self._link(tm))
+                  if fresh["link_route"] else None)
         findings.extend(f for f in (link_f, wind_f) if f is not None)
         # P4/P5 的返航建議亦須有能量證據；監控/估計類選項不代表飛行操作可行。
         for f in (link_f, wind_f):
             if f is not None and f.active:
-                attempt(f.key, lambda f=f: self._assess_advisory(f, tm, avail))
+                if ready(geometry + ("wind",)) and avail is not None:
+                    attempt(f.key, lambda f=f: self._assess_advisory(f, tm, avail))
                 pick = next((c for c in f.candidates if c["id"] == f.rule_choice), None)
                 if pick is None or pick.get("feasible") is not True:
                     f.rule_choice = self._rule_pick(f.candidates, self.cfg.emergency_rtl_min_pct)
+        if not ready(("wind",)):
+            for finding in findings:
+                if finding.key not in ("battery_route", "rtl_point"):
+                    continue
+                finding.value += "（能量預測未含風）"
+                for candidate in finding.candidates:
+                    if candidate.get("action") not in ("A_USE_VOLTAGE_ESTIMATE", "A_CONTINUE_MONITOR"):
+                        candidate.update(feasible=False, energy_feasible=None,
+                                         operational_status="unknown", wind_included=False)
+                finding.rule_choice = self._rule_pick(finding.candidates, self.cfg.emergency_rtl_min_pct)
+        events = self._merge_battery(tm.t, findings, readiness, fresh, rows, dependencies)
+        findings = [f for f in findings if f.key not in
+                    ("battery_route", "rtl_point", "battery_capacity")]
         seen = {f.key for f in findings}
-        for key in ("battery_route", "rtl_point", "battery_capacity", "link_route", "wind_trend"):
+        for key in ("link_route", "wind_trend"):
+            if readiness[key]["status"] == "ready" and not fresh[key]:
+                continue  # no new sample: do not manufacture a TRUE/FALSE/UNKNOWN tick
             if key not in seen:               # 預測器缺資料／例外不跨缺口累積遲滯
                 self._pending_choice.pop(key, None)
                 self._streak.pop(key, None)
+                events.extend(self._unknown(tm.t, key))
         if self.last_state["predictor_errors"]:
             self.last_state["data_status"] = "partial"
-        events = []
         for f in findings:
-            events.extend(self._debounce(tm.t, f))
+            sensed_t, recv_t = self._source_seen[f.key]
+            events.extend(self._debounce(tm.t, f, sensed_t=sensed_t, recv_t=recv_t,
+                                        max_gap_s=min(rows[n]["ttl_s"] for n in dependencies[f.key])))
         return events
+
+    def _merge_battery(self, t, findings, readiness, fresh, rows, dependencies):
+        """Cache valid members BEFORE the sole battery state machine.
+
+        Retained findings never refresh their own source stamps. A pure UI poll
+        cannot confirm TRUE/FALSE, a recommendation, or a downgrade. Validity
+        loss breaks continuity immediately; the next real assessment can use
+        still-valid members. P1 alone owns options, even when it is FALSE.
+        """
+        keys = ("battery_route", "rtl_point", "battery_capacity")
+        predictors = dict(zip(keys, ("P1", "P2", "P3")))
+        incoming = {f.key: f for f in findings if f.key in keys}
+        status, known, signature = {}, [], [self._route_revision, rows["wind"]["status"]]
+        changed_sample = False
+        for key in keys:
+            disabled = ((not self.route and key != "battery_capacity")
+                        or (key == "battery_capacity" and not self.capacity_check))
+            ready = readiness[key]["status"] == "ready" and not disabled
+            if not ready or (fresh[key] and key not in incoming):
+                self._battery_findings.pop(key, None)
+            if ready and key in incoming:
+                f = deepcopy(incoming[key])
+                stamp = self._source_seen[key]
+                self._battery_findings[key] = (f, stamp, self._route_revision)
+                changed_sample = True
+                if key == "battery_route":
+                    severity = (SEV_CRITICAL if f.active and not any(
+                        c.get("feasible") is True for c in f.candidates) else f.severity)
+                    self._battery_p1_states.step(
+                        "P1", t, TRUE if f.active else FALSE, severity,
+                        sensed_t=stamp[0], recv_t=stamp[1],
+                        max_gap_s=min(rows[n]["ttl_s"] for n in dependencies[key]))
+                    self._battery_p1_active = self._battery_p1_states.states["P1"].active
+            elif key == "battery_route":
+                if not ready or key not in self._battery_findings:
+                    self._battery_p1_states.step("P1", t, UNKNOWN)
+            cached = self._battery_findings.get(key)
+            if cached and key != "battery_capacity" and cached[2] != self._route_revision:
+                self._battery_findings.pop(key, None)
+                cached = None
+            pred = predictors[key]
+            if disabled:
+                status[pred] = {"truth": "FALSE", "disabled": True}
+                signature.append((pred, "disabled"))
+            elif cached:
+                f, stamp, revision = cached
+                status[pred] = {"truth": "TRUE" if f.active else "FALSE",
+                               "sensed_t": stamp[0], "recv_t": stamp[1],
+                               "severity": f.severity, "title": f.title,
+                               "value": f.value, "lead_s": f.lead_s}
+                signature.append((pred, stamp, revision))
+                known.append((key, f, stamp))
+            else:
+                status[pred] = {"truth": "UNKNOWN"}
+                signature.append((pred, "unknown"))
+        self.last_state["battery_members"] = deepcopy(status)
+        signature = json.dumps(signature, separators=(",", ":"))
+        if signature == self._battery_signature:
+            return []
+        self._battery_signature = signature
+        active = [entry for entry in known if entry[1].active]
+        unknown = any(row["truth"] == "UNKNOWN" for row in status.values())
+        if not changed_sample or (not active and unknown):
+            previous = self._active.get("battery")
+            if previous is not None:
+                previous = replace(previous, member_status=status)
+            return self._unknown(t, "battery", previous)
+        lead = min(active or known, key=lambda entry: (entry[1].severity, keys.index(entry[0])))
+        owner = next((f for key, f, _ in known if key == "battery_route"), None)
+        evidence = []
+        for key, f, stamp in known:
+            for item in f.evidence:
+                evidence.append({**deepcopy(item), "id": f"E{len(evidence) + 1}",
+                                 "source_predictor": predictors[key],
+                                 "source_evidence_id": item.get("id"),
+                                 "sensed_t": stamp[0], "recv_t": stamp[1]})
+        candidates = deepcopy(owner.candidates) if owner is not None else []
+        choice = self._rule_pick(candidates, self.cfg.emergency_rtl_min_pct)
+        group = Finding("battery", bool(active), severity=lead[1].severity,
+                        title=lead[1].title, value=lead[1].value,
+                        evidence=evidence, candidates=candidates,
+                        rule_choice=choice, lead_s=lead[1].lead_s,
+                        member_status=status)
+        # These remain actual source times, never substituted with poll time.
+        sensed_t = max(stamp[0] for _, _, stamp in known)
+        recv_t = max(stamp[1] for _, _, stamp in known)
+        ttl = min(rows[n]["ttl_s"] for key, _, _ in known for n in dependencies[key])
+        return self._debounce(t, group, sensed_t=sensed_t, recv_t=recv_t,
+                              max_gap_s=ttl, assessment_id=signature)
 
     def _assess_advisory(self, f, tm, avail):
         """補齊 P4/P5 飛行候選的能量判斷；失敗保持不可行。"""
@@ -606,58 +960,204 @@ class PredictiveAlertEngine:
             raw = (avail - walk[-1][1] - walk[-1][3]) / self.v.battery_wh * 100.0
             if not self._finite(raw):
                 raise ValueError("返航候選能量非有限數值")
-            c.update(end_pct_raw=raw, end_pct=round(raw, 1), energy_feasible=self._is_feasible(raw),
-                     feasible=self._is_feasible(raw), completion_pct=round(self._completion(self.route_idx[tm.next_wp:pos + 1]), 1))
+            identity = self._option_identity(c["id"], c["action"], c.get("param"), scope=f.key)
+            c["option_identity"] = identity
+            energy_ok = self._is_feasible(raw, identity)
+            c.update(end_pct_raw=raw, end_pct=round(raw, 1), end_pct_zh=landing_pct_text(raw),
+                     energy_feasible=energy_ok, feasible=energy_ok,
+                     completion_pct=round(self._completion(self.route_idx[tm.next_wp:pos + 1]), 1))
         pick = next((c for c in f.candidates if c["id"] == f.rule_choice), None)
         if pick is None or not pick.get("feasible"):
             f.rule_choice = self._rule_pick(f.candidates, self.cfg.emergency_rtl_min_pct)
 
-    def _debounce(self, t, f: Finding):
-        """連續成立 raise_ticks 次才發、連續不成立 clear_ticks 次才解除；
-        持續中只有「嚴重度升級」或「建議改變且維持 raise_ticks 次」才重新說明。"""
-        k = f.key
-        if not f.active:
-            self._pending_choice.pop(k, None)
-        prev = self._active.get(k)
-        s = self._streak.get(k, 0)
-        s = (s + 1 if s >= 0 else 1) if f.active else (s - 1 if s <= 0 else -1)
-        self._streak[k] = s
-        ev = []
-        if prev is None and f.active and s >= self.cfg.raise_ticks:
-            self._active[k] = f
-            self._announced[k] = (f.severity, (f.rule_choice, self._rule_decision(f)))
-            ev.append(self._event(t, "raise", f))
-        elif prev is not None and f.active:
-            self._active[k] = f
-            sev0, ch0 = self._announced[k]
-            choice = (f.rule_choice, self._rule_decision(f))
-            if choice != ch0:
-                pc = self._pending_choice.get(k)
-                n = pc[1] + 1 if pc and pc[0] == choice else 1
-                self._pending_choice[k] = (choice, n)
-            else:
-                self._pending_choice.pop(k, None)
-                n = 0
-            if f.severity < sev0 or n >= self.cfg.raise_ticks:
-                self._announced[k] = (min(sev0, f.severity), choice)
-                self._pending_choice.pop(k, None)
-                ev.append(self._event(t, "update", f))
-        elif prev is not None and not f.active and -s >= self.cfg.clear_ticks:
-            del self._active[k]
-            self._announced.pop(k, None)
-            ev.append(self._event(t, "resolve", prev))
-        return ev
+    def _unknown_all(self, t):
+        events = []
+        for key in list(self._states.states):
+            events.extend(self._unknown(t, key))
+        return events
+
+    def _unknown(self, t, key, finding=None):
+        if key not in self._states.states:
+            return []
+        previous = finding if finding is not None else self._active.get(key)
+        facts = self._event(t, "update", previous) if previous else {}
+        rows = self._states.step(key, t, UNKNOWN, **self._state_facts(facts))
+        return self._sync_state(key, previous, rows)
+
+    @staticmethod
+    def _state_facts(facts):
+        # step owns these explicit arguments and event metadata.
+        return {k: v for k, v in facts.items()
+                if k not in ("key", "t", "type", "severity")}
+
+    def _sync_state(self, key, finding, rows):
+        state = self._states.states[key]
+        candidates = finding.candidates if finding is not None else []
+        choice = next((c["id"] for c in candidates
+                       if self._recommendation_key(c) == state.recommendation), None)
+        decision = "SELECT" if any(c["id"] == choice and c.get("feasible") is True
+                                   for c in candidates) else "HOLD"
+        state.facts["rule_decision"] = decision
+        state.facts["rule_decision_zh"] = self._decision_zh(decision, candidates)
+        if state.active and finding is not None:
+            self._active[key] = replace(finding, severity=state.severity,
+                                        rule_choice=choice,
+                                        prediction_expired=state.prediction_expired)
+        elif not state.active:
+            self._active.pop(key, None)
+        for row in rows:
+            row["t"] = row["output_t"]
+            identity = row["recommendation"]
+            row["recommendation_identity"] = identity
+            row["rule_choice"] = row["recommendation"] = next(
+                (c["id"] for c in row.get("candidates", [])
+                 if self._recommendation_key(c) == identity), None)
+            row["rule_decision"] = "SELECT" if any(
+                c["id"] == row["rule_choice"] and c.get("feasible") is True
+                for c in row.get("candidates", [])) else "HOLD"
+            row["rule_decision_zh"] = self._decision_zh(
+                row["rule_decision"], row.get("candidates", []))
+        return rows
+
+    def _recommendation_eligible(self, candidate, retained=False):
+        """Joint feasibility is necessary; new energy advice also needs +2%.
+
+        Option energy qualification is shared with PNR/route calculations and
+        deliberately remains unchanged. Recommendation entry is per alert, so
+        an option qualified long ago cannot enter a new recommendation at 21%.
+        Monitoring/estimation advice carries no landing estimate.
+        """
+        if candidate.get("feasible") is not True:
+            return False
+        if candidate.get("action") in ("A_CONTINUE_MONITOR", "A_USE_VOLTAGE_ESTIMATE"):
+            return True
+        raw = candidate.get("end_pct_raw")
+        return (self._finite(raw)
+                and raw >= self.cfg.reserve_pct + (0.0 if retained else 2.0))
+
+    def _debounce(self, t, f: Finding, *, sensed_t=None, recv_t=None, max_gap_s=None,
+                  assessment_id=None):
+        """Contract v5 seconds, cooling, downgrade and recommendation timing.
+
+        SourceInputs gates each predictor; timestamps follow the newest actual
+        dependency sample, while all dependency TTLs are checked individually.
+        Battery members are merged before this single keyed state.
+        """
+        state = self._states.states.get(f.key)
+        if state is not None and state.last_t is not None and t <= state.last_t:
+            return []
+        # Contract 5.3: no feasible option is an immediate CRITICAL
+        # assessment, not merely a presentation change after debouncing.
+        # An unadopted but feasible option is a recommendation timing issue;
+        # it must not be mislabeled as absence of a feasible plan.
+        if f.active and not any(c.get("feasible") is True for c in f.candidates):
+            f = replace(f, severity=SEV_CRITICAL)
+        previous = self._active.get(f.key)
+        payload = f if f.active or previous is None else previous
+        if f.key == "battery" and not f.active and previous is not None:
+            # During the ten-second clear hold, retain the displayed cause but
+            # refresh member truth, evidence and P1 feasibility from this sample.
+            payload = replace(f, title=previous.title, value=previous.value,
+                              lead_s=previous.lead_s)
+        retained = state.recommendation if state is not None and state.active else None
+        eligible = [c for c in f.candidates if self._recommendation_eligible(
+            c, retained=retained is not None and self._recommendation_key(c) == retained)]
+        allowed = ranked_ids(eligible)
+        # Predictor rules own the recommendation when joint feasibility and
+        # the existing recommendation-entry gate pass. Ranking constrains the
+        # model's allowed_ids; it must not suppress a qualified safety rule.
+        selected = next((c for c in eligible if c["id"] == f.rule_choice), None)
+        if selected is None:
+            # Only fallback uses ranking and committed-identity tie retention.
+            tied = [c for c in eligible if c["id"] in allowed]
+            selected = next((c for c in tied
+                             if self._recommendation_key(c) == retained), None)
+            if selected is None and tied:
+                selected = tied[0]
+        payload = replace(payload, allowed_ids=allowed)
+        facts = self._state_facts(self._event(t, "update", payload))
+        facts["route_version"] = self._route_revision
+        recommendation = self._recommendation_key(selected) if selected else None
+        rows = self._states.step(
+            f.key, t, TRUE if f.active else FALSE, f.severity, recommendation,
+            {self._recommendation_key(c) for c in eligible},
+            max_gap_s=max_gap_s if max_gap_s is not None else (10.0 if f.key == "wind_trend" else 3.0),
+            sensed_t=sensed_t, recv_t=recv_t, assessment_id=assessment_id,
+            **facts)
+        return self._sync_state(f.key, payload, rows)
 
     @staticmethod
     def _rule_decision(f):
         return "SELECT" if any(c.get("feasible") is True for c in f.candidates) else "HOLD"
 
     @staticmethod
+    def _decision_zh(decision, candidates):
+        if decision == "SELECT":
+            return "依規則建議方案，請操作員確認"
+        return (PENDING_ZH if any(c.get("feasible") is True for c in candidates)
+                else HOLD_ZH)
+
+    @staticmethod
     def _event(t, kind, f: Finding):
         return {"t": t, "type": kind, "key": f.key, "severity": f.severity, "title": f.title,
-                "value": f.value, "lead_s": f.lead_s, "evidence": f.evidence,
+                "value": f.value, "lead_s": f.lead_s,
+                "evidence": option_evidence(f.evidence, f.candidates, f.key),
+                "allowed_ids": list(f.allowed_ids),
+                "member_status": deepcopy(f.member_status),
                 "candidates": f.candidates, "rule_choice": f.rule_choice,
-                "rule_decision": PredictiveAlertEngine._rule_decision(f)}
+                "rule_decision": PredictiveAlertEngine._rule_decision(f),
+                "rule_decision_zh": PredictiveAlertEngine._decision_zh(
+                    PredictiveAlertEngine._rule_decision(f), f.candidates)}
+
+    def current_state(self, key):
+        """Live explainer gate, including changes that emitted no rule event."""
+        state = self._states.states.get(key)
+        finding = self._active.get(key)
+        if state is None:
+            return None
+        return {"active": bool(state.active and not state.prediction_expired
+                               and state.facts.get("route_version") == self._route_revision),
+                "alert_version": state.version,
+                "allowed_ids": list(state.facts.get("allowed_ids", [])),
+                "feasible_ids": [c["id"] for c in finding.candidates
+                                 if c.get("feasible") is True] if finding else []}
+
+    def apply_explanation(self, key, expected_version, result):
+        """Recheck the live state; append a new engine output, never edit history."""
+        current = self.current_state(key)
+        if (current is None or current["active"] is not True
+                or current["alert_version"] != expected_version
+                or not isinstance(result, dict)
+                or result.get("source") not in ("llm", "rule")
+                or not isinstance(result.get("text"), dict)):
+            return None
+        state = self._states.states[key]
+        finding = self._active.get(key)
+        if finding is None:
+            return None
+        from .explain import validate, rule_text
+        event = {**deepcopy(state.facts), "key": key, "active": True,
+                 "alert_version": state.version, "severity": state.severity}
+        if result["source"] == "llm":
+            if validate(result.get("text"), event, current):
+                return None
+        else:
+            # A completed fallback must use today's rule choice, not the
+            # request's possibly obsolete feasible set or numeric predictions.
+            event.update(rule_choice=finding.rule_choice,
+                         rule_decision="SELECT" if finding.rule_choice in current["feasible_ids"] else "HOLD")
+            result = {**deepcopy(result), "text": rule_text(event)}
+        row = self._states.explanation_update(key, expected_version, state.last_t, result)
+        if row is None:
+            return None
+        return self._sync_state(key, finding, [row])[0]
+
+    def close_explanation(self, original, reason):
+        """Allocate a terminal journal row for an invalidated request only."""
+        state = self._states.states.get(original["key"])
+        when = max(original["output_t"], state.last_t if state and state.last_t is not None
+                   else original["output_t"])
+        return self._states.explanation_closed(original, when, reason)
 
     def active(self):
         return dict(self._active)

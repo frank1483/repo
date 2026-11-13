@@ -51,7 +51,7 @@ class Session:
         if self.feed is None or self.chosen is None:
             return self.alerts
         self.feed.poll_explanations()
-        self.alerts = [_alert_view(e, self.chosen) for e in self.feed.events if e["type"] != "resolve"]
+        self.alerts = [_alert_view(e, self.chosen) for e in _latest_alert_events(self.feed.events)]
         return self.alerts
 
     def vehicle(self):
@@ -68,16 +68,40 @@ def _find(cands, cid):
     raise KeyError(cid)
 
 
+def _latest_alert_events(events):
+    """One row per episode; old request closures never hide newer versions."""
+    latest = {}
+    ranks = {}
+    for index, ev in enumerate(events):
+        identity = ev.get("alert_id") or ("legacy-without-id", index)
+        version = ev.get("alert_version")
+        version = version if isinstance(version, int) and not isinstance(version, bool) else 0
+        sequence = ev.get("engine_seq")
+        sequence = sequence if isinstance(sequence, int) and not isinstance(sequence, bool) else index
+        rank = (version, sequence)
+        if identity not in ranks or rank >= ranks[identity]:
+            latest[identity], ranks[identity] = ev, rank
+    return list(latest.values())
+
+
 def _alert_view(ev, cand):
     """告警引擎事件 → 畫面與報告用的精簡格式；航點編號換成目標名稱。"""
     names = [p["id"] for p in cand["path"][1:-1]]
     ex = ev.get("explain") or {}
     text = (ex.get("text") or {}).get("summary_zh") or f"{ev['title']}：{ev['value']}"
+    if ev["type"] == "resolve":
+        text = "告警已解除，未套用晚到的模型結果。"
     for i in range(len(names), 0, -1):
         text = text.replace(f"WP{i}", f"WP{i}（{names[i-1]}）")
     return {"t_s": ev["t"], "key": ev["key"], "severity": ev["severity"], "title": ev["title"],
             "value": ev["value"], "lead_s": ev.get("lead_s"), "text_zh": text,
-            "source": (ex.get("source") or "rule"), "level": "crit" if ev["severity"] <= 2 else "warn"}
+            "source": (ex.get("source") or ev.get("source") or "rule"),
+            "alert_id": ev.get("alert_id"), "alert_version": ev.get("alert_version"),
+            "status": ev.get("status", ev["type"]),
+            "active": ev.get("active", ev["type"] != "resolve"),
+            "explanation_status": ev.get("explanation_status"),
+            "fallback_reason": ex.get("fallback_reason"),
+            "level": "crit" if ev["severity"] <= 2 else "warn"}
 
 
 def handle(path, body):

@@ -24,6 +24,8 @@ import time
 from . import explain, sim
 from . import typed_explain as tx
 
+CAPACITY_POLICY = {"capacity_check": False, "reason": "依 2026-11-08 使用者決定停用容量判斷（P3）"}
+
 RULE_DEADLINE_S = 2.0      # 規格：異常進 GCS 後 2 秒內判斷
 
 
@@ -65,7 +67,7 @@ def s1_legacy(backend, log):
         return r
 
     t0 = time.perf_counter()
-    run = sim.run("gusty", "ignore", explain_fn=fn)
+    run = sim.run("gusty", "ignore", explain_fn=fn, capacity_check=False)
     sim_s = time.perf_counter() - t0
     ex.close(wait=True)
     got = ex.poll()
@@ -82,9 +84,11 @@ def s1_legacy(backend, log):
 
 
 def _typed_outputs():
-    from gcs_demo.test_typed_orchestration import feed, measurement, request
-    f = feed()
-    return [f.tick(i, measurement(i, 90 if i < 4 else 0), request()) for i in range(6)]
+    from gcs_demo.test_typed_orchestration import vehicle, measurement, request
+    from .typed_mission_feed import TypedMissionSampleFeed
+    f = TypedMissionSampleFeed(vehicle(), raise_ticks=2, clear_ticks=2, max_gap_s=30)
+    return [f.tick(i, measurement(i, 90 if i < 4 else 0)["mission"],
+                   request()["mission"]) for i in range(6)]
 
 
 def s2_typed(backend, log):
@@ -135,7 +139,7 @@ def main(argv):
     started = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     summary = {"started": started, "backend": getattr(backend, "name", "?"),
                "model": getattr(backend, "model", None), "url": getattr(backend, "url", None),
-               "fake": fake, "S1_legacy_multirotor": s1_legacy(backend, log),
+               "fake": fake, "capacity_policy": dict(CAPACITY_POLICY), "S1_legacy_multirotor": s1_legacy(backend, log),
                "S2_typed_fixed_wing": s2_typed(backend, log), "S3_stale_version": s3_stale(backend, log),
                "finished": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     with open(os.path.join(out_dir, "explanations.jsonl"), "w", encoding="utf-8") as fh:
