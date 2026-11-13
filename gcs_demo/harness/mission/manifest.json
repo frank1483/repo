@@ -1,27 +1,28 @@
 {
   "feature": "mission",
-  "version": "mission-harness-v1",
+  "version": "mission-harness-v2",
+  "supersedes": "mission-harness-v1 (manifest_v1.json; pre state-machine one-shot path)",
   "components": {
     "system_prompt": {
-      "path": "gcs_demo/llm.py",
-      "sha256": "826a782700b69a2c54047b817b6eece12fdcbee67dfa987213f6963e66fa314c",
+      "path": "gcs_demo/agent_methods_mission.py",
+      "sha256": "1bea0df88c978ec3f515ad66f06690f13b141e70a986819a91078e0c435711fa",
       "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
     },
     "schema": {
-      "path": "gcs_demo/llm.py",
-      "sha256": "826a782700b69a2c54047b817b6eece12fdcbee67dfa987213f6963e66fa314c",
+      "path": "gcs_demo/agent_loop.py",
+      "sha256": "e2dbc1fadaec8d6dc581dfc8ade2f4cfd73e2a3a0d31a8ade576404a484fba6e",
       "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
     },
     "guard": {
-      "path": "gcs_demo/llm.py",
-      "sha256": "826a782700b69a2c54047b817b6eece12fdcbee67dfa987213f6963e66fa314c",
+      "path": "gcs_demo/agent_loop.py",
+      "sha256": "e2dbc1fadaec8d6dc581dfc8ade2f4cfd73e2a3a0d31a8ade576404a484fba6e",
       "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
     },
     "fallback": {
-      "path": "gcs_demo/llm.py",
-      "sha256": "826a782700b69a2c54047b817b6eece12fdcbee67dfa987213f6963e66fa314c",
+      "path": "gcs_demo/agent_methods_mission.py",
+      "sha256": "1bea0df88c978ec3f515ad66f06690f13b141e70a986819a91078e0c435711fa",
       "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
     }
   },
-  "harness_sha256": "26bf26a71f12558c3df32d9a090355c430eca967a22c461ede362db5d8bd0033"
+  "harness_sha256": "b9be3e18699f7d9ab92445c65eac513a8f5f51efbefc7272fb574ea775a2fa82"
 }

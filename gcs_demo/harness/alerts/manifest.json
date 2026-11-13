@@ -1,27 +1,28 @@
 {
   "feature": "alerts",
-  "version": "alerts-harness-v1",
+  "version": "alerts-harness-v2",
+  "supersedes": "alerts-harness-v1 (manifest_v1.json; pre state-machine one-shot path)",
   "components": {
     "system_prompt": {
-      "path": "gcs_demo/alerts/explain.py",
-      "sha256": "2c23ea07f1efd4ea6ce7ecc01478e9c586fcd5b9db1f323e20adaedfbe2d8128",
+      "path": "gcs_demo/alerts/slot_explain.py",
+      "sha256": "2a4301cae3120795f89390c21dd1d67d89d401734991f9a209f9e8c25ec417ef",
       "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
     },
     "schema": {
-      "path": "gcs_demo/alerts/explain.py",
-      "sha256": "2c23ea07f1efd4ea6ce7ecc01478e9c586fcd5b9db1f323e20adaedfbe2d8128",
+      "path": "gcs_demo/agent_loop.py",
+      "sha256": "e2dbc1fadaec8d6dc581dfc8ade2f4cfd73e2a3a0d31a8ade576404a484fba6e",
       "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
     },
     "guard": {
-      "path": "gcs_demo/alerts/explain.py",
-      "sha256": "2c23ea07f1efd4ea6ce7ecc01478e9c586fcd5b9db1f323e20adaedfbe2d8128",
+      "path": "gcs_demo/agent_loop.py",
+      "sha256": "e2dbc1fadaec8d6dc581dfc8ade2f4cfd73e2a3a0d31a8ade576404a484fba6e",
       "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
     },
     "fallback": {
       "path": "gcs_demo/alerts/explain.py",
-      "sha256": "2c23ea07f1efd4ea6ce7ecc01478e9c586fcd5b9db1f323e20adaedfbe2d8128",
+      "sha256": "dcc10c18ffd268a68ec45ce7a35479ba7ebb1f40c11ff4f6504e60e340250ff9",
       "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
     }
   },
-  "harness_sha256": "227c60322039c63b340e715041f81c831944389377038f7763872f7cdc0773f7"
+  "harness_sha256": "dcd50841e7301ab12e09a7e7f9d7d903db3434fde47b72a0aa569592e343f07c"
 }
