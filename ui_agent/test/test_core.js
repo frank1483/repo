@@ -1,0 +1,392 @@
+// node test/test_core.js：決策核心的意圖→候選／決策檢查（不需 Qt）
+const C = require("./load_core.js")
+const ctx = { page: 0, section: -1, modules: {}, canUndo: true, canRedo: true }
+const cases = [
+    ["我想查看飛行設定", "CLARIFY", ""],
+    ["打開系統設定的 Fly View", "SELECT", "NAV_8_11"],
+    ["去告警中心", "SELECT", "NAV_4"],
+    ["首頁", "HOLD", ""],                       // 已在首頁 → 降分，不重複切換
+    ["帶我去看電池失效保護", "SELECT", "NAV_3_1"],
+    ["我要校正羅盤", "SELECT", "NAV_5_4"],
+    ["把風速計移到左上角", "SELECT", "LAY_windGauge_MOVE_TL"],
+    ["小地圖放大一點", "SELECT", "LAY_miniView_SCALE_125"],
+    ["把高度顯示放大兩倍", "SELECT", "LAY_altReadout_SCALE_200"],
+    ["隱藏底部遙測列", "SELECT", "LAY_telemetryBar_HIDE"],
+    ["重新顯示高度顯示", "SELECT", "LAY_altReadout_SHOW"],
+    ["風速計還原大小", "SELECT", "LAY_windGauge_RESET"],
+    ["把指令區往左移", "SELECT", "LAY_actionDock_NUDGE_L"],
+    ["復原", "SELECT", "UNDO"],
+    ["復原兩步", "SELECT", "UNDO_2"],
+    ["全部復原", "SELECT", "RESET_ALL"],
+    ["重做", "SELECT", "REDO"],
+    ["起飛", "HOLD", ""],
+    ["返航", "HOLD", ""],
+    ["帶我去返航設定", "SELECT", "NAV_3_0"],
+]
+// 0306 新增 46 句：舊20句與3個模型驗證原封保留。
+const extraCases = [
+    [
+        "風數計放大一點",
+        "LAY_windGauge_SCALE_125"
+    ],
+    [
+        "小地途縮小一點",
+        "LAY_miniView_SCALE_80"
+    ],
+    [
+        "姿太儀放大一點",
+        "LAY_attitude_SCALE_125"
+    ],
+    [
+        "任務進渡放大一點",
+        "LAY_missionProgress_SCALE_125"
+    ],
+    [
+        "拜託把 wind gauge 放大一點",
+        "LAY_windGauge_SCALE_125"
+    ],
+    [
+        "mini map 縮小一點啦",
+        "LAY_miniView_SCALE_80"
+    ],
+    [
+        "attitude indicator 放大一點",
+        "LAY_attitude_SCALE_125"
+    ],
+    [
+        "高度表縮小一點",
+        "LAY_altReadout_SCALE_80"
+    ],
+    [
+        "速度表放大一點",
+        "LAY_speedReadout_SCALE_125"
+    ],
+    [
+        "telemetry bar 隱藏",
+        "LAY_telemetryBar_HIDE"
+    ],
+    [
+        "heading tape 放大一點",
+        "LAY_headingTape_SCALE_125"
+    ],
+    [
+        "compass 縮小一點",
+        "LAY_compass_SCALE_80"
+    ],
+    [
+        "action dock 隱藏",
+        ""
+    ],
+    [
+        "payload rail 放大一點",
+        "LAY_payloadRail_SCALE_125"
+    ],
+    [
+        "home distance 縮小一點",
+        "LAY_homeInfo_SCALE_80"
+    ],
+    [
+        "progress bar 放大一點",
+        "LAY_missionProgress_SCALE_125"
+    ],
+    [
+        "風速計大一點啦",
+        "LAY_windGauge_SCALE_125"
+    ],
+    [
+        "麻煩小地圖小一點",
+        "LAY_miniView_SCALE_80"
+    ],
+    [
+        "高度顯示變成兩倍",
+        "LAY_altReadout_SCALE_200"
+    ],
+    [
+        "速度顯示減半吧",
+        "LAY_speedReadout_SCALE_50"
+    ],
+    [
+        "把姿態儀藏起來好嗎",
+        ""
+    ],
+    [
+        "底部遙測列先收起來",
+        "LAY_telemetryBar_HIDE"
+    ],
+    [
+        "指令區往右挪一點",
+        "LAY_actionDock_NUDGE_R"
+    ],
+    [
+        "風速計往下挪一點",
+        "LAY_windGauge_NUDGE_D"
+    ],
+    [
+        "把小地圖擺在右上角啦",
+        "LAY_miniView_MOVE_TR"
+    ],
+    [
+        "高度顯示放到左下角",
+        "LAY_altReadout_MOVE_BL"
+    ],
+    [
+        "風速計回到原本大小",
+        "LAY_windGauge_RESET"
+    ],
+    [
+        "重新顯示速度表",
+        "LAY_speedReadout_SHOW"
+    ],
+    [
+        "首頁狀態列放大一點",
+        "LAY_homeStatus_SCALE_125"
+    ],
+    [
+        "天氣卡縮小一點",
+        "LAY_homeWeather_SCALE_80"
+    ],
+    [
+        "系統詳情捷徑放大一點",
+        "LAY_homeDetails_SCALE_125"
+    ],
+    [
+        "即時飛行磚放大一點",
+        "LAY_homeLiveTile_SCALE_125"
+    ],
+    [
+        "任務規劃磚縮小一點",
+        "LAY_homePlanTile_SCALE_80"
+    ],
+    [
+        "任務庫磚隱藏",
+        "LAY_homeLibraryTile_HIDE"
+    ],
+    [
+        "weather card 放大一點",
+        "LAY_homeWeather_SCALE_125"
+    ],
+    [
+        "details shortcut 縮小一點",
+        "LAY_homeDetails_SCALE_80"
+    ],
+    [
+        "live tile 放大一點",
+        "LAY_homeLiveTile_SCALE_125"
+    ],
+    [
+        "plan tile 縮小一點",
+        "LAY_homePlanTile_SCALE_80"
+    ],
+    [
+        "library tile 隱藏",
+        "LAY_homeLibraryTile_HIDE"
+    ],
+    [
+        "home status 放大一點",
+        "LAY_homeStatus_SCALE_125"
+    ],
+    [
+        "這個放大一點",
+        "LAY_windGauge_SCALE_125",
+        {
+            "page": 1,
+            "modules": {
+                "windGauge": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "那個縮小一點",
+        "LAY_miniView_SCALE_80",
+        {
+            "page": 1,
+            "modules": {
+                "miniView": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "這塊藏起來",
+        "LAY_homeWeather_HIDE",
+        {
+            "page": 0,
+            "modules": {
+                "homeWeather": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "那塊放大一點",
+        "LAY_homePlanTile_SCALE_125",
+        {
+            "page": 0,
+            "modules": {
+                "homePlanTile": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "這個往右移",
+        "LAY_homeStatus_NUDGE_R",
+        {
+            "page": 0,
+            "modules": {
+                "homeStatus": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ],
+    [
+        "那個還原大小",
+        "LAY_homeDetails_RESET",
+        {
+            "page": 0,
+            "modules": {
+                "homeDetails": {
+                    "registered": true,
+                    "visible": true
+                }
+            }
+        }
+    ]
+]
+let fail = 0
+// V6 generic-settings candidates must not be truncated to six on a settings page.
+for(const r of [{"id":"UIV6-NT-001","category":"generic_settings","group":"no_target","intent":"設定","ctx":{"page":0,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":0,"final_section":-1}},{"id":"UIV6-NT-002","category":"generic_settings","group":"no_target","intent":"設置","ctx":{"page":1,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":1,"final_section":-1}},{"id":"UIV6-NT-003","category":"generic_settings","group":"no_target","intent":"去設定","ctx":{"page":3,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":3,"final_section":-1}},{"id":"UIV6-NT-004","category":"generic_settings","group":"no_target","intent":"打開設定","ctx":{"page":5,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":5,"final_section":-1}},{"id":"UIV6-NT-005","category":"generic_settings","group":"no_target","intent":"我要調設定","ctx":{"page":7,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":7,"final_section":-1}},{"id":"UIV6-NT-006","category":"generic_settings","group":"no_target","intent":"請打開設定","ctx":{"page":8,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":8,"final_section":-1}},{"id":"UIV6-NT-007","category":"generic_settings","group":"no_target","intent":"幫我開啟設定","ctx":{"page":0,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":0,"final_section":-1}},{"id":"UIV6-NT-008","category":"generic_settings","group":"no_target","intent":"麻煩去設置","ctx":{"page":1,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":1,"final_section":-1}},{"id":"UIV6-NT-009","category":"generic_settings","group":"no_target","intent":"我想調整設定","ctx":{"page":3,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":3,"final_section":-1}},{"id":"UIV6-NT-010","category":"generic_settings","group":"no_target","intent":"進入設定頁","ctx":{"page":5,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":5,"final_section":-1}},{"id":"UIV6-NT-011","category":"generic_settings","group":"no_target","intent":"前往設置頁面","ctx":{"page":7,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":7,"final_section":-1}},{"id":"UIV6-NT-012","category":"generic_settings","group":"no_target","intent":"查看設定","ctx":{"page":8,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":8,"final_section":-1}},{"id":"UIV6-NT-013","category":"generic_settings","group":"no_target","intent":"設定一下","ctx":{"page":0,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":0,"final_section":-1}},{"id":"UIV6-NT-014","category":"generic_settings","group":"no_target","intent":"設置看看","ctx":{"page":1,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":1,"final_section":-1}},{"id":"UIV6-NT-015","category":"generic_settings","group":"no_target","intent":"請幫我打開設定","ctx":{"page":3,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":3,"final_section":-1}},{"id":"UIV6-NT-016","category":"generic_settings","group":"no_target","intent":"我想要去設定","ctx":{"page":5,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":5,"final_section":-1}},{"id":"UIV6-NT-017","category":"generic_settings","group":"no_target","intent":"我要更改設置","ctx":{"page":7,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":7,"final_section":-1}},{"id":"UIV6-NT-018","category":"generic_settings","group":"no_target","intent":"開啟設定畫面","ctx":{"page":8,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":8,"final_section":-1}},{"id":"UIV6-NT-019","category":"generic_settings","group":"no_target","intent":"去設定吧","ctx":{"page":0,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":0,"final_section":-1}},{"id":"UIV6-NT-020","category":"generic_settings","group":"no_target","intent":"請查看設置","ctx":{"page":1,"section":-1},"expect":{"decision":"CLARIFY","ids":[],"final_page":1,"final_section":-1}}]) {
+    const result=C.analyze(r.intent,r.ctx)
+    const wanted=['NAV_3','NAV_5','NAV_7','NAV_8'].concat(C.SECTIONS.filter(s=>s.page===r.ctx.page).map(s=>'NAV_'+s.page+'_'+s.section))
+    const ids=result.candidates.map(c=>c.id)
+    if(result.rule.decision!=='CLARIFY'||!result.generic_settings||JSON.stringify(ids)!==JSON.stringify(wanted)) {
+        fail++; console.log('FAIL '+r.id+' '+r.intent+' '+JSON.stringify(result))
+    }
+}
+for (const [q, id, extra] of extraCases) {
+    const r = C.analyze(q, Object.assign({}, ctx, extra || {}))
+    // id 為空字串：v3 鎖定模組（指令區、姿態儀）不可隱藏，預期 HOLD
+    const ok = id === "" ? r.rule.decision === "HOLD" : (r.rule.decision === "SELECT" && r.rule.choice_id === id)
+    if (!ok) fail++
+    console.log((ok ? "PASS " : "FAIL ") + q + " → " + r.rule.decision + " " + r.rule.choice_id)
+}
+// 不同長度的兩個明確模組名稱，不可因名稱長短自動挑一個。
+if (C.analyze("mini map 和 wind gauge 都放大一點", ctx).rule.decision !== "CLARIFY") fail++
+// 多個可見模組時只列目前頁面的候選；不可從排序第一筆推斷「這個」。
+const many = C.analyze("這個放大一點", {page:1, modules:{
+    windGauge:{registered:true,visible:true}, miniView:{registered:true,visible:true},
+    homeWeather:{registered:true,visible:true}
+}})
+if (many.rule.decision !== "CLARIFY" || many.candidates.some(c => c.kind === "layout" && !["windGauge","miniView"].includes(c.module))) fail++
+for (const q of ["這個放大", "那個縮小"]) {
+    const r = C.analyze(q, {page:1,modules:{windGauge:{registered:true,visible:false}}})
+    if (r.rule.decision !== "HOLD" || !r.rule.final || r.candidates.length) fail++
+}
+for (const [q, d, id] of cases) {
+    const r = C.analyze(q, ctx)
+    const ok = r.rule.decision === d && (!id || r.rule.choice_id === id)
+    if (!ok) fail++
+    console.log((ok ? "PASS " : "FAIL ") + q + " → " + r.rule.decision + " " + r.rule.choice_id)
+}
+// 模型輸出驗證：不在候選內的 ID、引用不存在的證據都要擋下
+const r = C.analyze("我想查看飛行設定", ctx)
+const v1 = C.validateModelDecision({ decision: "SELECT", choice_id: "NAV_99", evidence_ids: [] }, r)
+const v2 = C.validateModelDecision({ decision: "SELECT", choice_id: "NAV_8_11", evidence_ids: ["E9"] }, r)
+const v3 = C.validateModelDecision(C.extractJson('好的 {"decision":"SELECT","choice_id":"NAV_8_11","reason_zh":"x","evidence_ids":["E1"]}'), r)
+for (const [name, ok] of [["擋下不存在的 ID", !v1.ok], ["擋下不存在的證據", !v2.ok], ["接受合法回覆（含前後雜字）", v3.ok]]) {
+    if (!ok) fail++
+    console.log((ok ? "PASS " : "FAIL ") + name)
+}
+
+// V4: new source fixtures only. Legacy fixture contents above are unchanged.
+const v4Rows = require('fs').readFileSync(require('path').join(__dirname,'regression_ui_agent.jsonl'),'utf8')
+    .split(/\r?\n/).filter(Boolean).map(JSON.parse).filter(row=>row.id.startsWith('UIV4-'))
+for(const row of v4Rows) {
+    let pending='', turnCtx={...row.ctx}
+    for(const turn of row.turns||[{intent:row.intent,expect:row.expect}]) {
+        const result=C.analyzeTurn(turn.intent,turnCtx,pending), d=result.rule
+        const ids=d.decision==='SELECT'?(d.steps?d.steps.map(s=>s.choice_id):[d.choice_id]):[]
+        const nextPending=d.decision==='SELECT'?'':result.pending_text||''
+        const ex=turn.expect
+        const ok=d.decision===ex.decision&&JSON.stringify(ids)===JSON.stringify(ex.ids)&&
+            (ex.pending===undefined||nextPending===ex.pending)&&
+            (ex.pending_original===undefined||(result.pending_intent||'')===ex.pending_original)&&
+            (!ex.contains||ex.contains.every(id=>result.candidates.some(c=>c.id===id)))
+        if(!ok)fail++
+        console.log((ok?'PASS ':'FAIL ')+row.id+' '+turn.intent+' -> '+d.decision+' '+ids.join(','))
+        for(const id of ids)turnCtx=C.afterCandidate(turnCtx,C.candidateById(result,id))
+        pending=nextPending
+    }
+}
+for(const q of ['小地圖放大','小地圖放到最大','小地圖縮到最小']) {
+    if(C.analyze(q,{page:1,modules:{}}).candidates.some(c=>/^NAV_8_/.test(c.id)))fail++
+}
+// One navigation plus two layout actions remains executable; history behavior is in test_state_v4.js.
+const compoundV4=C.analyze('切到即時飛行然後風速計放到最大然後小地圖放到最大',ctx)
+if(compoundV4.rule.decision!=='SELECT'||compoundV4.rule.steps.length!==3)fail++
+const noScope=C.analyze('將字縮小',{page:1,modules:{windGauge:{registered:true,visible:true},homeWeather:{registered:true,visible:true}}})
+if(noScope.rule.decision!=='CLARIFY'||noScope.candidates.some(c=>c.kind==='layout'&&c.module!=='windGauge'))fail++
+const pendingForModel=C.analyzeTurn('風速計',ctx,'放大一點')
+const pendingMessage=JSON.parse(C.buildUserMessage(pendingForModel,ctx))
+if(pendingMessage.pending_intent!=='放大一點'||pendingMessage.input_intent!=='風速計')fail++
+
+
+// 0397 safety gate: first functional execution belongs to Claude.
+{
+    const assert = require('assert')
+    const loc = {page:1,section:-1,modules:{}}
+    const ok = {id:'LAY_attitude_SCALE_125',kind:'layout',module:'attitude',op:'scale',factor:1.25}
+    const gate = (ids,cs=[ok]) => C.gateSelection({decision:'SELECT',steps:ids.map(choice_id=>({choice_id}))},cs,loc)
+    const code = (r,c) => r.failures.some(f=>f.code===c)
+    assert(gate([ok.id]).ok)
+    assert(code(gate(['FORGED']), 'NOT_IN_CANDIDATES'))
+    assert(!code(gate([ok.id]), 'NOT_IN_CANDIDATES'))
+    assert(code(gate(['CMD'],[{id:'CMD',kind:'flight',command:'takeoff'}]), 'FLIGHT_COMMAND'))
+    assert(!code(gate([ok.id]), 'FLIGHT_COMMAND'))
+    for (const action of [{op:'hide'},{op:'show',opacity:0},{op:'move',region:'TR',page:2}]) {
+        const c=Object.assign({},ok,action)
+        assert(code(gate([c.id],[c]), 'LOCKED_MODULE'))
+    }
+    for (const action of [{op:'scale',factor:1.25},{op:'move',region:'TR'}]) {
+        const c=Object.assign({},ok,action)
+        assert(gate([c.id],[c]).ok)
+    }
+    assert(code(gate(Array(6).fill(ok.id)), 'STEP_LIMIT'))
+    assert(!code(gate(Array(5).fill(ok.id)), 'STEP_LIMIT'))
+    assert(code(gate([ok.id,'FORGED']), 'NOT_IN_CANDIDATES'))
+    assert(code(gate([ok.id],[ok,ok]), 'NOT_IN_CANDIDATES'))
+    const a=C.analyze('切到即時飛行然後把風速計放大',loc)
+    assert.equal(a.rule.decision,'SELECT')
+    assert.deepEqual(a.rule.steps.map(s=>s.choice_id),['LAY_windGauge_SCALE_125'])
+    assert.equal(a.skipped.length,1)
+    const b=C.analyze('把風速計放大並移到右上',loc)
+    assert.equal(b.rule.decision,'SELECT')
+    assert.deepEqual(b.rule.steps.map(s=>s.choice_id),['LAY_windGauge_SCALE_125','LAY_windGauge_MOVE_TR'])
+    assert(!b.candidates.some(c=>c.kind==='layout'&&c.module!=='windGauge'))
+    assert.equal(C.analyze('打開返航設定',loc).rule.choice_id,'NAV_3_0')
+    const d=C.analyze('返航電量在哪裡看',loc)
+    assert.equal(d.rule.decision,'CLARIFY')
+    for(const id of ['NAV_3_0','NAV_3_1'])assert(d.candidates.some(c=>c.id===id))
+    assert.equal(C.analyze('起飛然後把風速計放大',loc).gate,'pre')
+    const info=['返航電量在哪裡看','返航高度設多少','返航在哪裡','哪裡看返航','顯示返航設定','返航高度多少',
+        '起飛在哪裡看','降落在哪裡看','拍照在哪裡看','錄影在哪裡看','解鎖狀態在哪裡看','上鎖狀態在哪裡看',
+        '懸停在哪裡看','開始任務在哪裡看','暫停任務在哪裡看']
+    for(const q of info)assert.equal(C.preGate(q),null,q)
+    for(const q of ['起飛','降落','返航','解鎖','上鎖','懸停','開始任務','執行任務','暫停任務','拍照','錄影']) {
+        const r=C.preGate(q); assert(r&&r.gate==='pre'&&r.rule.decision==='HOLD',q)
+    }
+}
+
+console.log(fail ? fail + " 項失敗" : "全部通過")
+process.exit(fail ? 1 : 0)

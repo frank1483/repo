@@ -1,0 +1,111 @@
+# UI agent（介面助理）demo
+
+在 ELAN GCP 新版介面的每個畫面右側加一顆「AI」按鈕。使用者用一句話說意圖，agent 會：
+
+- **切畫面**：例如在首頁說「我想查看飛行設定」，會列出可能的畫面（系統設定 › Fly View、安全設定 › 飛行限制、設備管理 › 飛行模式…）讓使用者點；說得明確（「打開系統設定的 Fly View」）就直接切過去。
+- **調整版面**：首頁 6 個與即時飛行畫面 12 個模組可以移動（九宮格位置或往上下左右移一點）、放大縮小、隱藏與重新顯示，移動時會避開其他模組、不會跑出畫面。在別的畫面下達版面指令會先自動切到即時飛行。
+- **復原**：每次變更前都存一份快照（目前畫面＋子頁＋全部模組位置）。可以復原一步、復原多步（「復原兩步」）、重做、全部復原（回到 agent 介入前，這一步本身也能再復原）。套用後畫面下方會出現「復原」按鈕。
+
+agent 只換頁與調整版面，**不送飛行或相機指令、不修改任何參數值**；換頁沿用原本的帳號權限檢查。
+
+## 決策流程（演算法先決定，模型只挑選）
+
+1. 規則把意圖轉成候選動作（每個有固定 ID，如 `NAV_8_11`、`LAY_windGauge_MOVE_TL`、`UNDO`）與證據（目前畫面、比對分數）。
+2. 規則有把握（分數夠高且明顯領先）就直接執行，不呼叫模型。
+3. 規則不確定時才問模型，走狀態機（sm-v2，2026-11-06 起取代 v6 的一次性挑選）：程式決定每一步要填哪一格（分類 → 頁面／子頁／模組／動作／文字比例／復原），模型每次只回 `{"value":"代碼"}`，代碼只能從當步清單選；提示詞每步由外部狀態重建，不帶對話歷史。每句最多 4 次呼叫，同一個等待上限（≤32 秒）涵蓋全部步驟。引擎 `qml/GcpAgentSlotLoop.js` 與告警、任務規劃共用（Python 版 `gcs_demo/agent_loop.py`，兩邊跑同一份一致性測試）。
+4. 回覆不是 JSON、多欄位、代碼不在清單、方法前置條件不符（如鎖定模組要隱藏）→ 修正一次；仍無效 → 退回規則結果。逾時 → 不套用任何動作。模型組出的動作一樣要過第二層安全關卡、確認卡與 Verifier。
+5. 安全界線（像「起飛」「返航」這類指令）與「已經在這個畫面」由規則直接回答，不交給模型。
+
+每次決策在 log 印一行 `[GcpAgent] {...}`（意圖、規則結果、模型結果、最後決定、延遲），之後可以拿來統計。
+
+## 檔案
+
+| 路徑 | 內容 |
+| --- | --- |
+| `qml/GcpAgentCore.js` | 畫面目錄、模組目錄、意圖→候選、規則決策、模型提示與驗證、版面幾何（純 JS） |
+| `qml/GcpAgentState.qml` | 單例：模組登記、版面覆寫（Scale＋Translate，不動原本 anchors）、復原／重做堆疊 |
+| `qml/GcpAgentModule.qml` | 在畫面裡登記一個可調整模組 |
+| `qml/GcpAgentOverlay.qml` | AI 按鈕、面板、復原提示列、狀態機的模型傳輸（OpenAI 相容或 Ollama） |
+| `qml/GcpAgentStateMachine.js` | UI 的狀態與方法庫（sm-v2） |
+| `qml/GcpAgentSlotLoop.js` | 共用狀態機引擎（外部狀態、單格提示、修正一次、上限、退回規則） |
+| `patch/elan_gcp_ui_agent.patch` | 對正式 UI 的修改：CMakeLists 加檔案、GcpMainShell 加兩個函式與疊層、即時飛行補 id 並登記 12 個模組 |
+| `patch/elan_gcp_home_modules.patch` | 首頁 6 個模組（狀態列、天氣、系統詳情、三塊啟動磚）登記；agent 掛外層，原進場動畫留內層 |
+| `install_into_ui.sh` | 把上面裝進 UI **副本** |
+| `test/` | `test_core.js`（node）與 `run_harness.py`（Qt 6.8.3 離屏模擬畫面） |
+
+## 在 Ubuntu 上裝進正式 UI 的副本並編譯
+
+不要在原本的工作目錄上做。以 git worktree 開一個副本（原目錄不受影響）：
+
+```bash
+cd ~/ELAN_GCP_ui                          # Ubuntu 上原本的 UI repo
+git worktree add ../ELAN_GCP_ui_agent -b ui-agent-demo
+git clone -b claude/project-thread-8cd61o https://github.com/frank1483/repo.git ~/gcs_ui_agent
+~/gcs_ui_agent/ui_agent/install_into_ui.sh ~/ELAN_GCP_ui_agent
+```
+
+一鍵版：`~/gcs_ui_agent/ui_agent/ubuntu_build_demo.sh ~/ELAN_GCP_ui`（自動開副本、安裝、沿用原 build 的 Qt 路徑編譯）。
+
+Linux 桌面版手動步驟（第一次要 configure）：
+
+```bash
+cd ~/ELAN_GCP_ui_agent
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=<Qt 6.8.3 gcc_64 路徑>
+cmake --build build --parallel 4
+GCP_PREVIEW=MainShell GCS_LLM_BACKEND=none ./build/Debug/QGroundControl     # 不登入、規則模式
+```
+
+即時飛行的 HUD 模組（姿態儀、風速計、羅盤…）要連上載具才顯示，可以先開 PX4 SIH SITL 再測。
+
+Android APK（沿用之前的 build 目錄設定）：
+
+```bash
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ninja -C build-android-arm64-debug apk
+```
+
+## 接模型
+
+桌面版用環境變數；板子上在面板右上角 ⚙ 填（存在本機，重開保留）：
+
+| 設定 | 例子 |
+| --- | --- |
+| `GCS_LLM_BACKEND` | `openai`（vLLM、llama.cpp server、Ollama 的 /v1）、`ollama`（原生 /api/chat）、`none`（只用規則） |
+| `GCS_LLM_URL` | `http://<server>:8000/v1` |
+| `GCS_LLM_MODEL` | 伺服器上的模型名稱 |
+| `GCS_LLM_TIMEOUT_MS` | 預設 32000 ms；有效值取整並限制為 1–32000 ms；無效／非正數用預設 |
+| `GCS_AGENT_LLM_ALWAYS` | `1` = 每次都問模型（預設只在規則不確定時問） |
+
+### v6：既有 Ollama 設定與等待上限
+
+先確認部署端已具備的 Ollama `qwen2.5:3b`；此程式不下載模型、不安裝或啟動服務。網址填實際 SITL Ubuntu 的位址，非 Ollama 的 /v1 或 /api/chat 完整路徑。例如在部署人員已授權啟動的 UI 程序環境設定：
+
+```bash
+GCS_LLM_BACKEND=ollama
+GCS_LLM_URL=http://<實際Ubuntu主機位址>:11434
+GCS_LLM_MODEL=qwen2.5:3b
+GCS_LLM_TIMEOUT_MS=32000
+```
+
+這是設定範例，請以各自的環境變數匯出／啟動方式傳入；本次交付沒有執行上述模型連線。既有面板 backend／網址／模型設定仍優先於環境變數，請先在 ⚙ 核對。模型未設定時保持只用規則。
+
+⚙ 的等待上限以毫秒輸入整數 1–32000，保存於本機 GCP/Agent 的 llmTimeoutMs；留空代表採 GCS_LLM_TIMEOUT_MS，未設定／無效時採 32000。面板顯示實際秒數與來源。無效面板輸入保留原值並提示；等待中設定停用。每次請求鎖定當時網址、模型、後端、金鑰與上限；改設定只影響下一次。
+
+原生 Ollama /api/chat 的 format 固定送當回合候選約束的 JSON schema，stream:false、temperature:0；不退回寬鬆 JSON 格式。GCS_LLM_SCHEMA=0 只控制 OpenAI 相容後端；OpenAI 的 schema HTTP400 可退回一次 json_object，兩次共用同一等待上限。回傳仍須通過候選ID／證據檢核。
+
+逾時中止請求、忽略晚回覆並使用原規則結果；「模型未完成…已改用規則判斷」保留在 AI 面板獨立提示區，後續動作或確認卡不會蓋掉。下一個要求或取消時清除。這不表示規則一定會執行：CLARIFY 仍待選，HOLD 仍不執行。
+
+本批新增 test/test_model_settings_v6.js：假XHR／手動計時器，無網路、無真模型；由 Claude 首次執行。Qt6.8 Settings 保存、捲動與面板實際顯示仍待驗收。第6項五步／五輪迴圈未在本批實作。
+
+官方接口參考：[Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs)、[Qt Settings](https://doc.qt.io/qt-6/qml-qtcore-settings.html)。
+
+## 測試
+
+```bash
+node ui_agent/test/test_core.js                              # 決策核心 69 項
+node ui_agent/test/run_regression.js                         # 規則回歸集 265 句（正確率、最後畫面正確率）
+pip install PySide6==6.8.3
+python -I ui_agent/test/run_harness.py /tmp/agent_out        # 模擬畫面 18 項，存截圖
+python -I ui_agent/test/run_harness_v3.py /tmp/agent_out_v3  # v3：多步、鎖定、相對位置、命名版面、schema、取消 20 項
+```
+
+模擬畫面用的是假的殼層與假模型伺服器（固定回覆），只驗證流程與復原邏輯，不代表正式 UI 已編譯通過或真實模型的表現。

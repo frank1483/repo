@@ -1,0 +1,442 @@
+--- a/GCP/Home/GcpHomeScreen.qml
++++ b/GCP/Home/GcpHomeScreen.qml
+@@ -1,196 +1,243 @@
+-import QtQuick
+-import QtQuick.Layouts
+-
+-import QGroundControl.GCP
+-
+-// 首頁（Launcher）— 對照 Figma `HomeScreen`（`final_export/HomeScreen.qml`，1920×1200）與
+-// Prototype「01 Home Overview」。P4（2026-10-10）依新版整頁重做，取代舊的四張卡片版面。
+-//
+-// 版面（1920×1200 基準；視窗較小時整體依 `s = min(寬/1920, 高/1200, 1)` 縮放）：
+-// 背景建築照片＋三層暗化（水平漸層、上緣、下緣）→ 左上品牌、右上時間／使用者／設定 →
+-// 狀態列（Ready＋五項狀態＋告警徽章）→ 天氣膠囊 → 中間讓出背景 → 「系統詳情 ⌄」→ 底部三塊啟動磚
+-// （即時飛行／任務規劃／任務庫）。以 ColumnLayout 排版，不沿用匯出稿的絕對座標。
+-//
+-// 導覽 signals 沿用舊首頁（GcpMainShell 的 liveFlight／missionPlanner／missionLibrary／settings），
+-// 新增 `alertsRequested`（告警徽章）與 `systemDetailsRequested`（系統詳情）。
+-// 新版 Figma 的導覽改為 Launcher＋頁首「⌄」選單（KI-001，待 Hank 確認），右上圖示暫維持「系統設定」。
+-Item {
+-    id: root
+-
+-    signal settingsRequested()
+-    signal logoutRequested()
+-    signal liveFlightRequested()
+-    signal missionPlannerRequested()
+-    signal missionLibraryRequested()
+-    signal alertsRequested()
+-    signal systemDetailsRequested()
+-
+-    readonly property alias statusBar: statusBar
+-
+-    readonly property real s: Math.min(1, width / GcpTheme.layout.homeBaseWidth, height / GcpTheme.layout.homeBaseHeight)
+-
+-    Rectangle { anchors.fill: parent; color: GcpTheme.color.bgBase }
+-
+-    Image {
+-        anchors.fill: parent
+-        source: "qrc:/qml/QGroundControl/GCP/images/eLAN.png"
+-        fillMode: Image.PreserveAspectCrop
+-    }
+-
+-    // 暗化：水平四段漸層（整體 30%）、上緣與下緣各一層垂直漸層
+-    Rectangle {
+-        anchors.fill: parent
+-        opacity: 0.30
+-        gradient: Gradient {
+-            orientation: Gradient.Horizontal
+-            GradientStop { position: 0.00; color: GcpTheme.color.homeDimStart }
+-            GradientStop { position: 0.38; color: GcpTheme.color.homeDimMid1 }
+-            GradientStop { position: 0.72; color: GcpTheme.color.homeDimMid2 }
+-            GradientStop { position: 1.00; color: GcpTheme.color.homeDimEnd }
+-        }
+-    }
+-    Rectangle {
+-        anchors.top: parent.top
+-        anchors.left: parent.left
+-        anchors.right: parent.right
+-        height: parent.height * 560 / GcpTheme.layout.homeBaseHeight
+-        gradient: Gradient {
+-            GradientStop { position: 0.0; color: GcpTheme.color.homeScrimStrong }
+-            GradientStop { position: 1.0; color: GcpTheme.color.homeScrimClear }
+-        }
+-    }
+-    Rectangle {
+-        anchors.bottom: parent.bottom
+-        anchors.left: parent.left
+-        anchors.right: parent.right
+-        height: parent.height * 520 / GcpTheme.layout.homeBaseHeight
+-        gradient: Gradient {
+-            GradientStop { position: 0.0; color: GcpTheme.color.homeScrimClear }
+-            GradientStop { position: 1.0; color: GcpTheme.color.homeScrimBottom }
+-        }
+-    }
+-
+-    // 右上：時間／使用者／設定（匯出稿 x=1377..1895，距右緣 25）
+-    RowLayout {
+-        anchors.right: parent.right
+-        anchors.rightMargin: GcpTheme.layout.homeHeaderRight * root.s
+-        anchors.top: parent.top
+-        anchors.topMargin: GcpTheme.layout.homeTimeUserTop * root.s
+-        spacing: GcpTheme.spacing.lg * root.s
+-
+-        GcpHomeTimeUser { s: root.s }
+-        GcpIconButton {
+-            Layout.alignment: Qt.AlignTop
+-            Layout.topMargin: GcpTheme.layout.homeSettingsTopOffset * root.s
+-            outlined: true
+-            clearFill: true
+-            noBorder: true
+-            buttonSize: GcpTheme.layout.homeSettingsSize * root.s
+-            iconSize: GcpTheme.layout.homeSettingsIcon * root.s
+-            iconName: "SystemSettings"
+-            onClicked: root.settingsRequested()
+-        }
+-        // 登出：與主選單的登出鈕同一語意（紅色），首頁直接可按，不必先開主選單
+-        GcpIconButton {
+-            Layout.alignment: Qt.AlignTop
+-            Layout.topMargin: GcpTheme.layout.homeSettingsTopOffset * root.s
+-            outlined: true
+-            clearFill: true
+-            noBorder: true
+-            buttonSize: GcpTheme.layout.homeSettingsSize * root.s
+-            iconSize: GcpTheme.layout.homeSettingsIcon * root.s
+-            iconName: "Login"
+-            iconColor: GcpTheme.color.statusCritical
+-            Accessible.name: qsTr("登出")
+-            onClicked: root.logoutRequested()
+-        }
+-    }
+-
+-    ColumnLayout {
+-        anchors.fill: parent
+-        anchors.leftMargin: GcpTheme.layout.homeSideMargin * root.s
+-        anchors.rightMargin: GcpTheme.layout.homeSideMargin * root.s
+-        anchors.topMargin: GcpTheme.layout.homeBrandTop * root.s
+-        anchors.bottomMargin: GcpTheme.layout.homeDockBottom * root.s
+-        spacing: 0
+-
+-        // 頁首：品牌（左）、時間／使用者／設定（右）
+-        Item {
+-            Layout.fillWidth: true
+-            Layout.preferredHeight: GcpTheme.layout.homeBrandHeight * root.s
+-
+-            GcpHomeBrand {
+-                s: root.s
+-                anchors.left: parent.left
+-                anchors.leftMargin: GcpTheme.layout.homeBrandInset * root.s
+-                anchors.verticalCenter: parent.verticalCenter
+-            }
+-
+-        }
+-
+-        Item { Layout.preferredHeight: (GcpTheme.layout.homeStatusBarTop - GcpTheme.layout.homeBrandTop - GcpTheme.layout.homeBrandHeight) * root.s }
+-
+-        GcpHomeStatusBar {
+-            id: statusBar
+-            Layout.fillWidth: true
+-            s: root.s
+-            onAlertsRequested: root.alertsRequested()
+-            GcpEntranceSlide { order: 0; fromX: -90 }
+-        }
+-
+-        Item { Layout.preferredHeight: GcpTheme.layout.homeChipGap * root.s }
+-
+-        GcpHomeWeatherChip {
+-            Layout.alignment: Qt.AlignLeft
+-            s: root.s
+-            GcpEntranceSlide { order: 1; fromX: -90 }
+-        }
+-
+-        Item { Layout.fillHeight: true }
+-
+-        GcpHomeDetailsShortcut {
+-            Layout.alignment: Qt.AlignHCenter
+-            s: root.s
+-            onClicked: root.systemDetailsRequested()
+-        }
+-
+-        Item { Layout.preferredHeight: GcpTheme.layout.homeDetailsToDock * root.s }
+-
+-        RowLayout {
+-            Layout.fillWidth: true
+-            spacing: GcpTheme.layout.homeDockGap * root.s
+-
+-            GcpHomeLaunchTile {
+-                Layout.fillWidth: true
+-                Layout.preferredWidth: GcpTheme.layout.homeTilePrimaryWidth
+-                s: root.s
+-                type: GcpHomeLaunchTile.Type.Primary
+-                eyebrow: qsTr("LIVE FLIGHT")
+-                title: qsTr("即時飛行")
+-                subtitle: statusBar.summaryText
+-                onClicked: root.liveFlightRequested()
+-                GcpEntranceSlide { order: 2; fromX: 120 }
+-            }
+-            GcpHomeLaunchTile {
+-                Layout.fillWidth: true
+-                Layout.preferredWidth: GcpTheme.layout.homeTileSecondaryWidth
+-                s: root.s
+-                type: GcpHomeLaunchTile.Type.Secondary
+-                eyebrow: qsTr("MISSION PLANNER")
+-                title: qsTr("任務規劃")
+-                onClicked: root.missionPlannerRequested()
+-                GcpEntranceSlide { order: 3; fromX: 120 }
+-            }
+-            GcpHomeLaunchTile {
+-                Layout.fillWidth: true
+-                Layout.preferredWidth: GcpTheme.layout.homeTileSecondaryWidth
+-                s: root.s
+-                type: GcpHomeLaunchTile.Type.Secondary
+-                eyebrow: qsTr("MISSION LIBRARY")
+-                title: qsTr("任務庫")
+-                onClicked: root.missionLibraryRequested()
+-                GcpEntranceSlide { order: 4; fromX: 120 }
+-            }
+-        }
+-    }
+-}
++import QtQuick
++import QtQuick.Layouts
++
++import QGroundControl.GCP
++
++// 首頁（Launcher）— 對照 Figma `HomeScreen`（`final_export/HomeScreen.qml`，1920×1200）與
++// Prototype「01 Home Overview」。P4（2026-10-10）依新版整頁重做，取代舊的四張卡片版面。
++//
++// 版面（1920×1200 基準；視窗較小時整體依 `s = min(寬/1920, 高/1200, 1)` 縮放）：
++// 背景建築照片＋三層暗化（水平漸層、上緣、下緣）→ 左上品牌、右上時間／使用者／設定 →
++// 狀態列（Ready＋五項狀態＋告警徽章）→ 天氣膠囊 → 中間讓出背景 → 「系統詳情 ⌄」→ 底部三塊啟動磚
++// （即時飛行／任務規劃／任務庫）。以 ColumnLayout 排版，不沿用匯出稿的絕對座標。
++//
++// 導覽 signals 沿用舊首頁（GcpMainShell 的 liveFlight／missionPlanner／missionLibrary／settings），
++// 新增 `alertsRequested`（告警徽章）與 `systemDetailsRequested`（系統詳情）。
++// 新版 Figma 的導覽改為 Launcher＋頁首「⌄」選單（KI-001，待 Hank 確認），右上圖示暫維持「系統設定」。
++Item {
++    id: root
++
++    signal settingsRequested()
++    signal logoutRequested()
++    signal liveFlightRequested()
++    signal missionPlannerRequested()
++    signal missionLibraryRequested()
++    signal alertsRequested()
++    signal systemDetailsRequested()
++
++    readonly property alias statusBar: statusBar
++
++    readonly property real s: Math.min(1, width / GcpTheme.layout.homeBaseWidth, height / GcpTheme.layout.homeBaseHeight)
++
++    Rectangle { anchors.fill: parent; color: GcpTheme.color.bgBase }
++
++    Image {
++        anchors.fill: parent
++        source: "qrc:/qml/QGroundControl/GCP/images/eLAN.png"
++        fillMode: Image.PreserveAspectCrop
++    }
++
++    // 暗化：水平四段漸層（整體 30%）、上緣與下緣各一層垂直漸層
++    Rectangle {
++        anchors.fill: parent
++        opacity: 0.30
++        gradient: Gradient {
++            orientation: Gradient.Horizontal
++            GradientStop { position: 0.00; color: GcpTheme.color.homeDimStart }
++            GradientStop { position: 0.38; color: GcpTheme.color.homeDimMid1 }
++            GradientStop { position: 0.72; color: GcpTheme.color.homeDimMid2 }
++            GradientStop { position: 1.00; color: GcpTheme.color.homeDimEnd }
++        }
++    }
++    Rectangle {
++        anchors.top: parent.top
++        anchors.left: parent.left
++        anchors.right: parent.right
++        height: parent.height * 560 / GcpTheme.layout.homeBaseHeight
++        gradient: Gradient {
++            GradientStop { position: 0.0; color: GcpTheme.color.homeScrimStrong }
++            GradientStop { position: 1.0; color: GcpTheme.color.homeScrimClear }
++        }
++    }
++    Rectangle {
++        anchors.bottom: parent.bottom
++        anchors.left: parent.left
++        anchors.right: parent.right
++        height: parent.height * 520 / GcpTheme.layout.homeBaseHeight
++        gradient: Gradient {
++            GradientStop { position: 0.0; color: GcpTheme.color.homeScrimClear }
++            GradientStop { position: 1.0; color: GcpTheme.color.homeScrimBottom }
++        }
++    }
++
++    // 右上：時間／使用者／設定（匯出稿 x=1377..1895，距右緣 25）
++    RowLayout {
++        anchors.right: parent.right
++        anchors.rightMargin: GcpTheme.layout.homeHeaderRight * root.s
++        anchors.top: parent.top
++        anchors.topMargin: GcpTheme.layout.homeTimeUserTop * root.s
++        spacing: GcpTheme.spacing.lg * root.s
++
++        GcpHomeTimeUser { s: root.s }
++        GcpIconButton {
++            Layout.alignment: Qt.AlignTop
++            Layout.topMargin: GcpTheme.layout.homeSettingsTopOffset * root.s
++            outlined: true
++            clearFill: true
++            noBorder: true
++            buttonSize: GcpTheme.layout.homeSettingsSize * root.s
++            iconSize: GcpTheme.layout.homeSettingsIcon * root.s
++            iconName: "SystemSettings"
++            onClicked: root.settingsRequested()
++        }
++        // 登出：與主選單的登出鈕同一語意（紅色），首頁直接可按，不必先開主選單
++        GcpIconButton {
++            Layout.alignment: Qt.AlignTop
++            Layout.topMargin: GcpTheme.layout.homeSettingsTopOffset * root.s
++            outlined: true
++            clearFill: true
++            noBorder: true
++            buttonSize: GcpTheme.layout.homeSettingsSize * root.s
++            iconSize: GcpTheme.layout.homeSettingsIcon * root.s
++            iconName: "Login"
++            iconColor: GcpTheme.color.statusCritical
++            Accessible.name: qsTr("登出")
++            onClicked: root.logoutRequested()
++        }
++    }
++
++    ColumnLayout {
++        anchors.fill: parent
++        anchors.leftMargin: GcpTheme.layout.homeSideMargin * root.s
++        anchors.rightMargin: GcpTheme.layout.homeSideMargin * root.s
++        anchors.topMargin: GcpTheme.layout.homeBrandTop * root.s
++        anchors.bottomMargin: GcpTheme.layout.homeDockBottom * root.s
++        spacing: 0
++
++        // 頁首：品牌（左）、時間／使用者／設定（右）
++        Item {
++            Layout.fillWidth: true
++            Layout.preferredHeight: GcpTheme.layout.homeBrandHeight * root.s
++
++            GcpHomeBrand {
++                s: root.s
++                anchors.left: parent.left
++                anchors.leftMargin: GcpTheme.layout.homeBrandInset * root.s
++                anchors.verticalCenter: parent.verticalCenter
++            }
++
++        }
++
++        Item { Layout.preferredHeight: (GcpTheme.layout.homeStatusBarTop - GcpTheme.layout.homeBrandTop - GcpTheme.layout.homeBrandHeight) * root.s }
++
++        Item {
++            id: homeStatusFrame
++            Layout.fillWidth: true
++            implicitWidth: statusBar.implicitWidth
++            implicitHeight: statusBar.implicitHeight
++            GcpHomeStatusBar {
++                id: statusBar
++                s: root.s
++                onAlertsRequested: root.alertsRequested()
++                GcpEntranceSlide { order: 0; fromX: -90 }
++                anchors.fill: parent
++            }
++            GcpAgentModule { moduleId: "homeStatus"; target: homeStatusFrame; container: root }
++        }
++
++        Item { Layout.preferredHeight: GcpTheme.layout.homeChipGap * root.s }
++
++        Item {
++            id: homeWeatherFrame
++            Layout.alignment: Qt.AlignLeft
++            implicitWidth: homeWeatherVisual.implicitWidth
++            implicitHeight: homeWeatherVisual.implicitHeight
++            GcpHomeWeatherChip {
++                id: homeWeatherVisual
++                s: root.s
++                GcpEntranceSlide { order: 1; fromX: -90 }
++                anchors.fill: parent
++            }
++            GcpAgentModule { moduleId: "homeWeather"; target: homeWeatherFrame; container: root }
++        }
++
++        Item { Layout.fillHeight: true }
++
++        Item {
++            id: homeDetailsFrame
++            Layout.alignment: Qt.AlignHCenter
++            implicitWidth: homeDetailsVisual.implicitWidth
++            implicitHeight: homeDetailsVisual.implicitHeight
++            GcpHomeDetailsShortcut {
++                id: homeDetailsVisual
++                s: root.s
++                onClicked: root.systemDetailsRequested()
++                anchors.fill: parent
++            }
++            GcpAgentModule { moduleId: "homeDetails"; target: homeDetailsFrame; container: root }
++        }
++
++        Item { Layout.preferredHeight: GcpTheme.layout.homeDetailsToDock * root.s }
++
++        RowLayout {
++            Layout.fillWidth: true
++            spacing: GcpTheme.layout.homeDockGap * root.s
++
++            Item {
++                id: homeLiveTileFrame
++                Layout.fillWidth: true
++                Layout.preferredWidth: GcpTheme.layout.homeTilePrimaryWidth
++                implicitWidth: homeLiveVisual.implicitWidth
++                implicitHeight: homeLiveVisual.implicitHeight
++                GcpHomeLaunchTile {
++                    id: homeLiveVisual
++                    s: root.s
++                    type: GcpHomeLaunchTile.Type.Primary
++                    eyebrow: qsTr("LIVE FLIGHT")
++                    title: qsTr("即時飛行")
++                    subtitle: statusBar.summaryText
++                    onClicked: root.liveFlightRequested()
++                    GcpEntranceSlide { order: 2; fromX: 120 }
++                    anchors.fill: parent
++                }
++                GcpAgentModule { moduleId: "homeLiveTile"; target: homeLiveTileFrame; container: root }
++            }
++            Item {
++                id: homePlanTileFrame
++                Layout.fillWidth: true
++                Layout.preferredWidth: GcpTheme.layout.homeTileSecondaryWidth
++                implicitWidth: homePlanVisual.implicitWidth
++                implicitHeight: homePlanVisual.implicitHeight
++                GcpHomeLaunchTile {
++                    id: homePlanVisual
++                    s: root.s
++                    type: GcpHomeLaunchTile.Type.Secondary
++                    eyebrow: qsTr("MISSION PLANNER")
++                    title: qsTr("任務規劃")
++                    onClicked: root.missionPlannerRequested()
++                    GcpEntranceSlide { order: 3; fromX: 120 }
++                    anchors.fill: parent
++                }
++                GcpAgentModule { moduleId: "homePlanTile"; target: homePlanTileFrame; container: root }
++            }
++            Item {
++                id: homeLibraryTileFrame
++                Layout.fillWidth: true
++                Layout.preferredWidth: GcpTheme.layout.homeTileSecondaryWidth
++                implicitWidth: homeLibraryVisual.implicitWidth
++                implicitHeight: homeLibraryVisual.implicitHeight
++                GcpHomeLaunchTile {
++                    id: homeLibraryVisual
++                    s: root.s
++                    type: GcpHomeLaunchTile.Type.Secondary
++                    eyebrow: qsTr("MISSION LIBRARY")
++                    title: qsTr("任務庫")
++                    onClicked: root.missionLibraryRequested()
++                    GcpEntranceSlide { order: 4; fromX: 120 }
++                    anchors.fill: parent
++                }
++                GcpAgentModule { moduleId: "homeLibraryTile"; target: homeLibraryTileFrame; container: root }
++            }
++        }
++    }
++}

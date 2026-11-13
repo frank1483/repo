@@ -1,0 +1,39 @@
+{"id":"UITEXT0400-001","group":"text_scale","text":"全系統文字放大","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_115"],"gate_ok":true}}
+{"id":"UITEXT0400-002","group":"text_scale","text":"全系統文字縮小","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_85"],"gate_ok":true}}
+{"id":"UITEXT0400-003","group":"text_scale","text":"全系統文字 85%","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_85"],"gate_ok":true}}
+{"id":"UITEXT0400-004","group":"text_scale","text":"全系統文字 115%","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_115"],"gate_ok":true}}
+{"id":"UITEXT0400-005","group":"text_scale","text":"全系統文字 130%","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_130"],"gate_ok":true}}
+{"id":"UITEXT0400-006","group":"text_scale","text":"全系統文字恢復預設","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_100"],"gate_ok":true}}
+{"id":"UITEXT0400-007","group":"text_scale","text":"  全系統文字放大！  ","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_115"],"gate_ok":true}}
+{"id":"UITEXT0400-008","group":"text_scale","text":"全系統文字放大","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_130"],"gate_ok":true},"ctx":{"textScale":1.3}}
+{"id":"UITEXT0400-009","group":"text_scale","text":"全系統文字縮小","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_85"],"gate_ok":true},"ctx":{"textScale":0.85}}
+{"id":"UITEXT0400-010","group":"five_step","text":"全系統文字放大然後全系統文字放大然後全系統文字縮小然後全系統文字縮小然後全系統文字縮小","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_115","SYS_TEXT_SCALE_130","SYS_TEXT_SCALE_115","SYS_TEXT_SCALE_100","SYS_TEXT_SCALE_85"],"gate_ok":true}}
+{"id":"UITEXT0400-011","group":"five_step","text":"全系統文字放大然後全系統文字放大然後全系統文字放大然後全系統文字放大然後全系統文字放大然後全系統文字放大","expect":{"route":"analysis","decision":"HOLD","ids":[]}}
+{"id":"UITEXT0400-012","group":"five_step","text":"全系統文字放大然後儲存版面","expect":{"route":"analysis","decision":"HOLD","ids":[]}}
+{"id":"UITEXT0400-013","group":"five_step","text":"全系統文字放大然後起飛","expect":{"route":"blocked"}}
+{"id":"UITEXT0400-014","group":"five_step","text":"全系統文字放大然後全系統文字 85%","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_115","SYS_TEXT_SCALE_85"],"gate_ok":true}}
+{"id":"UITEXT0400-015","group":"readable_route","text":"讓小地圖看得清楚一點","expect":{"route":"goal","ids":["GOAL_MINIVIEW_READABLE"],"confirmation_requested":true}}
+{"id":"UITEXT0400-016","group":"readable_route","text":"小地圖看清楚","expect":{"route":"goal","ids":["GOAL_MINIVIEW_READABLE"],"confirmation_requested":true}}
+{"id":"UITEXT0400-017","group":"readable_route","text":"把小地圖能看得清楚些！","expect":{"route":"goal","ids":["GOAL_MINIVIEW_READABLE"],"confirmation_requested":true}}
+{"id":"UITEXT0400-018","group":"readable_route","text":"  讓小地圖看得清楚一點  ","expect":{"route":"goal","ids":["GOAL_MINIVIEW_READABLE"],"confirmation_requested":true}}
+{"id":"UITEXT0400-019","group":"readable_ambiguity","text":"讓地圖看得清楚一點","expect":{"route":"clarify_goal","message_contains":["主地圖","小地圖"]}}
+{"id":"UITEXT0400-020","group":"readable_ambiguity","text":"地圖看清楚！","expect":{"route":"clarify_goal","message_contains":["主地圖","小地圖"]}}
+{"id":"UITEXT0400-021","group":"readable_unavailable","text":"讓小地圖看得清楚一點","expect":{"route":"clarify_goal","message_contains":["未顯示"]},"ctx":{"page":0}}
+{"id":"UITEXT0400-022","group":"readable_unavailable","text":"讓小地圖看得清楚一點","expect":{"route":"clarify_goal","message_contains":["未顯示"]},"ctx":{"modules":{}}}
+{"id":"UITEXT0400-023","group":"readable_unavailable","text":"讓小地圖看得清楚一點","expect":{"route":"clarify_goal","message_contains":["未顯示"]},"ctx":{"modules":{"miniView":{"registered":false,"visible":true}}}}
+{"id":"UITEXT0400-024","group":"readable_unavailable","text":"讓小地圖看得清楚一點","expect":{"route":"clarify_goal","message_contains":["未顯示"]},"ctx":{"modules":{"miniView":{"registered":true,"visible":false}}}}
+{"id":"UITEXT0400-025","group":"pending_cancel","text":"取消","expect":{"route":"cancel"},"pending":"放大"}
+{"id":"UITEXT0400-026","group":"pending_cancel","text":"算了！","expect":{"route":"cancel"},"pending":"放大"}
+{"id":"UITEXT0400-027","group":"pending_cancel","text":"CANCEL!","expect":{"route":"cancel"},"pending":"放大"}
+{"id":"UITEXT0400-028","group":"pending_cancel","text":"  cancel  ","expect":{"route":"cancel"},"pending":"放大"}
+{"id":"UITEXT0400-029","group":"pending_merge","text":"小地圖","expect":{"route":"analysis","decision":"SELECT","ids":["LAY_miniView_SCALE_125"],"gate_ok":true,"pending_original":"放大","pending":""},"pending":"放大"}
+{"id":"UITEXT0400-030","group":"pending_fresh","text":"全系統文字放大","expect":{"route":"analysis","decision":"SELECT","ids":["SYS_TEXT_SCALE_115"],"gate_ok":true,"pending_original":"","pending":""},"pending":"縮小"}
+{"id":"UITEXT0400-031","group":"settings","text":"設定","expect":{"route":"analysis","decision":"CLARIFY","ids":[],"contains":["NAV_3","NAV_5","NAV_7","NAV_8"]}}
+{"id":"UITEXT0400-032","group":"settings","text":"返航電量在哪裡看","expect":{"route":"analysis","decision":"CLARIFY","ids":[],"contains":["NAV_3_0","NAV_3_1"]}}
+{"id":"UITEXT0400-033","group":"settings","text":"打開返航設定","expect":{"route":"analysis","decision":"SELECT","ids":["NAV_3_0"],"gate_ok":true}}
+{"id":"UITEXT0400-034","group":"module","text":"把風速計放大並移到右上","expect":{"route":"analysis","decision":"SELECT","ids":["LAY_windGauge_SCALE_125","LAY_windGauge_MOVE_TR"],"gate_ok":true}}
+{"id":"UITEXT0400-035","group":"pre_gate","text":"  幫我起飛！  ","expect":{"route":"blocked"}}
+{"id":"UITEXT0400-036","group":"pre_gate","text":"請降落","expect":{"route":"blocked"}}
+{"id":"UITEXT0400-037","group":"pre_gate","text":"幫我開始任務","expect":{"route":"blocked"}}
+{"id":"UITEXT0400-038","group":"pre_gate","text":"拍照！","expect":{"route":"blocked"}}
+{"id":"UITEXT0400-039","group":"pre_gate","text":"錄影！","expect":{"route":"blocked"}}

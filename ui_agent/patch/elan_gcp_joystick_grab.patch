@@ -1,0 +1,24 @@
+diff --git a/GCP/Flight/GcpVirtualJoystick.qml b/GCP/Flight/GcpVirtualJoystick.qml
+--- a/GCP/Flight/GcpVirtualJoystick.qml
++++ b/GCP/Flight/GcpVirtualJoystick.qml
+@@ -113,6 +113,20 @@
+         color: GcpTheme.color.statusWarning
+     }
+ 
++    // PointHandler below still observes immediate press/release; this handler owns
++    // the drag so the map's MouseArea cannot use the same mouse/touch point.
++    DragHandler {
++        target: null
++        enabled: root.padEnabled
++        acceptedButtons: Qt.LeftButton
++        minimumPointCount: 1
++        maximumPointCount: 1
++        dragThreshold: 0
++        grabPermissions: PointerHandler.CanTakeOverFromItems
++                         | PointerHandler.CanTakeOverFromHandlersOfDifferentType
++        // No ApprovesTakeOver flags: another handler/item cannot steal the drag.
++    }
++
+     PointHandler {
+         id: pointer
+         enabled: root.padEnabled
