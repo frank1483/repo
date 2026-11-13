@@ -153,9 +153,14 @@ class Session:
             return {"error": "只能有 value 一個欄位"}
         if not isinstance(obj["value"], str):
             return {"error": "value 必須是字串"}
-        if obj["value"] not in [a["code"] for a in self.st["allowed"]]:
-            return {"error": "回答「" + obj["value"][:40] + "」不在可選清單內"}
-        return {"value": obj["value"]}
+        codes = [a["code"] for a in self.st["allowed"]]
+        v = obj["value"]
+        if v in codes:
+            return {"value": v}
+        hit = _lenient_prefix(v, codes)
+        if hit is not None:
+            return {"value": hit, "lenient_prefix": True}
+        return {"error": "回答「" + v[:40] + "」不在可選清單內"}
 
     # ---- host API
     def state(self):
@@ -181,6 +186,8 @@ class Session:
         if "error" in p:
             self._invalid(p["error"], raw)
             return
+        if p.get("lenient_prefix"):
+            self._log({"event": "lenient_prefix", "value": p["value"]})
         self._log({"event": "filled", "value": p["value"]})
         problem = self.lib.transition(p["value"], self.h)
         if problem:
@@ -191,6 +198,20 @@ class Session:
             return
         self.st["model_calls"] += 1
         self._invalid("模型未回覆：" + str(reason or "error"), "")
+
+
+def _lenient_prefix(v, codes):
+    """模型常把「代碼 說明」整段抄回：開頭（去掉前導空白）恰為一個合法代碼，且後面緊接非英數字元或結尾時，取該代碼。
+    多個代碼都符合時取最長者；不符合就回 None（仍走原本的修正／規則備援）。"""
+    s = v.lstrip()
+    best = None
+    for c in codes:
+        if c and s.startswith(c):
+            rest = s[len(c):]
+            if rest == "" or not (rest[0].isascii() and (rest[0].isalnum() or rest[0] == "_")):
+                if best is None or len(c) > len(best):
+                    best = c
+    return best
 
 
 def run(sess: Session, model):
