@@ -1,0 +1,180 @@
+diff --git a/GCP/CMakeLists.txt b/GCP/CMakeLists.txt
+--- a/GCP/CMakeLists.txt
++++ b/GCP/CMakeLists.txt
+@@ -98,6 +98,8 @@
+         Agent/GcpAgentThemePalette.js
+         Agent/GcpAgentThemeHostPolicy.js
+         Agent/GcpAgentThemeEditor.qml
++        MvpSlots/GcpMvpInstalled.js
++        # MVP plugin files (install_mvp_into_ui.sh inserts AiMission/AiAlerts entries below)
+         GcpMainShell.qml
+         GcpMissionMapCanvas.qml
+         GcpPayloadQuickRail.qml
+diff --git a/GCP/GcpMainShell.qml b/GCP/GcpMainShell.qml
+--- a/GCP/GcpMainShell.qml
++++ b/GCP/GcpMainShell.qml
+@@ -7,6 +7,7 @@
+ import QGroundControl.Controllers
+ import QGroundControl.FlightDisplay
+ import QGroundControl.GCP
++import "MvpSlots/GcpMvpInstalled.js" as MvpInstalled
+ import QGroundControl.Vehicle
+ 
+ Item {
+@@ -660,6 +661,38 @@
+         }
+     }
+ 
++    // MVP 插槽：主畫面浮動層（蓋在所有頁面之上、UI agent 之下）。外掛沒裝時 Loader 不啟用，畫面不變。
++    // 告警外掛 AiAlerts/GcpAiAlertsPanel.qml 自行決定位置（預設右上）；alertManager = 正式 UI 告警清單單例。
++    Item {
++        id: mvpFloatingLayer
++        anchors.fill: parent
++        z: 90
++        visible: AuthService.state === AuthService.Authenticated || root._devPreview
++
++        Loader {
++            id: mvpAlertsSlot
++            anchors.right: parent.right
++            anchors.top: parent.top
++            anchors.rightMargin: 16
++            anchors.topMargin: 16
++            active: MvpInstalled.has("AiAlerts/GcpAiAlertsPanel.qml")
++            source: active ? "AiAlerts/GcpAiAlertsPanel.qml" : ""
++            onLoaded: MvpInstalled.bind(item, {
++                apiBase: GcpEnv.value("GCS_MVP_API_URL", "http://127.0.0.1:8765"),
++                alertManager: GcpAlertManager,
++                shell: root,
++                envValue: function (name, fallback) { return GcpEnv.value(name, fallback) }
++            })
++        }
++        // 目前載具 id 隨連線變動（沒有載具時為 0）
++        Binding {
++            target: mvpAlertsSlot.item
++            property: "vehicleId"
++            value: QGroundControl.multiVehicleManager.activeVehicle ? QGroundControl.multiVehicleManager.activeVehicle.id : 0
++            when: mvpAlertsSlot.item !== null && ("vehicleId" in mvpAlertsSlot.item)
++        }
++    }
++
+     // UI agent：每個畫面都能叫出（右側 AI 按鈕）；只換頁與調整版面，所有變更可復原
+     GcpAgentOverlay {
+         anchors.fill: parent
+diff --git a/GCP/GcpMissionPlannerPage.qml b/GCP/GcpMissionPlannerPage.qml
+--- a/GCP/GcpMissionPlannerPage.qml
++++ b/GCP/GcpMissionPlannerPage.qml
+@@ -9,6 +9,7 @@
+ import QGroundControl.Controllers
+ import QGroundControl.Controls
+ import QGroundControl.GCP
++import "MvpSlots/GcpMvpInstalled.js" as MvpInstalled
+ 
+ // 任務規劃頁骨架與地圖畫布（PLAN.md 3.5.1）— 對照
+ // MissionPlannerScreen.ui.qml、GCP_Mission_PlannerCanvas_1.ui.qml。
+@@ -137,6 +138,31 @@
+                         }
+                     }
+ 
++                    // MVP 插槽：任務 AI 面板（地圖上、工具列右側的空白區）。外掛沒裝時 Loader 不啟用。
++                    // 面板自帶「AI 任務建議」按鈕，預設收起；拿到本頁 missionController 與地圖畫預覽線。
++                    Loader {
++                        id: mvpMissionSlot
++                        anchors.fill: parent
++                        anchors.leftMargin: GcpTheme.layout.missionRailLeft + GcpTheme.layout.missionRailWidth + GcpTheme.spacing.lg
++                        anchors.topMargin: GcpTheme.layout.missionRailTop
++                        anchors.bottomMargin: GcpTheme.layout.missionRailBottom
++                        z: 15
++                        active: MvpInstalled.has("AiMission/GcpMissionAiPanel.qml")
++                        source: active ? "AiMission/GcpMissionAiPanel.qml" : ""
++                        onLoaded: MvpInstalled.bind(item, {
++                            missionController: root._missionController,
++                            map: missionCanvas.map,
++                            apiBase: GcpEnv.value("GCS_MVP_API_URL", "http://127.0.0.1:8765"),
++                            envValue: function (name, fallback) { return GcpEnv.value(name, fallback) }
++                        })
++                    }
++                    Binding {
++                        target: mvpMissionSlot.item
++                        property: "activeVehicle"
++                        value: QGroundControl.multiVehicleManager.activeVehicle
++                        when: mvpMissionSlot.item !== null && ("activeVehicle" in mvpMissionSlot.item)
++                    }
++
+                     GcpMapTypeSwitch {
+                         anchors.right: parent.right
+                         anchors.top: parent.top
+diff --git a/GCP/GcpTelemetryPage.qml b/GCP/GcpTelemetryPage.qml
+--- a/GCP/GcpTelemetryPage.qml
++++ b/GCP/GcpTelemetryPage.qml
+@@ -7,6 +7,7 @@
+ import QGroundControl
+ import QGroundControl.Controllers
+ import QGroundControl.GCP
++import "MvpSlots/GcpMvpInstalled.js" as MvpInstalled
+ 
+ // 飛行日誌頁骨架（PLAN.md 3.9.1），對照 `TelemetryScreen.ui.qml`、
+ // `GCP_Telemetry_MainRow_1.ui.qml` 與 `Prototype_TelemetrySubNavInteractive.ui.qml`。
+@@ -363,7 +364,10 @@
+                                   : root.currentView === GcpTelemetrySubNav.View.LogViewer
+                                     ? logViewerComponent
+                                     : root.currentView === GcpTelemetrySubNav.View.Vibration
+-                                      ? vibrationComponent : placeholderComponent
++                                      ? vibrationComponent
++                                      : root.currentView === GcpTelemetrySubNav.View.MissionReport
++                                        && MvpInstalled.has("AiMission/GcpMissionReportView.qml")
++                                        ? mvpMissionReportComponent : placeholderComponent
+                     GcpLoaderFade {}   // 非即時內層：統一 180ms 淡入
+                 }
+             }
+@@ -438,6 +442,18 @@
+         }
+     }
+ 
++    // MVP 插槽：智慧任務報告子頁（任務外掛 AiMission/GcpMissionReportView.qml）
++    Component {
++        id: mvpMissionReportComponent
++        Loader {
++            source: "AiMission/GcpMissionReportView.qml"
++            onLoaded: MvpInstalled.bind(item, {
++                apiBase: GcpEnv.value("GCS_MVP_API_URL", "http://127.0.0.1:8765"),
++                envValue: function (name, fallback) { return GcpEnv.value(name, fallback) }
++            })
++        }
++    }
++
+     Component {
+         id: placeholderComponent
+ 
+diff --git a/GCP/GcpTelemetrySubNav.qml b/GCP/GcpTelemetrySubNav.qml
+--- a/GCP/GcpTelemetrySubNav.qml
++++ b/GCP/GcpTelemetrySubNav.qml
+@@ -4,6 +4,7 @@
+ import QtQuick.Layouts
+ 
+ import QGroundControl.GCP
++import "MvpSlots/GcpMvpInstalled.js" as MvpInstalled
+ 
+ // 飛行日誌次級導覽，對照 `GCP_Telemetry_MainRow_1.ui.qml` 與
+ // `Prototype_TelemetrySubNavInteractive.ui.qml`。主列八個可見項目依 enum 順序排列；
+@@ -11,7 +12,7 @@
+ Item {
+     id: root
+ 
+-    enum View { Summary, Charts, Events, MAVLinkLogs, Inspector, Console, LogViewer, Vibration }
++    enum View { Summary, Charts, Events, MAVLinkLogs, Inspector, Console, LogViewer, Vibration, MissionReport }
+ 
+     property int currentView: GcpTelemetrySubNav.View.Summary
+ 
+@@ -36,7 +37,11 @@
+           icon: "FileSearch", width: GcpTheme.layout.telemetrySubNavLogViewerWidth },
+         { label: qsTr("振動"), view: GcpTelemetrySubNav.View.Vibration,
+           icon: "Telemetry", width: GcpTheme.layout.telemetrySubNavVibrationWidth }
+-    ]
++    ].concat(MvpInstalled.has("AiMission/GcpMissionReportView.qml") ? [
++        // MVP 插槽：智慧任務報告（任務外掛有提供報告畫面時才出現）
++        { label: qsTr("智慧任務報告"), view: GcpTelemetrySubNav.View.MissionReport,
++          icon: "FileText", width: GcpTheme.layout.telemetrySubNavEventsWidth }
++    ] : [])
+ 
+     // 設計稿寬度以 1920×1200 為基準；可用寬度不足（1280×800）時等比例縮窄，避免最後一個分頁被切掉
+     readonly property real _designTotalWidth: {

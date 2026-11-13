@@ -1,0 +1,16 @@
+.pragma library
+// 由 install_mvp_into_ui.sh 產生：列出這份 UI 副本實際裝了哪些 MVP 外掛檔案。
+// 插槽用 has() 決定 Loader 是否啟用；沒裝的外掛不會被載入，畫面維持原樣。
+var files = @FILES@
+
+function has(path) {
+    return files.indexOf(path) >= 0
+}
+
+// 只設定外掛真的有宣告的屬性，外掛少宣告某個屬性時不報錯。
+function bind(item, props) {
+    if (!item) return
+    for (var key in props) {
+        if (key in item) item[key] = props[key]
+    }
+}

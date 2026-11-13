@@ -1,0 +1,3 @@
+# name  dest-dir  asset-name-regex  source-dir(repo-relative)  assets-file  payload-file
+AiAlerts AiAlerts ^GcpAiAlerts[A-Za-z0-9]*\.(js|qml)$ gcs_demo/alerts/qml install_assets_alerts_v1.txt install_payload_alerts_v1.sha256
+AiMission AiMission ^GcpMission(Ai|Core|Report)[A-Za-z0-9]*\.(js|qml)$ gcs_demo/qml install_assets_mission_v1.txt install_payload_mission_v1.sha256

@@ -1,0 +1,5 @@
+GCP/GcpMainShell.qml
+GCP/GcpMissionPlannerPage.qml
+GCP/GcpTelemetryPage.qml
+GCP/GcpTelemetrySubNav.qml
+GCP/CMakeLists.txt

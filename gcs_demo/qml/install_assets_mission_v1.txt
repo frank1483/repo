@@ -1,0 +1,2 @@
+GcpMissionAiPanel.qml
+GcpMissionCore.js
