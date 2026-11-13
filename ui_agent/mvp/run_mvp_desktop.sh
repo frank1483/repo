@@ -20,6 +20,7 @@ trap cleanup EXIT INT TERM
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 wait_http() { for _ in $(seq 1 60); do curl -fsS --max-time 2 "$1" >/dev/null 2>&1 && return 0; sleep 1; done; return 1; }
 
+cd -- "$REPO"   # python -m puts the current folder on sys.path; keep it the repo (Python 3.10 has no -P)
 [[ -x "$OLLAMA_BIN" ]] || { echo "STOP: Ollama 0.40.14 not found at $OLLAMA_BIN" >&2; exit 2; }
 for p in 8090 8765; do port_busy "$p" && { echo "STOP: port $p already in use (another MVP running?)" >&2; exit 2; }; done
 
@@ -33,11 +34,11 @@ OLLAMA_HOST=127.0.0.1:11435 "$OLLAMA_BIN" list | grep -q "^$MODEL" || { echo "ST
 echo '[2/4] shared LLM gateway on 127.0.0.1:8090 ...'
 GCS_GATEWAY_UPSTREAM=ollama GCS_GATEWAY_UP_URL="$OLLAMA_URL" GCS_GATEWAY_MODEL="$MODEL" \
 GCS_GATEWAY_LOG="$LOGDIR/gateway_calls.jsonl" PYTHONPATH="$REPO" \
-    nohup python3 -P -m gcs_demo.llm_gateway > "$LOGDIR/gateway.log" 2>&1 & PIDS+=($!)
+    nohup python3 -m gcs_demo.llm_gateway > "$LOGDIR/gateway.log" 2>&1 & PIDS+=($!)
 wait_http http://127.0.0.1:8090/health || { echo 'STOP: gateway did not start; see gateway.log' >&2; exit 3; }
 
 echo '[3/4] mission / alerts service on 127.0.0.1:8765 ...'
-PYTHONPATH="$REPO" nohup python3 -P -m gcs_demo.server --port 8765 > "$LOGDIR/server.log" 2>&1 & PIDS+=($!)
+PYTHONPATH="$REPO" nohup python3 -m gcs_demo.server --port 8765 > "$LOGDIR/server.log" 2>&1 & PIDS+=($!)
 wait_http http://127.0.0.1:8765/ || { echo 'STOP: mission/alerts service did not start; see server.log' >&2; exit 3; }
 
 echo '[4/4] opening the formal UI (close the window to stop everything) ...'
