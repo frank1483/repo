@@ -1,0 +1,6 @@
+MVP live smoke v1h-mission (prepared 2026-11-13 TW). Previous v1e 98dab11d ran once 2026-11-13 06:11 TW: UI passed (L01/L07 model-correct); replan fell back (model echoed "L2 LOCAL ..."). Kept as-is. UI is unchanged and not rerun.
+Sources (frank1483/repo): src/gateway wum8aq 847f5a9; src/mission ovsufa d651d5e (f54c7c1 + agent_loop lenient_prefix; prompt unchanged).
+Runner: run_mvp_live_v1h_mission.ps1: preflight (no model call) -> gateway -> warm-up -> gcs_demo.smoke_mvp_mission (plan, fly rule C3, replan, report).
+Model calls: upper bound 18 = warm-up 1 + plan 4 + replan 4 + report 1 + 2 alert explanations x 4. Expected about 7 (v1e: 7 mission-side calls).
+Cloud dry run (gateway + fake Ollama): plan and replan via model; exit 1 only because the fake report text fails the checker.
+Run once. Output kept as-is.

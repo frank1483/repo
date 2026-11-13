@@ -1,0 +1,6 @@
+MVP live smoke v1g-alerts (prepared 2026-11-13 TW). Previous v1f-alerts 9c2db26d ran once 2026-11-13 06:13 TW: 44 calls, 5/5 explanations fell back (model echoed "code label"). Kept as-is.
+Sources (frank1483/repo): src/gateway wum8aq 847f5a9; src/alerts dp0ev4 6a39d07 (v1f + agent_loop lenient_prefix; prompt unchanged).
+Runner: run_mvp_live_v1g_alerts.ps1: preflight (no model call) -> gateway -> warm-up -> gcs_demo.alerts.mvp_smoke S1-S3.
+Model calls: hard upper bound 65 = warm-up 1 + 16 explanation jobs x 4 (agent_loop DEFAULT_MAX_CALLS). The job count was 16 in both the v1f live run and the cloud dry run; it comes from the fixed scenarios. Expected about 35-45 (v1f live 44, cloud fake 37).
+Cloud dry run (gateway + fake Ollama): exit 0, S1-S3 pass.
+Run once. Output kept as-is.
