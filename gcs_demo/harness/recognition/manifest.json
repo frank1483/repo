@@ -1,0 +1,27 @@
+{
+  "feature": "recognition",
+  "version": "recognition-harness-v1",
+  "components": {
+    "system_prompt": {
+      "path": null,
+      "sha256": null,
+      "note": "Feature-specific component is not available in this gateway branch snapshot; no placeholder implementation or client wiring is claimed."
+    },
+    "schema": {
+      "path": null,
+      "sha256": null,
+      "note": "Feature-specific component is not available in this gateway branch snapshot; no placeholder implementation or client wiring is claimed."
+    },
+    "guard": {
+      "path": null,
+      "sha256": null,
+      "note": "Feature-specific component is not available in this gateway branch snapshot; no placeholder implementation or client wiring is claimed."
+    },
+    "fallback": {
+      "path": null,
+      "sha256": null,
+      "note": "Feature-specific component is not available in this gateway branch snapshot; no placeholder implementation or client wiring is claimed."
+    }
+  },
+  "harness_sha256": "9668b2b42f77e429b24b612f97a773ff61daea1666d8f7b64643ea5e46be9e9e"
+}

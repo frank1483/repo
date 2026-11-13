@@ -1,0 +1,14 @@
+MVP live smoke v1c (prepared 2026-11-04 TW; replaces v1 5d952029 and v1b 540d8b72, neither was run)
+Sources (frank1483/repo):
+  src/gateway      claude/project-thread-wum8aq  07c0319  gcs_demo/llm_gateway.py (logs format_kind)
+  src/mission      claude/project-thread-ovsufa  f1fa869  gcs_demo/  (plan + replan + report)
+  src/alerts       claude/project-thread-dp0ev4  f1fa869  gcs_demo/  (alerts mvp_smoke S1-S3)
+  src/recognition  claude/project-thread-2sj7w5  3d9e43e  gcs_demo/  (3 domains)
+  src/ui           claude/project-thread-8cd61o  66d651f  ui_agent/  (10 intents + color T01/T02, two-layer safety gate, offscreen harness)
+Runner: run_mvp_live_v1c.ps1
+  preflight (no model call; installs PySide6 6.8.3 --user if missing, user-approved)
+  -> theme copy: read-only copy of formal UI GcpTheme*.qml + patch, into out_run1\theme_gcp (formal UI not written)
+  -> gateway -> warm-up -> UI -> alerts -> mission/report -> recognition
+Model: Ollama gemma4:e2b on the user's PC, via gateway 127.0.0.1:8090 (think:false, temperature 0, JSON).
+Expected model calls: about 38 max (warm-up 1, UI up to 12, alerts 17, mission 4, report 1, recognition 3).
+Run once. Output out_run1\ kept as-is; any fix goes to a new version.

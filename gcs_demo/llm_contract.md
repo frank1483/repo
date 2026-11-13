@@ -61,3 +61,40 @@ APK 內的 QML 不能 import Python，所以共用介面以 **HTTP 層** 為準�
 - 閘道一律 temperature 0、think:false、要求 JSON（有 json_schema 就交給 Ollama format）；每次呼叫寫一行 JSONL（功能、排隊秒數、模型秒數、prompt hash、原始回覆全文、錯誤）。
 - 告警：**分級一律由演算法先出**（為達 <2 秒），模型說明與建議非同步後補。
 - 換到 Genio 520 板上推論時，只換閘道上游（`GCS_GATEWAY_UPSTREAM=openai` 接 llama-server 等），功能端不改。
+
+## 7. 補充（v0.4，閘道期限／取消契約，2026-11-06 台灣時間；因 Codex 指出 ui 20 s 預算與 HTTP 等待 25 s 不一致）
+
+- **有效期限** = min(功能預算, 呼叫端標頭 `X-GCS-Deadline-Ms`)。呼叫端只能縮短、不能放寬；無效值（非數字、≤0、NaN）忽略。功能預算不變：ui 20 s、alerts 30、mission 60、report 90、recognition 30。
+- **回應時間**：閘道最晚在有效期限送出 HTTP 回應（移除舊的「預算＋5 秒」），逾時回 `504`、`error.type = "deadline"`。
+- **取消**：期限到或呼叫端斷線 → 還在排隊的不送模型（紀錄 `expired in queue` 或 `cancelled before start: client_gone`）；已送出的由閘道**強制關閉上游連線**（計時器 shutdown socket，不依賴 urllib 的單次 socket timeout），Ollama 偵測斷線會停止推論。晚到的結果不交付，紀錄 `delivered=false`、`late_discarded=true`。
+- **UI 修復總上限 32 s**（動作 12 s＋修復最多 20 s）：UI 端每次呼叫帶 `X-GCS-Deadline-Ms = 剩餘總時間`，閘道保證不超過；UI 端自己的 abort 也會被閘道偵測為斷線而取消上游。
+- 新紀錄欄位：`deadline_s`（送出時剩餘秒數）、`delivered`、`late_discarded`、`cancel_reason`。
+
+## 8. 修訂（v0.4.1，依 Codex 審查 GATEWAY_REVIEW_0417，2026-11-06 台灣時間）
+
+- **終態同鎖判定**：每次呼叫是一個狀態機（queued → running → completed／cancelled），開始送模型、交回結果、呼叫端放棄都在同一把鎖內對照同一個時鐘判定。**期限後才回來的結果一律不認領、不交付**（記 `claimed=false`、`late_discarded=true`）；移除 v0.4 的「最後一刻再多等 1 秒」。期限前已完成的照常交付，呼叫端不必等紀錄寫完。
+- **取消與連線建立同步**：已取消就不連線；連線建立後才發現已取消 → 立刻關閉、不送出（`sent_upstream=false`，錯誤 `cancelled during connect`）；送出中取消 → shutdown 該 socket。取消改用回呼，不再為每次呼叫開等待執行緒。
+- **欄位語意**：`claimed` = 期限前完成、可交給 HTTP 層；另記一行 `{"event":"http_write","job_id","status","write_ok"}` 表示回應有沒有寫進 socket（`write_ok=true` 不保證對方已讀取）。取代 v0.4 的 `delivered`。
+- **部署假設（待驗證）**：「上游連線被關閉後，Ollama／llama-server 會停止推論」目前只在假上游驗證過，**尚未在真模型上證實**；第 7 節的對應說法降為假設。
+
+## 9. 修訂（v0.4.2，依 Codex 複審 GATEWAY_REVIEW_0423）
+
+- 成功結果在認領的同一刻就叫醒呼叫端；紀錄之後才寫，**交付不等紀錄**（呼叫端讀紀錄要自己等它落檔）。
+- 送出前的唯一同步點 `claim_send()`：與 `abort()` 用同一把鎖，且 shutdown 也在鎖內完成。取消先拿到鎖 → 0 個 POST；送出先通過 → 之後的取消以 shutdown 中斷傳輸與等待回應（此時上游可能已收到請求）。
+
+## 10. 修訂（v0.4.3，依 Codex 複審 GATEWAY_REVIEW_0426 的 P2）
+
+- 上游連線有明確階段：idle → connected（socket 已發布）→ sending（通過 claim_send，請求可能已到上游）→ received（回應已讀完）。被中斷時以當下階段判定，紀錄 `sent_upstream`（sending／received 為 true）與 `upstream_phase`，不再由錯誤字串推斷。回應讀完後才取消 → `sent_upstream=true`、`upstream_phase="received"`、`claimed=false`。
+
+## 11. 驗收紀錄（2026-11-06 台灣時間）
+
+- 期限／取消契約 v0.4.3（frank1483/repo claude/project-thread-wum8aq 241abba）：Codex 複審 GATEWAY_REVIEW_0429（CODEX-APP-0375）判定原 P2 已解決、無新 P1／P2。記為「**假上游範圍內工程驗收完成**」（AI 共同決定，使用者委任；不是使用者人工批准）。
+- 37/37 測試與另外 2 次重複成功是 Claude 回報（紀錄 /mnt/project-files/gcs_demo/llm_gateway/deadline_v043_run1/）；Codex 本輪未執行 Python。
+- 未完成：真模型（Ollama／llama-server）在上游斷線後是否停止推論，仍是待驗證的部署假設。
+
+## 12. 修訂（v0.4.4，2026-11-06 台灣時間；對齊使用者定的 UI 一般意圖 32 s 總上限）
+
+- 使用者 2026-11-06 09:16 定：UI 一般意圖（含 schema 重試）總等待 ≤32 s，與修復相同。Codex 0373（CLAUDE-APP-0432）的 UI 端每次呼叫帶 `X-GCS-Deadline-Ms = 剩餘總時間`（最多 32000）。
+- 原閘道 ui 預算 20 s 會把一般意圖的單次等待在 20 s 就截斷，與上限不符。改為 **ui 32 s**；其他功能不變（alerts 30、mission 60、report 90、recognition 30）。
+- 有效期限規則不變：min(功能預算, 標頭)，標頭只能縮短。修復路徑仍由 UI 端自行限制單次 ≤20 s，閘道不另外放寬。
+- 第 6、7 節「ui 20」為歷史紀錄，以本節為準。

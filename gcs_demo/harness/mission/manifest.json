@@ -1,0 +1,27 @@
+{
+  "feature": "mission",
+  "version": "mission-harness-v1",
+  "components": {
+    "system_prompt": {
+      "path": "gcs_demo/llm.py",
+      "sha256": "826a782700b69a2c54047b817b6eece12fdcbee67dfa987213f6963e66fa314c",
+      "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
+    },
+    "schema": {
+      "path": "gcs_demo/llm.py",
+      "sha256": "826a782700b69a2c54047b817b6eece12fdcbee67dfa987213f6963e66fa314c",
+      "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
+    },
+    "guard": {
+      "path": "gcs_demo/llm.py",
+      "sha256": "826a782700b69a2c54047b817b6eece12fdcbee67dfa987213f6963e66fa314c",
+      "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
+    },
+    "fallback": {
+      "path": "gcs_demo/llm.py",
+      "sha256": "826a782700b69a2c54047b817b6eece12fdcbee67dfa987213f6963e66fa314c",
+      "note": "Component is embedded in this complete module; hash covers all raw module bytes. Dynamic prompt inputs and other runtime dependencies are not captured."
+    }
+  },
+  "harness_sha256": "26bf26a71f12558c3df32d9a090355c430eca967a22c461ede362db5d8bd0033"
+}
