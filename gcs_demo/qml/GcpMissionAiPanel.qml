@@ -2,25 +2,25 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtCore
 import QtPositioning
 
-import "GcpMissionCore.js" as Core
+import "GcpMissionAiCore.js" as Core
 
-// 任務規劃頁的「AI 任務建議」面板：讀目前任務的航點 → 演算法產生候選航線（含風的能耗、禁航區、電量）
-// → 規則先選、模型（可有可無）在候選內選 → 地圖預覽 → 操作員按「套用」才改航點順序，可「復原」。
-// 另有「模擬飛行與報告」：模擬風變大 → 預測告警 → LOCAL/FULL 重規劃 → 智慧任務報告（每條建議附事實編號）。
-// 不送任何飛行指令；套用只改規劃頁的航點座標順序。
+// 任務規劃頁的「AI 任務建議」面板（MVP 桌面版，使用者 2026-11-13 確認設計 v1 的 8 項）。
+// 讀規劃頁目前的航點 → POST /api/plan（gcs_demo.server :8765）→ 伺服器用演算法產生候選，經閘道 :8090 讓模型在候選內選一條。
+// 操作員按「套用」才改航點（只改順序或拿掉選配點），每次套用都可「復原」。不送任何飛行指令。
+// 伺服器沒開：顯示「AI 服務未連線」並停用按鈕；這裡沒有規則備援，規則退回只在伺服器做。
+// 「模擬飛行與報告」是模擬（風變大 → 預測告警 → 重規劃 → 報告），報告也會出現在遙測頁的「任務報告」子頁。
 Item {
     id: root
 
     property var missionController: null      // PlanMasterController.missionController
-    property var map: null                    // GcpMissionMapCanvas.map（預覽線畫在這裡；null 時不畫）
+    property var map: null                    // 規劃頁地圖（預覽線畫在這裡；null 時不畫）
     property var activeVehicle: null          // 有連線時讀飛控估測風
-    property var envValue: function (name, fallback) { return fallback }
-    property string programGitShortHash: "" // supplied by the integrating build, never invented
+    property string apiBase: "http://127.0.0.1:8765"   // 插槽傳入 GCS_MVP_API_URL
+    property var envValue: function (name, fallback) { return fallback }   // 插槽傳入；面板目前不讀環境變數
+    property real panelScale: 1.0
 
-    // 外觀（預設值取自 GcpThemeColor，獨立宣告方便在沒有 GCP 模組的測試架裡載入）
     property color cPrimary: "#00D3F2"
     property color cPanel: Qt.rgba(0.04, 0.05, 0.07, 0.96)
     property color cBorder: Qt.rgba(1, 1, 1, 0.1)
@@ -32,45 +32,46 @@ Item {
     property color cLlm: "#C4B5FD"
     property real fs: 14
 
-    Settings {
-        id: modelSettings
-        category: "GCP/Agent"            // 和 UI agent 共用同一組模型設定
-        property string backend: ""
-        property string llmUrl: ""
-        property string llmModel: ""
-    }
-    Settings {
-        id: missionSettings
-        category: "GCP/Mission"
-        property real calib: 1.0          // 任務報告學到的耗電修正係數
-        property real batteryWh: 90
-        property real reservePct: 20
-    }
-    readonly property string backend: modelSettings.backend || envValue("GCS_LLM_BACKEND", "openai")
-    readonly property string modelUrl: modelSettings.llmUrl || envValue("GCS_LLM_URL", "")
-    readonly property string modelName: modelSettings.llmModel || envValue("GCS_LLM_MODEL", "")
-    readonly property bool modelEnabled: backend !== "none" && modelUrl !== ""
-    readonly property int modelTimeoutMs: parseInt(envValue("GCS_LLM_TIMEOUT_MS", "180000"), 10)
-
     property bool open: false
+    property bool online: false
+    property string modelName: ""
     property bool busy: false
-    property string stage: "plan"          // plan | replan | report
-    property var mission: null
-    property var optional: ({})             // 航點 id → true 表示選配
-    property var result: null               // 規劃或重規劃結果
+    property string stage: "plan"             // plan | replan | report
+    property var body: null                   // 送去規劃的 mission（WP1…WPn）
+    property string bodySig: ""
+    property var optional: ({})
+    property var result: null
     property string selected: ""
-    property var undoStack: []              // 每次套用前的航點座標
-    property var applyState: null
-    property var applyEvent: null
-    property var run: null
-    property var flown: null
-    property var alertInfo: null
+    property var undoStack: []
     property var report: null
+    property var alertInfo: null
     property string status: ""
 
-    signal decisionLogged(var entry)
+    signal reportReady(var report)
 
-    // ------------------------------------------------------------ 讀任務
+    // ------------------------------------------------------------ 伺服器
+    function request(method, path, data, done) {
+        const xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            let j = null
+            if (xhr.status >= 200 && xhr.status < 300) { try { j = JSON.parse(xhr.responseText) } catch (e) { j = null } }
+            root.online = xhr.status > 0
+            done(j)
+        }
+        xhr.open(method, apiBase.replace(/\/$/, "") + path)
+        if (data) xhr.setRequestHeader("Content-Type", "application/json")
+        xhr.send(data ? JSON.stringify(data) : null)
+    }
+    function checkServer() {
+        request("GET", "/api/scenario", null, function (j) {
+            root.online = j !== null
+            if (j && j.llm) root.modelName = j.llm.model + (j.llm.available ? "" : qsTr("（未設定）"))
+        })
+    }
+    Timer { interval: 5000; running: root.open; repeat: true; triggeredOnStart: true; onTriggered: root.checkServer() }
+
+    // ------------------------------------------------------------ 讀與改規劃頁航點
     function waypointItems() {
         const out = []
         const vis = missionController ? missionController.visualItems : null
@@ -82,200 +83,116 @@ Item {
         }
         return out
     }
-
-    function readMission() {
-        const items = waypointItems()
-        if (items.length < 2) return null
-        let h = missionController.plannedHomePosition
-        if (!h || !h.isValid) h = items[0].coordinate
-        const tg = items.map((it, i) => ({ id: "WP" + (i + 1), lat: it.coordinate.latitude, lon: it.coordinate.longitude,
-                                            alt: it.altitude ? it.altitude.rawValue : 50, priority: optional["WP" + (i + 1)] ? 2 : 1 }))
-        return { name: qsTr("目前任務"), home: { id: "H", lat: h.latitude, lon: h.longitude }, targets: tg, no_fly: [],
-                 speed_mps: 8, limits: { max_altitude_m: 120 } }
-    }
-
-    function vehicleParams() {
-        return Core.vehicle({ battery_wh: missionSettings.batteryWh, reserve_pct: missionSettings.reservePct, calib: missionSettings.calib })
-    }
-
-    function currentWind() {
-        // 空白當 0；打錯字保留 NaN，讓核心回 HOLD 並說明，而不是默默當成無風
-        function num(t) { return t.trim() === "" ? 0 : Number(t) }
-        return Core.wind(num(windSpeed.text), num(windFrom.text))
-    }
-
-    // ------------------------------------------------------------ 規劃
-    function makePlan() {
-        mission = readMission()
-        if (!mission) { status = qsTr("請先在地圖上放至少 2 個航點"); return }
-        stage = "plan"; report = null; alertInfo = null; run = null
-        applyState = null; applyEvent = null
-        result = Core.planMission(mission, vehicleParams(), currentWind())
-        selected = result.pick.choice_id || result.rule_choice
-        status = result.candidates.length ? "" : result.pick.reason_zh
-        drawPreview()
-        askModel(result)
-    }
-
-    function askModel(res) {
-        if (!modelEnabled || !res.rule_choice) { log(res, null); return }
-        busy = true
-        const pr = Core.pickPrompt(res)
-        callModel(pr.system, pr.user, function (r) {
-            busy = false
-            if (res !== result) return
-            const pick = r.ok ? Core.validatePick(res, r.content)
-                              : Object.assign(Core.validatePick(res, ""), { reason_zh: qsTr("規則選擇（模型無回應：%1）").arg(r.error) })
-            res.pick = pick
-            if (pick.choice_id) selected = pick.choice_id
-            result = res; resultChanged()
-            drawPreview()
-            log(res, r)
-        })
-    }
-
-    function log(res, r) {
-        const entry = { kind: res.kind, rule: res.rule_choice, pick: res.pick.choice_id, source: res.pick.source,
-                        latency_ms: r ? r.latency_ms : 0, error: r && !r.ok ? r.error : "" }
-        console.log("[GcpMission] " + JSON.stringify(entry))
-        decisionLogged(entry)
-    }
-
-    function cand(id) { return result ? result.candidates.find(c => c.id === id) : null }
-
-    // ------------------------------------------------------------ 套用與復原（只改航點座標順序）
     function snapshot() {
         return waypointItems().map(it => ({ lat: it.coordinate.latitude, lon: it.coordinate.longitude,
                                              alt: it.altitude ? it.altitude.rawValue : 50 }))
     }
-    function restore(snap) {
-        const items = waypointItems()
-        for (let i = 0; i < items.length && i < snap.length; i++) {
-            items[i].coordinate = QtPositioning.coordinate(snap[i].lat, snap[i].lon)
-            if (items[i].altitude) items[i].altitude.rawValue = snap[i].alt
-        }
+    function homeOf(snap) {
+        const h = missionController ? missionController.plannedHomePosition : null
+        return h && h.isValid ? { lat: h.latitude, lon: h.longitude } : (snap.length ? { lat: snap[0].lat, lon: snap[0].lon } : null)
     }
+    function readBody() { const s = snapshot(); return Core.missionBody(s, homeOf(s), optional, 8, qsTr("規劃頁任務")) }
+
+    // 把航點改成 points（數量可以比原來少）；用 QGC 的 removeVisualItem / insertSimpleMissionItem 增減
+    function writePoints(points) {
+        let items = waypointItems()
+        while (items.length > points.length && typeof missionController.removeVisualItem === "function") {
+            missionController.removeVisualItem(missionController.visualItems.indexOf(items[items.length - 1]))
+            items = waypointItems()
+        }
+        while (items.length < points.length && typeof missionController.insertSimpleMissionItem === "function") {
+            const p = points[items.length]
+            missionController.insertSimpleMissionItem(QtPositioning.coordinate(p.lat, p.lon), missionController.visualItems.count, false)
+            items = waypointItems()
+        }
+        for (let i = 0; i < items.length && i < points.length; i++) {
+            items[i].coordinate = QtPositioning.coordinate(points[i].lat, points[i].lon)
+            if (items[i].altitude) items[i].altitude.rawValue = points[i].alt
+        }
+        return items.length === points.length
+    }
+
+    // ------------------------------------------------------------ 規劃
+    function wind() {
+        function num(t) { return t.trim() === "" ? 0 : Number(t) }
+        return { speed_mps: num(windSpeed.text), from_deg: num(windFrom.text) }
+    }
+    function makePlan(keepStatus) {
+        const b = readBody()
+        if (!b) { status = qsTr("請先在地圖上放至少 1 個航點"); return }
+        const w = wind()
+        if (!isFinite(w.speed_mps) || !isFinite(w.from_deg)) { status = qsTr("風速或風向不是數字"); return }
+        busy = true; stage = "plan"; report = null; alertInfo = null
+        if (!keepStatus) status = qsTr("規劃中（模型選擇最多約 1 分鐘）…")
+        const prev = status
+        request("POST", "/api/plan", { mission: b, wind: w }, function (j) {
+            root.busy = false
+            if (!j) { root.status = root.online ? qsTr("伺服器回應錯誤") : qsTr("AI 服務未連線"); return }
+            if (j.ok === false) { root.result = null; root.status = j.reason_zh; return }
+            root.body = b; root.bodySig = Core.signature(b)
+            root.result = j; root.selected = Core.pickedId(j)
+            root.status = keepStatus ? prev : ""
+            root.drawPreview()
+        })
+    }
+    function changedSincePlan() { return Core.signature(readBody()) !== bodySig }
+    function cand(id) { return result ? Core.find(result.candidates, id) : null }
+
+    // ------------------------------------------------------------ 套用與復原
     function applySelected() {
         const c = cand(selected)
-        if (!c || stage !== "plan") return
-        const gate = Core.checkApply(result, readMission(), vehicleParams(), currentWind(), null)
-        if (!gate.ok) { status = gate.reason_zh; return }
-        if (!c.feasible) { status = qsTr("候選不可行，不能套用"); return }
-        if (c.sorties) { status = qsTr("S1 含兩個獨立架次，請分別檢視；目前面板僅支援單趟套用"); return }
+        if (stage !== "plan" || !Core.applicable(c)) { status = qsTr("這個候選不能直接套用"); return }
+        if (changedSincePlan()) { status = qsTr("航點在規劃後被改過，請重新產生候選"); return }
         const before = snapshot()
-        const byId = {}
-        mission.targets.forEach((t, i) => byId[t.id] = before[i])
-        const order = c.order.concat(mission.targets.map(t => t.id).filter(id => c.order.indexOf(id) < 0))  // 刪掉的目標排到最後
-        restore(order.map(id => byId[id]))
+        const r = Core.reorder(before, c)
+        if (!r) { status = qsTr("候選與目前航點對不起來，請重新產生候選"); return }
+        if (!writePoints(r.points)) { writePoints(before); status = qsTr("無法改動航點，已還原"); return }
         undoStack = undoStack.concat([before])
-        status = qsTr("已套用 %1 的航點順序%2；可按「復原」").arg(c.id)
-                 .arg(c.order.length < mission.targets.length ? qsTr("（略過的目標排在最後，請自行刪除）") : "")
-                 + (c.speed_mps !== mission.speed_mps ? qsTr("。建議速度 %1 m/s 請在任務設定中調整").arg(c.speed_mps) : "")
-        makePlanKeepStatus()
+        optional = ({})
+        status = qsTr("已套用 %1%2；可按「復原」").arg(c.id)
+                 .arg(r.dropped.length ? qsTr("，拿掉選配點 %1").arg(r.dropped.join("、")) : "")
+                 + (c.speed_mps !== body.speed_mps ? qsTr("。建議速度 %1 m/s 請在任務設定中調整").arg(c.speed_mps) : "")
+        makePlan(true)
     }
     function undo() {
         if (!undoStack.length) return
-        restore(undoStack[undoStack.length - 1])
+        writePoints(undoStack[undoStack.length - 1])
         undoStack = undoStack.slice(0, -1)
-        status = qsTr("已復原到套用前的航點順序")
-        makePlanKeepStatus()
+        status = qsTr("已復原到上一次套用前的航點")
+        makePlan(true)
     }
-    function makePlanKeepStatus() { const s = status; makePlan(); status = s }
 
     // ------------------------------------------------------------ 模擬飛行 → 預測告警 → 重規劃 → 報告
     function simulate() {
         const c = cand(selected)
-        if (!c) return
-        const gate = Core.checkApply(result, readMission(), vehicleParams(), currentWind(), null)
-        if (!gate.ok) { status = gate.reason_zh; return }
-        if (!c.feasible || c.sorties) { status = qsTr("請選可行的單趟候選；S1 需分別檢視兩趟"); return }
-        flown = c
-        const ws = parseFloat(gustSpeed.text) || 9
-        run = new Core.MissionRun(vehicleParams(), currentWind(), 1.15, [{ t_s: 300, speed_mps: ws, from_deg: (currentWind().from_deg + 330) % 360 }])
-        const st = run.fly(c, 300)
-        if (st.done) { finishReport([]); return }
-        const ev = { type: "wind", speed_mps: ws, from_deg: (currentWind().from_deg + 330) % 360,
-                     text_zh: qsTr("風速增強到 %1 m/s").arg(ws) }
-        applyState = st; applyEvent = ev
-        const rp = Core.replan(mission, vehicleParams(), currentWind(), st, ev)
-        alertInfo = Core.predictiveAlert(vehicleParams(), st, rp)
-        stage = "replan"
-        result = rp
-        selected = rp.pick.choice_id || rp.rule_choice
-        drawPreview()
-        askModel(rp)
+        if (!Core.applicable(c)) return
+        if (changedSincePlan()) { status = qsTr("航點在規劃後被改過，請重新產生候選"); return }
+        busy = true; status = qsTr("模擬飛行中…")
+        request("POST", "/api/start", { mission_version: result.mission_version, choice_id: c.id }, function (j) {
+            root.busy = false
+            if (!j || j.ok === false) { root.status = j ? j.reason_zh : qsTr("AI 服務未連線"); return }
+            if (j.report) { root.finish(j.report); return }
+            root.alertInfo = j.alert
+            root.stage = "replan"; root.result = j.replan; root.selected = Core.pickedId(j.replan)
+            root.status = ""
+            root.drawPreview()
+        })
     }
     function continueFlight() {
         const c = cand(selected)
-        if (!c || !applyState || !applyEvent) return
-        const ctx = Core.replanContext(readMission(), vehicleParams(), currentWind(), applyState, applyEvent)
-        const gate = Core.checkApply(result, ctx.mission, ctx.vehicle, ctx.wind, ctx.state)
-        if (!gate.ok) { status = gate.reason_zh; return }
-        if (!c.feasible) { status = qsTr("候選不可行，不能套用"); return }
-        result.final_choice = c.id
-        applyState = run.fly(c)
-        finishReport([result])
-    }
-    function finishReport(replans) {
-        report = Core.makeReport(run, mission, flown, replans, alertInfo ? [alertInfo] : [], {git_short_hash: programGitShortHash || null})
-        stage = "report"
-        if (!modelEnabled) return
-        busy = true
-        const pr = Core.reportPrompt(report)
-        const requestedReport = report
-        const requestedModel = modelName
-        report.versions.prompt_hash = pr.prompt_hash
-        report.versions.model = requestedModel
-        callModel(pr.system, pr.user, function (r) {
-            busy = false
-            if (report !== requestedReport) return
-            if (r.ok) report = Core.applyReportLlm(report, r.content, {prompt_hash: pr.prompt_hash, model: requestedModel})
+        if (!c || !c.feasible) return
+        busy = true; status = qsTr("繼續模擬並撰寫報告（最多約 1.5 分鐘）…")
+        request("POST", "/api/continue", { mission_version: result.mission_version, choice_id: c.id }, function (j) {
+            root.busy = false
+            if (!j || j.ok === false) { root.status = j ? j.reason_zh : qsTr("AI 服務未連線"); return }
+            root.finish(j.report)
         })
     }
-    function applyCalib() {
-        if (!report || (report.data_quality && !report.data_quality.calibration_eligible)) {
-            status = qsTr("資料不足以校正，請先補充有效電流與風況")
-            return
-        }
-        missionSettings.calib = report.next_calib
-        status = qsTr("耗電修正係數已更新為 %1，之後的規劃都會套用").arg(report.next_calib.toFixed(2))
-        makePlanKeepStatus()
+    function finish(rep) {
+        report = rep; stage = "report"; status = qsTr("報告也可在「遙測／飛航數據 → 任務報告」查看")
+        clearPreview()
+        reportReady(rep)
     }
-
-    // ------------------------------------------------------------ 模型呼叫（OpenAI 相容或 Ollama；關閉 thinking）
-    function callModel(system, user, done) {
-        const xhr = new XMLHttpRequest()
-        let finished = false
-        const t0 = Date.now()
-        function end(r) { if (finished) return; finished = true; timer.stop(); r.latency_ms = Date.now() - t0; done(r) }
-        timer.onFire = function () { xhr.abort(); end({ ok: false, error: qsTr("逾時") }) }
-        timer.interval = modelTimeoutMs
-        timer.restart()
-        const messages = [{ role: "system", content: system }, { role: "user", content: user }]
-        let url, body
-        if (backend === "ollama") {
-            url = modelUrl.replace(/\/$/, "") + "/api/chat"
-            body = { model: modelName, messages: messages, stream: false, format: "json", think: false,
-                     options: { temperature: 0, seed: 17, num_predict: 1024 } }
-        } else {
-            url = modelUrl.replace(/\/$/, "") + "/chat/completions"
-            body = { model: modelName, messages: messages, temperature: 0, max_tokens: 1024,
-                     chat_template_kwargs: { enable_thinking: false } }
-        }
-        xhr.onreadystatechange = function () {
-            if (xhr.readyState !== XMLHttpRequest.DONE) return
-            if (xhr.status < 200 || xhr.status >= 300) { end({ ok: false, error: "HTTP " + xhr.status }); return }
-            try {
-                const j = JSON.parse(xhr.responseText)
-                const content = backend === "ollama" ? j.message.content : j.choices[0].message.content
-                end(content ? { ok: true, content: content } : { ok: false, error: qsTr("回覆空白") })
-            } catch (e) { end({ ok: false, error: qsTr("回覆格式錯誤") }) }
-        }
-        xhr.open("POST", url)
-        xhr.setRequestHeader("Content-Type", "application/json")
-        xhr.send(JSON.stringify(body))
-    }
-    Timer { id: timer; property var onFire: null; onTriggered: if (onFire) onFire() }
 
     // ------------------------------------------------------------ 地圖預覽
     property var _lines: []
@@ -285,22 +202,16 @@ Item {
     }
     function drawPreview() {
         clearPreview()
-        if (!map || !result || !open) return
         const c = cand(selected)
-        if (!c) return
-        const routes = c.sorties || [c]
-        const lines = []
-        routes.forEach((route, i) => {
-            const line = Qt.createQmlObject('import QtLocation; MapPolyline { line.width: 4; opacity: 0.9 }', map)
-            line.line.color = stage === "replan" || i === 1 ? cWarn : cPrimary
-            line.path = route.path.map(p => QtPositioning.coordinate(p.lat, p.lon))
-            map.addMapItem(line)
-            lines.push(line)
-        })
-        _lines = lines
+        if (!map || !open || !c || !c.path) return
+        const line = Qt.createQmlObject('import QtLocation; MapPolyline { line.width: 4; opacity: 0.9 }', map)
+        line.line.color = stage === "replan" ? cWarn : cPrimary
+        line.path = c.path.map(p => QtPositioning.coordinate(p.lat, p.lon))
+        map.addMapItem(line)
+        _lines = [line]
     }
     onSelectedChanged: drawPreview()
-    onOpenChanged: open ? (result ? drawPreview() : makePlan()) : clearPreview()
+    onOpenChanged: open ? drawPreview() : clearPreview()
     Component.onDestruction: clearPreview()
 
     // ------------------------------------------------------------ 畫面
@@ -308,7 +219,8 @@ Item {
         id: b
         property bool primary: false
         font.pixelSize: root.fs
-        contentItem: Text { text: b.text; color: b.primary ? "#06222A" : root.cText; font: b.font; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+        contentItem: Text { text: b.text; color: b.primary ? "#06222A" : root.cText; font: b.font; opacity: b.enabled ? 1 : 0.45
+                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
         background: Rectangle { radius: 6; color: b.primary ? (b.enabled ? root.cPrimary : Qt.darker(root.cPrimary, 2)) : "transparent"; border.color: root.cBorder }
     }
     component Lbl: Text { color: root.cText; font.pixelSize: root.fs; wrapMode: Text.Wrap }
@@ -317,9 +229,11 @@ Item {
         background: Rectangle { color: Qt.rgba(0, 0, 0, 0.4); border.color: root.cBorder; radius: 4 }
     }
 
+    readonly property bool ready: online && !busy
+
     Btn {
         id: toggleBtn
-        objectName: "missionAiToggle"
+        objectName: "aiMissionToggle"
         anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 16
         primary: !root.open
         text: root.open ? qsTr("關閉 AI 建議") : qsTr("AI 任務建議")
@@ -330,7 +244,7 @@ Item {
         id: panel
         visible: root.open
         anchors.left: parent.left; anchors.top: toggleBtn.bottom; anchors.bottom: parent.bottom; anchors.margins: 16
-        width: Math.min(520, root.width - 32)
+        width: Math.min(520 * root.panelScale, root.width - 32)
         color: root.cPanel; radius: 10; border.color: root.cBorder
 
         Flickable {
@@ -343,11 +257,17 @@ Item {
 
                 Lbl { text: root.stage === "plan" ? qsTr("① 出發前規劃") : root.stage === "replan" ? qsTr("② 飛行中重規劃（模擬）") : qsTr("③ 智慧任務報告（模擬）")
                       font.pixelSize: root.fs + 4; font.bold: true }
+                Rectangle {
+                    visible: !root.online
+                    Layout.fillWidth: true; implicitHeight: offText.implicitHeight + 16; radius: 6
+                    color: Qt.rgba(0.94, 0.27, 0.27, 0.15); border.color: root.cCrit
+                    Lbl { id: offText; objectName: "offline"; anchors.fill: parent; anchors.margins: 8
+                          text: qsTr("AI 服務未連線（%1）。請先啟動閘道 8090 與任務服務 8765。").arg(root.apiBase) }
+                }
                 Lbl {
+                    visible: root.online
                     Layout.fillWidth: true; color: root.cMuted; font.pixelSize: root.fs - 2
-                    text: qsTr("演算法算數字、產生候選；%1。耗電修正係數 %2。")
-                          .arg(root.modelEnabled ? qsTr("模型 %1 只在候選中選").arg(root.modelName) : qsTr("未設定模型，以規則選擇"))
-                          .arg(missionSettings.calib.toFixed(2))
+                    text: qsTr("演算法產生候選並算數字；模型 %1 只在候選中選。").arg(root.modelName)
                 }
 
                 RowLayout {
@@ -360,55 +280,53 @@ Item {
                     Field { id: windFrom; objectName: "windFrom"
                             text: root.activeVehicle && root.activeVehicle.wind ? root.activeVehicle.wind.direction.rawValue.toFixed(0) : "270" }
                     Lbl { text: "°" }
-                    Btn { objectName: "planBtn"; primary: true; text: qsTr("產生候選"); onClicked: root.makePlan() }
+                    Btn { objectName: "planBtn"; primary: true; enabled: root.ready; text: qsTr("產生候選"); onClicked: root.makePlan(false) }
                 }
 
-                // 選配目標（點一下切換）：選配目標在電量不足時可被略過
                 Flow {
-                    visible: root.stage === "plan" && root.mission !== null
+                    visible: root.stage === "plan" && root.body !== null
                     Layout.fillWidth: true; spacing: 6
                     Lbl { text: qsTr("點航點設為選配：") ; color: root.cMuted; font.pixelSize: root.fs - 2 }
                     Repeater {
-                        model: root.mission ? root.mission.targets : []
+                        model: root.body ? root.body.targets : []
                         delegate: Rectangle {
+                            id: chipBox
                             required property var modelData
                             readonly property bool opt: !!root.optional[modelData.id]
                             width: chip.implicitWidth + 16; height: chip.implicitHeight + 8; radius: 12
                             color: opt ? Qt.rgba(0.77, 0.71, 0.99, 0.2) : Qt.rgba(0, 0.83, 0.95, 0.15)
                             border.color: opt ? root.cLlm : root.cPrimary
                             Text { id: chip; anchors.centerIn: parent; color: root.cText; font.pixelSize: root.fs - 2
-                                   text: parent.modelData.id + (parent.opt ? qsTr(" 選配") : qsTr(" 必要")) }
-                            MouseArea { anchors.fill: parent; onClicked: { const o = Object.assign({}, root.optional); o[parent.modelData.id] = !o[parent.modelData.id]; root.optional = o; root.makePlan() } }
+                                   text: chipBox.modelData.id + (chipBox.opt ? qsTr(" 選配") : qsTr(" 必要")) }
+                            MouseArea { anchors.fill: parent; enabled: root.ready
+                                        onClicked: { const o = Object.assign({}, root.optional); o[chipBox.modelData.id] = !o[chipBox.modelData.id]; root.optional = o; root.makePlan(false) } }
                         }
                     }
                 }
 
-                // 預測告警
                 Rectangle {
-                    visible: root.stage === "replan" && root.alertInfo !== null
+                    visible: root.stage === "replan" && !!root.alertInfo
                     Layout.fillWidth: true; implicitHeight: alertText.implicitHeight + 16; radius: 6
                     color: Qt.rgba(0.98, 0.75, 0.14, 0.15); border.color: root.cWarn
                     Lbl { id: alertText; anchors.fill: parent; anchors.margins: 8
-                          text: root.alertInfo ? qsTr("⚠ 預測告警（%1 分）：%2").arg((root.alertInfo.t_s / 60).toFixed(1)).arg(root.alertInfo.text_zh) : "" }
+                          text: root.alertInfo ? qsTr("⚠ 預測告警：%1　%2").arg(root.alertInfo.title || "").arg(root.alertInfo.text_zh || "") : "" }
                 }
 
-                // 建議卡
                 Rectangle {
                     visible: root.result !== null && root.stage !== "report"
                     Layout.fillWidth: true; implicitHeight: pickCol.implicitHeight + 16; radius: 6
-                    color: Qt.rgba(0, 0.83, 0.95, 0.08); border.color: root.result && root.result.pick.source === "llm" ? root.cLlm : root.cPrimary
+                    color: Qt.rgba(0, 0.83, 0.95, 0.08)
+                    border.color: root.result && root.result.pick.source === "llm" ? root.cLlm : root.cPrimary
                     ColumnLayout {
                         id: pickCol; anchors.fill: parent; anchors.margins: 8; spacing: 2
-                        Lbl { Layout.fillWidth: true; font.bold: true
+                        Lbl { objectName: "pickTitle"; Layout.fillWidth: true; font.bold: true
                               text: !root.result ? "" : (root.result.pick.decision === "HOLD" ? qsTr("暫緩（HOLD）：請人工判斷")
-                                    : qsTr("建議 %1　〔%2〕").arg(root.result.pick.choice_id)
-                                         .arg(root.result.pick.source === "llm" ? qsTr("模型") : qsTr("規則")))
-                                    + (root.busy ? qsTr("　模型思考中…") : "") }
+                                    : qsTr("建議 %1　〔%2〕").arg(root.result.pick.choice_id || root.result.rule_choice)
+                                         .arg(Core.sourceTag(root.result.pick).zh)) }
                         Lbl { Layout.fillWidth: true; color: root.cMuted; text: root.result ? root.result.pick.reason_zh : "" }
                     }
                 }
 
-                // 候選清單
                 Repeater {
                     model: root.stage !== "report" && root.result ? root.result.candidates : []
                     delegate: Rectangle {
@@ -427,59 +345,47 @@ Item {
                                 Lbl { text: row.modelData.feasible ? qsTr("可行") : qsTr("不可行"); color: row.modelData.feasible ? root.cOk : root.cCrit }
                             }
                             Lbl { Layout.fillWidth: true; color: root.cMuted; font.pixelSize: root.fs - 2
-                                  text: (row.modelData.order.join("→") || qsTr("直接返航")) + qsTr("　%1 km・%2 分・%3 Wh・落地 %4%")
+                                  text: ((row.modelData.order || []).join("→") || qsTr("直接返航")) + qsTr("　%1 km・%2 分・%3 Wh・落地 %4%")
                                         .arg(row.modelData.dist_km).arg(row.modelData.time_min).arg(row.modelData.energy_wh).arg(row.modelData.end_pct) }
                             Lbl { visible: !!row.modelData.sorties; Layout.fillWidth: true; color: root.cWarn; font.pixelSize: root.fs - 2
-                                  text: row.modelData.sorties ? row.modelData.sorties.map(s => s.id + ": H→" + s.order.join("→") + "→H；落地 " + s.end_pct + "%").join("\n")
-                                        + qsTr("\n兩趟各用滿電電池；總時間不含地面換電；目前僅供預覽，須分別檢視套用") : "" }
-                            Lbl { visible: text !== ""; Layout.fillWidth: true; color: root.cCrit; font.pixelSize: root.fs - 2
-                                  text: row.modelData.violations.concat(row.modelData.missing_must.map(x => qsTr("缺必要目標 ") + x)).join("；") }
+                                  text: qsTr("分兩趟、需換電池：只供參考，不能直接套用") }
                         }
                         MouseArea { anchors.fill: parent; onClicked: root.selected = row.modelData.id }
                     }
                 }
 
-                // 報告
                 ColumnLayout {
                     visible: root.stage === "report" && root.report !== null
                     Layout.fillWidth: true; spacing: 6
-                    Lbl { Layout.fillWidth: true; text: root.report ? root.report.summary_zh : ""
+                    Lbl { text: root.report ? Core.reportTag(root.report).zh : ""; color: root.cMuted; font.pixelSize: root.fs - 2 }
+                    Lbl { objectName: "reportSummary"; Layout.fillWidth: true; text: root.report ? root.report.summary_zh : ""
                           color: root.report && root.report.source === "llm" ? root.cLlm : root.cText }
-                    Lbl { text: qsTr("建議"); font.bold: true }
                     Repeater {
                         model: root.report ? root.report.suggestions : []
                         delegate: Lbl {
                             required property var modelData
                             Layout.fillWidth: true
-                            color: modelData.level === "crit" ? root.cCrit : modelData.level === "warn" ? root.cWarn : root.cText
-                            text: "• " + modelData.text_zh + "  [" + modelData.evidence_ids.join(",") + "]"
+                            text: "• " + modelData.text_zh + "  [" + (modelData.evidence_ids || []).join(",") + "]"
                         }
-                    }
-                    Lbl { text: qsTr("演算法算出的事實"); font.bold: true }
-                    Repeater {
-                        model: root.report ? root.report.facts : []
-                        delegate: Lbl { required property var modelData; Layout.fillWidth: true; color: root.cMuted; font.pixelSize: root.fs - 2
-                                        text: modelData.id + "  " + modelData.text }
                     }
                 }
 
-                Lbl { visible: root.status !== ""; Layout.fillWidth: true; color: root.cOk; text: root.status }
+                Lbl { visible: root.status !== ""; Layout.fillWidth: true; color: root.cOk; text: root.status; objectName: "status" }
+                Lbl { visible: root.busy; text: qsTr("處理中…"); color: root.cMuted }
 
                 Flow {
                     Layout.fillWidth: true; spacing: 8
-                    Btn { objectName: "applyBtn"; visible: root.stage === "plan"; primary: true; enabled: !!root.cand(root.selected) && root.cand(root.selected).feasible
-                          text: qsTr("套用 %1 的順序").arg(root.selected); onClicked: root.applySelected() }
-                    Btn { objectName: "undoBtn"; visible: root.stage === "plan"; enabled: root.undoStack.length > 0
+                    Btn { objectName: "applyBtn"; visible: root.stage === "plan"; primary: true
+                          enabled: root.ready && Core.applicable(root.cand(root.selected))
+                          text: qsTr("套用 %1").arg(root.selected); onClicked: root.applySelected() }
+                    Btn { objectName: "undoBtn"; visible: root.stage === "plan"; enabled: root.ready && root.undoStack.length > 0
                           text: qsTr("復原（%1）").arg(root.undoStack.length); onClicked: root.undo() }
-                    Btn { objectName: "simBtn"; visible: root.stage === "plan"; enabled: !!root.cand(root.selected) && root.cand(root.selected).feasible
+                    Btn { objectName: "simBtn"; visible: root.stage === "plan"; enabled: root.ready && Core.applicable(root.cand(root.selected))
                           text: qsTr("模擬飛行與報告"); onClicked: root.simulate() }
-                    Lbl { visible: root.stage === "plan"; text: qsTr("中途風速"); color: root.cMuted }
-                    Field { id: gustSpeed; visible: root.stage === "plan"; text: "9" }
-                    Btn { objectName: "continueBtn"; visible: root.stage === "replan"; primary: true; enabled: !!root.cand(root.selected) && root.cand(root.selected).feasible
-                          text: qsTr("確認 %1 並繼續").arg(root.selected); onClicked: root.continueFlight() }
-                    Btn { objectName: "calibBtn"; visible: root.stage === "report"; primary: true
-                          text: root.report ? qsTr("套用修正係數 %1").arg(root.report.next_calib.toFixed(2)) : ""; onClicked: root.applyCalib() }
-                    Btn { visible: root.stage !== "plan"; text: qsTr("回到規劃"); onClicked: root.makePlan() }
+                    Btn { objectName: "continueBtn"; visible: root.stage === "replan"; primary: true
+                          enabled: root.ready && !!root.cand(root.selected) && root.cand(root.selected).feasible
+                          text: qsTr("確認 %1 並繼續（模擬）").arg(root.selected); onClicked: root.continueFlight() }
+                    Btn { visible: root.stage !== "plan"; enabled: root.ready; text: qsTr("回到規劃"); onClicked: root.makePlan(false) }
                 }
             }
         }

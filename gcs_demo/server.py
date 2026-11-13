@@ -19,6 +19,7 @@ from .report import make_report
 from .sim import MissionRun
 from .alert_bridge import AlertFeed, battery_raise
 from .alerts.typed_explain import LegacyAlertExplainer
+from .mission_input import mission_from_body
 
 WEB = os.path.join(os.path.dirname(__file__), "web")
 
@@ -41,6 +42,7 @@ class Session:
         self.alerts = []
         self.current_state = None
         self.active_event = None
+        self.report = None
         close = getattr(getattr(self, "feed", None), "explain_fn", None)
         if close is not None and hasattr(close, "close"):
             close.close(wait=False)
@@ -116,13 +118,18 @@ def handle(path, body):
             s.reset()
             return {"ok": True}
         if path == "/api/plan":
+            if "mission" in body:  # 正式 UI 面板送來規劃頁目前的航點；不送時沿用目前任務（預設示範情境）
+                try:
+                    s.mission = mission_from_body(body["mission"])
+                except ValueError as exc:
+                    return {"ok": False, "reason_zh": str(exc)}
             if "wind" in body:
                 s.wind = Wind(**body["wind"])
             if "calib" in body:
                 s.calib = float(body["calib"])
             s.plan = plan_mission(s.mission, s.vehicle(), s.wind)
             s.run, s.replans, s.alerts = None, [], []
-            s.current_state, s.active_event = None, None
+            s.current_state, s.active_event, s.report = None, None, None
             return s.plan
         if path == "/api/start":
             if not s.plan or body.get("mission_version") != s.plan.get("mission_version"):
@@ -147,9 +154,9 @@ def handle(path, body):
             s.current_state = state
             out = {"state": state, "telemetry": s.run.log, "alerts": s.alerts}
             if state["done"]:
-                out.update({"report": make_report(s.run, s.mission, s.chosen, [], s.alerts, backend=backend_for("report"),
-                                                  versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")}),
-                            "planned_curve": _curve(s.chosen)})
+                s.report = make_report(s.run, s.mission, s.chosen, [], s.alerts, backend=backend_for("report"),
+                                       versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")})
+                out.update({"report": s.report, "planned_curve": _curve(s.chosen)})
                 return out
             trig = battery_raise(feed.events) or {}
             w = s.run._wind_now()
@@ -180,11 +187,15 @@ def handle(path, body):
             s.refresh_alerts()
             rep = make_report(s.run, s.mission, s.chosen, s.replans, s.alerts, backend=backend_for("report"),
                               versions={"git_short_hash": os.environ.get("GCS_PROGRAM_GIT_SHORT_HASH")})
+            s.report = rep
             return {"state": state, "telemetry": s.run.log[n0:], "report": rep, "alerts": s.alerts,
                     "planned_curve": _curve(s.chosen)}
         if path == "/api/alerts":
             alerts = s.refresh_alerts()
             return {"alerts": alerts, "pending": any(a["source"] == "rule_pending" for a in alerts)}
+        if path == "/api/report":  # 遙測頁「任務報告」子頁：最近一次（模擬）任務的報告
+            return {"report": s.report, "mission_name": s.mission.get("name"),
+                    "mission_source": s.mission.get("source", "demo")}
         if path == "/api/apply_calib":
             s.calib = float(body["calib"])
             return {"calib": s.calib}

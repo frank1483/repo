@@ -1,2 +1,3 @@
+GcpMissionAiCore.js
 GcpMissionAiPanel.qml
-GcpMissionCore.js
+GcpMissionReportView.qml

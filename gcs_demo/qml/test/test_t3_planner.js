@@ -96,7 +96,7 @@ test('ruleChoice retains coverage and energy ordering',()=>{
     assert.strictEqual(C.ruleChoice([a,b]),'S1');b.order=[1];assert.strictEqual(C.ruleChoice([a,b]),'C')
 })
 // Execute only extracted QML JS functions in a stub harness, not a Qt engine.
-const qml=fs.readFileSync(path.join(__dirname,'../GcpMissionAiPanel.qml'),'utf8')
+const qml=fs.readFileSync(path.join(__dirname,'../GcpMissionAiPanelJs.qml'),'utf8')
 function qmlFunction(name,ctx){
     const re=new RegExp('    function '+name+'\\([^)]*\\) \\{[\\s\\S]*?\\n    \\}')
     const match=qml.match(re);assert(match,'missing QML function '+name)

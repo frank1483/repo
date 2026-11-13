@@ -65,7 +65,9 @@ def full():
     a, m, r = slot(root, "alertsSlot"), slot(root, "missionSlot"), slot(root, "reportSlot")
     assert root.property("alertsStatus") == 1 and a.property("item") is not None, "alerts not Ready"
     assert root.property("missionStatus") == 1 and m.property("item") is not None, "mission not Ready"
-    assert r.property("active") is False and r.property("item") is None, "report should be inactive"
+    # 任務外掛自 2026-11-13 起提供 GcpMissionReportView.qml：報告子頁插槽應啟用並載入
+    assert r.property("active") is True and r.property("item") is not None, "report slot not loaded"
+    assert r.property("item").property("apiBase") is not None
     ai = a.property("item"); mi = m.property("item")
     assert ai.property("apiBase") == "http://127.0.0.1:65530", ai.property("apiBase")
     assert ai.property("alertManager") is not None, "alertManager not bound"

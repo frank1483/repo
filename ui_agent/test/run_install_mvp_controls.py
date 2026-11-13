@@ -19,7 +19,7 @@ OUT.mkdir(parents=True, exist_ok=False)
 RESULTS = []
 DOC = "GCS_開發交接與變更紀錄.md"
 PLUGIN_FILES = ["AiAlerts/GcpAiAlertsCore.js", "AiAlerts/GcpAiAlertsPanel.qml",
-                "AiMission/GcpMissionAiPanel.qml", "AiMission/GcpMissionCore.js"]
+                "AiMission/GcpMissionAiCore.js", "AiMission/GcpMissionAiPanel.qml", "AiMission/GcpMissionReportView.qml"]
 
 
 def digest(path):
@@ -121,7 +121,7 @@ def full_install_and_repeat():
     page = (gcp / "GcpTelemetryPage.qml").read_text(encoding="utf-8")
     assert 'source: "AiMission/GcpMissionReportView.qml"' in page
     receipt = (gcp / "MvpSlots/.install_mvp_receipt").read_text()
-    assert receipt.startswith("mvp-install-v1\n") and "plugins=4 files" in receipt
+    assert receipt.startswith("mvp-install-v1\n") and "plugins=5 files" in receipt
     assert (gcp / "Agent/.install_v6_receipt").is_file()
     no_state(root)
     stages = list(root.glob(".mvp-install.*"))
