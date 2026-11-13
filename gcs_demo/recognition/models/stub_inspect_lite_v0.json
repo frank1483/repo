@@ -1,0 +1,24 @@
+{
+ "id": "stub_inspect_lite_v0",
+ "schema": 0,
+ "name_zh": "巡檢模擬模型（只含絕緣子）v0",
+ "task": "detect",
+ "runtime": "stub",
+ "file": "stub_inspect_lite_v0.weights.json",
+ "sha256": "ed9be17ad93a473f3d901d7b3fa7a9c6bfbd839fc13d4afc355f36441c650ec5",
+ "classes": [
+  "insulator_defect"
+ ],
+ "input_size": [
+  640,
+  640
+ ],
+ "latency_ms": {
+  "demo-host": 50
+ },
+ "domain_hint": [
+  "inspection"
+ ],
+ "license": "demo-only (synthetic)",
+ "source": "synthetic"
+}

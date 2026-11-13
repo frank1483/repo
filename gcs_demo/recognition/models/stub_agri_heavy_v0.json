@@ -1,0 +1,26 @@
+{
+ "id": "stub_agri_heavy_v0",
+ "schema": 0,
+ "name_zh": "農業模擬模型（大型）v0",
+ "task": "detect",
+ "runtime": "stub",
+ "file": "stub_agri_heavy_v0.weights.json",
+ "sha256": "5d5b550b5dc2ff454b6bc3e12979d2239b736d9122d7b54c783fb73a53c1978b",
+ "classes": [
+  "crop_disease",
+  "weed",
+  "person"
+ ],
+ "input_size": [
+  640,
+  640
+ ],
+ "latency_ms": {
+  "demo-host": 450
+ },
+ "domain_hint": [
+  "agriculture"
+ ],
+ "license": "demo-only (synthetic)",
+ "source": "synthetic"
+}

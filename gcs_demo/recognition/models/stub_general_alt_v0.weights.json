@@ -1,0 +1,10 @@
+{
+ "stub_weights": true,
+ "model_id": "stub_general_alt_v0",
+ "seed": 1952,
+ "classes": [
+  "person",
+  "bus"
+ ],
+ "note": "合成權重：只用來演示切換流程，不做真實辨識"
+}

@@ -1,0 +1,10 @@
+{
+ "stub_weights": true,
+ "model_id": "stub_inspect_fast_v0",
+ "seed": 2085,
+ "classes": [
+  "insulator_defect",
+  "line_foreign_object"
+ ],
+ "note": "合成權重：只用來演示切換流程，不做真實辨識"
+}

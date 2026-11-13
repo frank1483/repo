@@ -1,0 +1,11 @@
+{
+ "stub_weights": true,
+ "model_id": "stub_agri_heavy_v0",
+ "seed": 1857,
+ "classes": [
+  "crop_disease",
+  "weed",
+  "person"
+ ],
+ "note": "合成權重：只用來演示切換流程，不做真實辨識"
+}

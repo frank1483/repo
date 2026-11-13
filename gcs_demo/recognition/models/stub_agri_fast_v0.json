@@ -1,0 +1,22 @@
+{
+ "id": "stub_agri_fast_v0",
+ "schema": 0,
+ "name_zh": "農業模擬模型（快速、只含病斑）v0",
+ "task": "detect",
+ "runtime": "stub",
+ "file": "stub_agri_fast_v0.weights.json",
+ "sha256": "666f9fd10e9ab08e9fbcc1517b28c21763541ff0594647a9e246a1fef3f5ef03",
+ "classes": [
+  "crop_disease"
+ ],
+ "input_size": [
+  640,
+  640
+ ],
+ "latency_ms": {
+  "demo-host": 30
+ },
+ "domain_hint": [],
+ "license": "demo-only (synthetic)",
+ "source": "synthetic"
+}

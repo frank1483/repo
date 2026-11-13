@@ -1,0 +1,24 @@
+{
+ "id": "stub_general_v0",
+ "schema": 0,
+ "name_zh": "通用人車模擬模型 v0",
+ "task": "detect",
+ "runtime": "stub",
+ "file": "stub_general_v0.weights.json",
+ "sha256": "29f9193be366a2d83b49b6a74e89ed29ae9681f69b65b0061d5e82065d68f4d7",
+ "classes": [
+  "pedestrian",
+  "car",
+  "truck"
+ ],
+ "input_size": [
+  640,
+  640
+ ],
+ "latency_ms": {
+  "demo-host": 40
+ },
+ "domain_hint": [],
+ "license": "demo-only (synthetic)",
+ "source": "synthetic"
+}
