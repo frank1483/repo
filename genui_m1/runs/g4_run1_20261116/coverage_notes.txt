@@ -1,0 +1,4 @@
+energy status/reason: {('INSUFFICIENT', 'n_valid'): 19, ('STALE', 'stale'): 7, ('INSUFFICIENT', 'coverage'): 11, ('OK', ''): 15, ('INSUFFICIENT', 'r2'): 3, ('UNSUPPORTED', 'vehicle_type'): 5, ('UNAVAILABLE', 'no_source'): 1, ('INSUFFICIENT', 'no_valid_samples'): 1}
+direction: {'下降': 7, '持平': 7, '上升': 1}
+with ETA: 0 reserve_invalid: 7
+flightlog downsampled cases: 6
