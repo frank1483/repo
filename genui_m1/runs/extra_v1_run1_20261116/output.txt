@@ -1,0 +1,18 @@
+PASS 後備電池的電量是多少？
+PASS 並聯電池的電壓是多少？
+PASS 再生能源的定義是什麼？
+PASS 最後一次告警是什麼
+PASS 返航後電量會剩多少（依條文字面）
+PASS 降落之後告訴我電量
+PASS 高度多少（依條文字面）
+PASS C-03 ETA 算術
+PASS C-04 已達保留值
+FAIL C-05 保留值 = 100
+  依據：v3-1 §C 新增邊界原文：「不是有限數字或不在 0～100 時…記 reserve_invalid」。100 在 0～100 之內，所以不該標無效
+  Expected values to be strictly equal:
+  
+  true !== false
+  
+PASS 保留值 = 0
+PASS C-09 同時過期且樣本不足
+pass 11 / fail 1
