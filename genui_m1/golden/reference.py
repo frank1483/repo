@@ -150,7 +150,7 @@ def manual(chunks, c, glossary):
 
 
 def main():
-    V = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectors.json"), encoding="utf-8"))
+    V = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), sys.argv[1] if len(sys.argv) > 1 else "vectors.json"), encoding="utf-8"))
     C, out = V["cases"], {}
     for c in C["energy"]: out[c["id"]] = energy(c["samples"], c["opts"])
     for c in C["telemetry"]: out[c["id"]] = telemetry(c)

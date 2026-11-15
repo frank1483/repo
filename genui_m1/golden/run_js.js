@@ -1,6 +1,6 @@
 // 用 JS 版工具跑 vectors.json，輸出精簡結果（stdout，JSON）。
 const fs = require('fs'), path = require('path'), { Tools } = require('../test/load.js')
-const V = JSON.parse(fs.readFileSync(path.join(__dirname, 'vectors.json'), 'utf8')), out = {}
+const V = JSON.parse(fs.readFileSync(path.join(__dirname, process.argv[2] || 'vectors.json'), 'utf8')), out = {}
 const fv = r => r.facts.map(f => [f.fact_id, f.kind, f.subject, f.value === undefined ? null : f.value, f.time === undefined ? null : f.time])
 for (const c of V.cases.energy) { const r = Tools.energyTrend(c.samples, c.opts); out[c.id] = { status: r.status, detail: r.detail, covered: r.coverage.covered } }
 for (const c of V.cases.telemetry) { const r = Tools.telemetryLatest(c.field, c.unit, c.samples, c.now); out[c.id] = { status: r.status, facts: fv(r) } }
