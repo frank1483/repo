@@ -1,0 +1,35 @@
+policy gate-m1-0.1 lexicon lex-m1-0.1
+total 160 / match 138 / mismatch 22
+QA	{"QA":21,"OUT_OF_DOMAIN":2,"CLARIFY":7}
+UI_OP	{"UI_OP":15,"OUT_OF_DOMAIN":1,"ALERT_Q":1,"CLARIFY":3}
+ALERT_Q	{"ALERT_Q":9,"CLARIFY":4,"OUT_OF_DOMAIN":2}
+MISSION	{"MISSION":10}
+REPORT	{"REPORT":9,"CLARIFY":1}
+FLIGHT_CMD	{"FLIGHT_CMD":25}
+OUT_OF_DOMAIN	{"OUT_OF_DOMAIN":20}
+NO_CAUSE_ANALYSIS	{"NO_CAUSE_ANALYSIS":10}
+INVALID_INPUT	{"INVALID_INPUT":10}
+CLARIFY	{"CLARIFY":9,"ALERT_Q":1}
+--- mismatches
+GC005	"上一趟飛了多久"	expect=QA	got=OUT_OF_DOMAIN	rule=6	scores={}
+GC009	"訊號強度如何"	expect=QA	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":0,"QA":1,"REPORT":0}	clarify=QA/ALERT_Q
+GC014	"電池還能飛多久"	expect=QA	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":0,"QA":1,"REPORT":0}	clarify=QA/ALERT_Q
+GC015	"上一趟最高飛到多高"	expect=QA	got=OUT_OF_DOMAIN	rule=6	scores={}
+GC019	"現在可以起飛嗎"	expect=QA	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":0,"QA":1,"REPORT":0}	clarify=QA/ALERT_Q
+GC022	"遙測有在更新嗎"	expect=QA	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":0,"QA":1,"REPORT":0}	clarify=QA/ALERT_Q
+GC024	"馬達溫度多少"	expect=QA	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":0,"QA":1,"REPORT":0}	clarify=QA/ALERT_Q
+GC029	"電量"	expect=QA	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":0,"QA":1,"REPORT":0}	clarify=QA/ALERT_Q
+GC030	"高度多少"	expect=QA	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":0,"QA":1,"REPORT":0}	clarify=QA/ALERT_Q
+GC037	"關閉右邊的面板"	expect=UI_OP	got=OUT_OF_DOMAIN	rule=6	scores={}
+GC038	"顯示告警面板"	expect=UI_OP	got=ALERT_Q	rule=10	scores={"ALERT_Q":2,"MISSION":0,"UI_OP":1,"QA":0,"REPORT":0}
+GC039	"前往任務規劃畫面"	expect=UI_OP	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":3,"UI_OP":3,"QA":0,"REPORT":0}	clarify=MISSION/UI_OP
+GC047	"顯示遙測面板"	expect=UI_OP	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":1,"QA":1,"REPORT":0}	clarify=UI_OP/QA
+GC050	"把地圖畫面切到全螢幕"	expect=UI_OP	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":1,"QA":0,"REPORT":0}	clarify=UI_OP/ALERT_Q
+GC054	"有沒有異常"	expect=ALERT_Q	got=CLARIFY	rule=11	scores={"ALERT_Q":1,"MISSION":0,"UI_OP":0,"QA":0,"REPORT":0}	clarify=ALERT_Q/MISSION
+GC055	"上一趟出現過哪些警告"	expect=ALERT_Q	got=CLARIFY	rule=11	scores={"ALERT_Q":2,"MISSION":0,"UI_OP":0,"QA":2,"REPORT":0}	clarify=ALERT_Q/QA
+GC057	"目前有沒有問題"	expect=ALERT_Q	got=OUT_OF_DOMAIN	rule=6	scores={}
+GC060	"有沒有嚴重的異常"	expect=ALERT_Q	got=CLARIFY	rule=11	scores={"ALERT_Q":1,"MISSION":0,"UI_OP":0,"QA":0,"REPORT":0}	clarify=ALERT_Q/MISSION
+GC062	"最近一次警告是哪一個預測器發的"	expect=ALERT_Q	got=CLARIFY	rule=11	scores={"ALERT_Q":2,"MISSION":0,"UI_OP":0,"QA":2,"REPORT":0}	clarify=ALERT_Q/QA
+GC064	"上一趟有沒有問題"	expect=ALERT_Q	got=OUT_OF_DOMAIN	rule=6	scores={}
+GC078	"幫我做上一趟的飛行報告"	expect=REPORT	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":0,"QA":2,"REPORT":2}	clarify=QA/REPORT
+GC154	"顯示告警"	expect=CLARIFY	got=ALERT_Q	rule=10	scores={"ALERT_Q":2,"MISSION":0,"UI_OP":1,"QA":0,"REPORT":0}
