@@ -1,0 +1,39 @@
+# GenUI M1 規則版（探索）
+
+狀態：**探索**。不接真模型、不接正式 UI、不取代任何既有路徑。ADR-0001 仍是 Proposed。
+所有門檻與尺寸都是候選值〔待凍結〕，沒有任何量測結果。
+
+## 內容
+
+| 檔案 | 做什麼 | 依據 |
+|---|---|---|
+| `qml/GenuiGate.js` | Domain Gate（11 條規則）與 Task Router、RouteRecord、參數候選 | 契約附件 v3 第一部分 §A、§B；附件 v1 §B |
+| `qml/GenuiHash.js` | SHA-256（RouteRecord 的 `input_hash`） | 附件 v1 §B-4 |
+| `qml/GenuiTools.js` | 5 個唯讀工具的純計算：遙測、飛行紀錄、電量斜率、告警歷史、手冊關鍵字檢索 | M1 說明 v2 §3；附件 v1 §C、v3 §C |
+| `qml/GenuiClaims.js` | 句子候選、必顯示句、模型選擇的驗證、渲染與 E# | 附件 v1 §D；v3 §D |
+| `qml/GenuiLayout.js` | 規則 UiPlanner、逐列貪婪 LayoutEngine、預檢 | M1 說明 v2 §5～7；候選 ADR §4（H-24） |
+| `test/test_m1.js` | 103 個固定案例 | 附件 v3 §A-5、v1 §C-4、v3 §D-3、ADR §4 |
+
+全部是純 JS（`.pragma library`），不依賴 Qt 物件。工具只吃呼叫端傳入的陣列，不讀檔、不連線、不對飛機下指令。
+
+## 執行
+
+```
+node genui_m1/test/test_m1.js
+```
+
+## 還沒做（不要當成已完成）
+
+- 沒有在 QJSEngine／QML 裡載入過（`.pragma library` PoC 未做）。
+- 沒有 Python 對照版（G4 golden 比對未做）。
+- 資料接線（重放器、飛行紀錄讀取、手冊切塊與中英對照表）未做。
+- 上畫面後的檢查（截字、遮蔽、必要標示）、確認交易、undo、UpdatePolicy 未做。
+- T_FLIGHTLOG 只有序列與統計；航線、偏差等 operation 未做。
+- Gate 第 2、3 層（embedding、模型選類別）是 M2。
+
+## 和文件不同、需要留意的地方
+
+- 元件名稱用候選 ADR 的 W1～W5。M1 說明裡的「數值卡」併入 W1（數值句）與 W4（門檻、剩餘時間）。
+- 排版照 ADR §4：先試建議寬度、再試最小寬度、再換列；每列剩下的欄數給該列第一個元件。M1 說明的「同一事實的元件相鄰」「依分數比例分配剩餘寬度」沒有做。
+- 名詞例外表比附件多四個既有 `preGate` 已排除的參數名稱（返航高度、返航電量、返航速度、返航距離）。
+- Gate 只有一類有分、但分數低於門檻時，照附件會請使用者二選一，第二個選項是 0 分的類別。這是門檻〔待凍結〕要用校準包處理的現象，程式照附件實作，沒有自行改規則。
