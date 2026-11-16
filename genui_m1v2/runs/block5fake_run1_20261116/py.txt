@@ -1,0 +1,2 @@
+ollamastop-m1-0.1 pass 7 fail 0
+rc=0
