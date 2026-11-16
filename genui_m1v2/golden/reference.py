@@ -168,7 +168,8 @@ def manual(chunks, c, glossary):
     df = {}
     for d in docs:
         for t in set(d): df[t] = df.get(t, 0) + 1
-    content = [t for t in terms if not n or df.get(t, 0) / n <= DOC_DF_MAX] or list(terms)
+    content = [t for t in terms if not n or df.get(t, 0) / n <= DOC_DF_MAX]
+    if not any(df.get(t, 0) for t in content): content = list(terms)   # 剩下的詞都不在手冊裡就不做這一步（run1 發現）
     scored = []
     for ch, d in zip(uniq, docs):
         hit = sum(1 for t in content if t in d)

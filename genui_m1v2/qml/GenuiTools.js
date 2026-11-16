@@ -4,7 +4,7 @@
 // 版本 m1v2：依 v3 §C（已確認）與 v3.1 草案 §C'、§D-6'、§L' 修改；舊版 genui_m1/ 不動。
 // 資料由呼叫端（重放器或紀錄讀取器）以陣列傳入；缺值一律不補。數值門檻都是候選值〔待凍結〕。
 
-var TOOLS_VERSION = "tools-m1-0.2"
+var TOOLS_VERSION = "tools-m1-0.2.1"
 var STATUS = ["OK", "EMPTY_COMPLETE", "PARTIAL", "UNAVAILABLE", "STALE", "INSUFFICIENT", "UNSUPPORTED", "ERROR"]
 
 var STALE_AFTER_S = 2          // 〔待凍結〕
@@ -262,7 +262,10 @@ function manualSearch(chunks, query, glossary) {
     // 內容詞：去掉出現在超過 20% 片段裡的詞；去掉後一個都不剩就不做這一步（v3.1b §L'）
     var content = []
     for (j = 0; j < terms.length; ++j) if (!docs.length || (df[terms[j]] || 0) / docs.length <= DOC_QUALIFY.DF_MAX) content.push(terms[j])
-    if (!content.length) content = terms.slice()
+    // 退路：剩下的詞沒有一個出現在手冊裡，就不做這一步（m1v2 run1 發現的漏洞，見 runs/m1v2_run1_20261116/RECORD.md）
+    var anyPresent = false
+    for (j = 0; j < content.length; ++j) if (df[content[j]]) anyPresent = true
+    if (!anyPresent) content = terms.slice()
     var scored = []
     for (i = 0; i < docs.length; ++i) {
         var hitN = 0

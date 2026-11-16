@@ -1,0 +1,9 @@
+FAIL 手冊：只中一個內容詞的片段不合格
+  Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'EMPTY_COMPLETE'
+  - 'OK'
+  
+pass 69 / fail 1
+exit 1

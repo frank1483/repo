@@ -1,0 +1,8 @@
+js_v3 exit 0
+py_v3 exit 0
+compare_v3 exit 0
+expect_js exit 0
+expect_py exit 0
+js_v2 exit 0
+py_v2 exit 0
+compare_v2 exit 0
