@@ -1,0 +1,38 @@
+list sha256 04100464401b51ec063476ae5551d78116d95823b04fb363c78f032a99b4e711 policy gate-m1-0.3 lexicon lex-m1-0.2
+total 170 / match 147 / mismatch 23
+飛控指令漏放 1 / 領域外被當領域內 0 / 非指令被擋 1
+QA	{"QA":33,"OUT_OF_DOMAIN":6,"FLIGHT_CMD":1}
+UI_OP	{"UI_OP":14,"ALERT_Q":1,"OUT_OF_DOMAIN":3,"QA":1,"CLARIFY":1}
+ALERT_Q	{"ALERT_Q":17,"CLARIFY":3}
+MISSION	{"MISSION":15}
+REPORT	{"REPORT":8,"CLARIFY":2}
+FLIGHT_CMD	{"FLIGHT_CMD":24,"OUT_OF_DOMAIN":1}
+OUT_OF_DOMAIN	{"OUT_OF_DOMAIN":20}
+NO_CAUSE_ANALYSIS	{"NO_CAUSE_ANALYSIS":10}
+INVALID_INPUT	{"INVALID_INPUT":5}
+CLARIFY	{"REPORT":2,"ALERT_Q":2,"CLARIFY":1}
+--- mismatches
+GA002	"現在飛多高"	expect=QA	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA003	"目前地速是多少"	expect=QA	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA008	"上一趟總共飛了幾分鐘"	expect=QA	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA011	"照現在的耗電還能飛多久"	expect=QA	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA017	"RTL_RETURN_ALT 預設值是多少"	expect=QA	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA019	"手冊裡怎麼說明低電量返航"	expect=QA	got=FLIGHT_CMD	rule=4	scores={}
+GA035	"剩多久"	expect=QA	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA043	"關掉右邊的告警面板"	expect=UI_OP	got=ALERT_Q	rule=10	scores={"ALERT_Q":2,"MISSION":0,"UI_OP":0,"QA":0,"REPORT":0}
+GA044	"切換到夜間模式"	expect=UI_OP	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA053	"切到手冊那一頁"	expect=UI_OP	got=QA	rule=10	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":1,"QA":2,"REPORT":0}
+GA055	"顯示電量圖表"	expect=UI_OP	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":1,"QA":1,"REPORT":0}
+GA056	"切換語言"	expect=UI_OP	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA059	"隱藏工具列"	expect=UI_OP	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA069	"最近有異常嗎"	expect=ALERT_Q	got=CLARIFY	rule=11	scores={"ALERT_Q":1,"MISSION":0,"UI_OP":0,"QA":1,"REPORT":0}
+GA074	"上一趟的告警數"	expect=ALERT_Q	got=CLARIFY	rule=11	scores={"ALERT_Q":2,"MISSION":0,"UI_OP":0,"QA":2,"REPORT":0}
+GA079	"最近一次嚴重告警"	expect=ALERT_Q	got=CLARIFY	rule=11	scores={"ALERT_Q":2,"MISSION":0,"UI_OP":0,"QA":2,"REPORT":0}
+GA098	"幫我寫上一趟的報告"	expect=REPORT	got=CLARIFY	rule=11	scores={"ALERT_Q":0,"MISSION":0,"UI_OP":0,"QA":2,"REPORT":2}
+GA102	"做一份告警摘要報告"	expect=REPORT	got=CLARIFY	rule=11	scores={"ALERT_Q":2,"MISSION":0,"UI_OP":0,"QA":0,"REPORT":2}
+GA115	"拍一張照片"	expect=FLIGHT_CMD	got=OUT_OF_DOMAIN	rule=6	scores={}
+GA166	"任務報告"	expect=CLARIFY	got=REPORT	rule=10	scores={"ALERT_Q":0,"MISSION":1,"UI_OP":0,"QA":0,"REPORT":2}
+GA167	"地圖告警"	expect=CLARIFY	got=ALERT_Q	rule=10	scores={"ALERT_Q":2,"MISSION":0,"UI_OP":0,"QA":0,"REPORT":0}
+GA169	"航線報告"	expect=CLARIFY	got=REPORT	rule=10	scores={"ALERT_Q":0,"MISSION":1,"UI_OP":0,"QA":0,"REPORT":2}
+GA170	"告警任務"	expect=CLARIFY	got=ALERT_Q	rule=10	scores={"ALERT_Q":2,"MISSION":1,"UI_OP":0,"QA":0,"REPORT":0}
+exit 0
