@@ -1,0 +1,5 @@
+MISMATCH J03_step5
+  J03_step5.status: want='OK' got='INSUFFICIENT'
+  J03_step5.detail.jump_at: want=None got=61
+expect cases 5 / mismatch 1
+exit 1
