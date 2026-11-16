@@ -5,7 +5,7 @@ function load(file, names) {
   return new Function(src + '\nreturn {' + names.join(',') + '}')()
 }
 module.exports = {
-  Gate: load('GenuiGate.js', ['gate', 'route', 'selectTools', 'resolveParam', 'timeWindowCandidates', 'normalize', 'maskNouns', 'splitClauses', 'splitClausesQ', 'commandVerbs', 'hasContentChar', 'capabilityOk', 'isQuestion', 'POLICY_VERSION', 'LEXICON_VERSION', 'REPLY_TOO_LONG', 'REPLY_NO_CAUSE', 'REPLY_HOLD']),
+  Gate: load('GenuiGate.js', ['gate', 'route', 'selectTools', 'resolveParam', 'timeWindowCandidates', 'normalize', 'maskNouns', 'splitClauses', 'splitClausesQ', 'commandVerbs', 'hasContentChar', 'capabilityOk', 'codePoints', 'isQuestion', 'POLICY_VERSION', 'LEXICON_VERSION', 'REPLY_TOO_LONG', 'REPLY_NO_CAUSE', 'REPLY_HOLD']),
   Hash: load('GenuiHash.js', ['sha256Hex']),
   Tools: load('GenuiTools.js', ['telemetryLatest', 'flightlogSeries', 'energyTrend', 'alertHistory', 'manualSearch', 'tokenize', 'TOOLS_VERSION', 'expandQuery', 'ENERGY', 'STATUS']),
   Claims: load('GenuiClaims.js', ['generate', 'selectRule', 'validateSelection', 'render', 'answer', 'quota', 'MAX_CLAIMS', 'CLAIMS_VERSION']),

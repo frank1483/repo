@@ -1,0 +1,43 @@
+qt_version 6.8.3
+caps(qt) {"capabilityOk": false, "nfkc": "a b", "len200": "GATE_CAPABILITY_FAIL", "len201": "GATE_CAPABILITY_FAIL", "ext_a": "GATE_CAPABILITY_FAIL", "sort_stable": false}
+gate inputs 169, energy cases 29, diffs 1294
+  .caps.capabilityOk: qt=False node=True
+  .caps.ext_a: qt='GATE_CAPABILITY_FAIL' node='OUT_OF_DOMAIN'
+  .caps.len200: qt='GATE_CAPABILITY_FAIL' node='CLARIFY_ONE'
+  .caps.len201: qt='GATE_CAPABILITY_FAIL' node='INPUT_TOO_LONG'
+  .caps.sort_stable: qt=False node=True
+  .gate..class: qt='GATE_CAPABILITY_FAIL' node='INVALID_INPUT'
+  .gate..reply: qt='問答功能無法啟動（引擎能力不足）' node='請輸入問題'
+  .gate..rule_no: qt=0 node=1
+  .gate.   .class: qt='GATE_CAPABILITY_FAIL' node='INVALID_INPUT'
+  .gate.   .reply: qt='問答功能無法啟動（引擎能力不足）' node='請輸入問題'
+  .gate.   .rule_no: qt=0 node=1
+  .gate.***.class: qt='GATE_CAPABILITY_FAIL' node='INVALID_INPUT'
+  .gate.***.reply: qt='問答功能無法啟動（引擎能力不足）' node='請輸入問題'
+  .gate.***.rule_no: qt=0 node=1
+  .gate.1 加 1 等於多少.class: qt='GATE_CAPABILITY_FAIL' node='OUT_OF_DOMAIN'
+  .gate.1 加 1 等於多少.matched_terms.domain: missing in qt
+  .gate.1 加 1 等於多少.reply: qt='問答功能無法啟動（引擎能力不足）' node='這不在本系統的範圍，或請把問題說完整'
+  .gate.1 加 1 等於多少.rule_no: qt=0 node=6
+  .gate.GPS 衛星數有幾顆.class: qt='GATE_CAPABILITY_FAIL' node='QA'
+  .gate.GPS 衛星數有幾顆.matched_terms.QA: missing in qt
+  .gate.GPS 衛星數有幾顆.matched_terms.domain: missing in qt
+  .gate.GPS 衛星數有幾顆.reply: qt='問答功能無法啟動（引擎能力不足）' node=''
+  .gate.GPS 衛星數有幾顆.rule_no: qt=0 node=10
+  .gate.GPS 衛星數有幾顆.scores.ALERT_Q: missing in qt
+  .gate.GPS 衛星數有幾顆.scores.MISSION: missing in qt
+  .gate.GPS 衛星數有幾顆.scores.QA: missing in qt
+  .gate.GPS 衛星數有幾顆.scores.REPORT: missing in qt
+  .gate.GPS 衛星數有幾顆.scores.UI_OP: missing in qt
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.class: qt='GATE_CAPABILITY_FAIL' node='QA'
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.matched_terms.QA: missing in qt
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.matched_terms.domain: missing in qt
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.reply: qt='問答功能無法啟動（引擎能力不足）' node=''
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.rule_no: qt=0 node=10
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.scores.ALERT_Q: missing in qt
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.scores.MISSION: missing in qt
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.scores.QA: missing in qt
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.scores.REPORT: missing in qt
+  .gate.RTL_RETURN_ALT 這個參數是什麼意思.scores.UI_OP: missing in qt
+  .gate.island 的地圖.class: qt='GATE_CAPABILITY_FAIL' node='QA'
+  .gate.island 的地圖.matched_terms.domain: missing in qt

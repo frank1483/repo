@@ -4,7 +4,7 @@
 // 版本 m1v2：依 v3 §C（已確認）與 v3.1 草案 §C'、§D-6'、§L' 修改；舊版 genui_m1/ 不動。
 // 資料由呼叫端（重放器或紀錄讀取器）以陣列傳入；缺值一律不補。數值門檻都是候選值〔待凍結〕。
 
-var TOOLS_VERSION = "tools-m1-0.2.1"
+var TOOLS_VERSION = "tools-m1-0.2.2"
 var STATUS = ["OK", "EMPTY_COMPLETE", "PARTIAL", "UNAVAILABLE", "STALE", "INSUFFICIENT", "UNSUPPORTED", "ERROR"]
 
 var STALE_AFTER_S = 2          // 〔待凍結〕
@@ -205,9 +205,11 @@ function alertHistory(events, filter, gaps) {
         if (finite(filter.t1) && e.t > filter.t1) continue
         if (filter.level && e.level !== filter.level) continue
         if (filter.predictor && e.predictor !== filter.predictor) continue
-        rows.push(e)
+        rows.push({ e: e, arrival: i })
     }
-    rows.sort(function (a, b) { return b.t - a.t })
+    // 新的在前；同一時間依到達順序（Qt 的 sort 不穩定，qt_poc_run1 發現）
+    rows.sort(function (a, b) { return b.e.t - a.e.t || a.arrival - b.arrival })
+    for (i = 0; i < rows.length; ++i) rows[i] = rows[i].e
     var coverage = { requested: [filter.t0, filter.t1], covered: [filter.t0, filter.t1], gaps: gaps || [] }
     var partial = coverage.gaps.length > 0
     var byLevel = {}, hasCritical = false

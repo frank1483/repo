@@ -1,0 +1,4 @@
+make_input 0
+qt 0
+node 0
+compare 1

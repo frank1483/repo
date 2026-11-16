@@ -5,7 +5,7 @@
 // M1 只有第 1 層規則，source 一律是 "rule"；不呼叫模型、不算 embedding。
 // 所有門檻都是候選值〔待凍結〕，校準包跑完才凍結。
 
-var POLICY_VERSION = "gate-m1-0.2"
+var POLICY_VERSION = "gate-m1-0.2.1"
 var LEXICON_VERSION = "lex-m1-0.2"
 var MAX_INPUT_CHARS = 200
 var T_SCORE = 2      // 〔待凍結〕
@@ -56,9 +56,11 @@ var INTENT_TERMS = {
 var CLARIFY_ORDER = ["ALERT_Q", "MISSION", "UI_OP", "QA", "REPORT"]
 
 // ---------------------------------------------------------------- 小工具
+// 依碼位切字串。Qt 6.8.3 的 Array.from(字串) 會按 UTF-16 切（qt_poc_run1 發現），所以用 for…of。
+function codePoints(s) { var out = []; for (var ch of s) out.push(ch); return out }
 // 能力檢查（v3.1 §A-0'）：沒有 NFKC 或碼位走訪就不啟用 Gate，不做降級替代。
 function capabilityOk() {
-    try { return typeof "".normalize === "function" && "Ａ".normalize("NFKC") === "A" && typeof Array.from === "function" && Array.from("𠀀").length === 1 }
+    try { return typeof "".normalize === "function" && "Ａ".normalize("NFKC") === "A" && codePoints("𠀀a").length === 2 && "𠀀".codePointAt(0) === 0x20000 }
     catch (e) { return false }
 }
 // 換行保留（當子句分界），其他連續空白縮成一個
@@ -67,10 +69,10 @@ function normalize(text) {
     s = s.replace(/\r\n?/g, "\n").replace(/[^\S\n]+/g, " ").replace(/ *\n[\s]*/g, "\n")
     return s.replace(/^[ \n]+|[ \n]+$/g, "")
 }
-function charLength(s) { return Array.from(s).length }
+function charLength(s) { return codePoints(s).length }
 // 有沒有中文（含擴充 A、相容、擴充 B 以後）、英文或數字
 function hasContentChar(s) {
-    var cps = Array.from(s)
+    var cps = codePoints(s)
     for (var i = 0; i < cps.length; ++i) {
         var c = cps[i].codePointAt(0)
         if ((c >= 0x30 && c <= 0x39) || (c >= 0x61 && c <= 0x7a) || (c >= 0x3400 && c <= 0x4dbf) || (c >= 0x4e00 && c <= 0x9fff)
