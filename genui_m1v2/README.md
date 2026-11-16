@@ -31,3 +31,9 @@ python3 -I genui_m1v2/golden/check_expect.py genui_m1v2/golden/vectors_v3.json j
 - 畫面超支（§I）、交易提交點（§E'）、更新租約（§M）、Ollama 停止證據（§J）、告警計分（§F）都還沒有程式。
 - 飛行紀錄的分頁、ROUTE、PROFILE、DEVIATION operation 未做。
 - 手冊合格門檻 0.5、20% 是候選值〔待凍結〕。
+
+## 0.3（2026-11-16 13:19 之後）
+
+- Gate：T=1（calibration_v1 A1 凍結值）。
+- 電量：使用者裁決 V3.1-2，R² 門檻 0.8、相鄰兩筆變化超過 5% 視窗重新起算（`detail.jump_at`）。
+- 新增 `golden/vectors_v4.json`（跳變與 R² 案例）、`golden/expect_overrides_v3_for_0.3.json`（E18 因 R² 門檻改變而更新預期）、`test/test_v3.js`。

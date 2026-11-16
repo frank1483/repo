@@ -7,7 +7,8 @@
 import json, math, os, re, sys
 
 STALE_S, FUTURE_S = 2.0, 1.0
-W, N_MIN, COV_MIN, GAP_MAX, EPS, R2_MIN, DIS_MAX, ETA_MAX = 60.0, 10, 0.8, 10.0, 0.05, 0.5, 0.2, 600.0
+W, N_MIN, COV_MIN, GAP_MAX, EPS, R2_MIN, DIS_MAX, ETA_MAX = 60.0, 10, 0.8, 10.0, 0.05, 0.8, 0.2, 600.0
+JUMP = 5.0   # V3.1-2
 K1, B, TOP_K, MAX_PTS = 1.2, 0.75, 5, 300
 NUM_EPS, BUCKETS, DOC_MIN_COV, DOC_DF_MAX = 1e-9, 150, 0.5, 0.2
 DOC_STOP = ["可不可以", "是什麼", "為什麼", "能不能", "會不會", "怎麼", "如何", "為何", "哪裡", "多少", "什麼", "是否", "請問", "怎樣", "哪", "幾", "嗎", "呢"]
@@ -23,7 +24,7 @@ def energy(samples, o):
     rv = fin(res) and 0 <= res <= 100
     d = dict(slope_pct_per_min=None, r2=None, n_valid=0, n_dropped=0, coverage_ratio=None, direction=None, eta_min=None, eta_reason="",
              disorder_ratio=None, reserve_valid=rv, reserve_invalid=not rv, reserve_pct=res if fin(res) else None,
-             reserve_assumed=bool(o.get("reserveAssumed")), stale=False, insufficient_reason="", reason="")
+             reserve_assumed=bool(o.get("reserveAssumed")), stale=False, insufficient_reason="", reason="", jump_at=None)
     out = dict(status=None, detail=d, requested=None, covered=None, points=None, intercept=None)
 
     def ret(status):
@@ -54,7 +55,11 @@ def energy(samples, o):
         latest[t] = soc
     ts = sorted(latest)
     t_end = ts[-1]
-    win = [(t, latest[t]) for t in ts if t >= t_end - W]
+    start = 0
+    for k in range(1, len(ts)):
+        if abs(latest[ts[k]] - latest[ts[k - 1]]) > JUMP: start = k
+    d["jump_at"] = ts[start] if start > 0 else None
+    win = [(t, latest[t]) for t in ts[start:] if t >= t_end - W]
     d["n_valid"] = len(win)
     t0 = win[0][0]
     d["coverage_ratio"] = (t_end - t0) / W

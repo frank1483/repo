@@ -4,12 +4,12 @@
 // 版本 m1v2：依 v3 §C（已確認）與 v3.1 草案 §C'、§D-6'、§L' 修改；舊版 genui_m1/ 不動。
 // 資料由呼叫端（重放器或紀錄讀取器）以陣列傳入；缺值一律不補。數值門檻都是候選值〔待凍結〕。
 
-var TOOLS_VERSION = "tools-m1-0.2.2"
+var TOOLS_VERSION = "tools-m1-0.3"
 var STATUS = ["OK", "EMPTY_COMPLETE", "PARTIAL", "UNAVAILABLE", "STALE", "INSUFFICIENT", "UNSUPPORTED", "ERROR"]
 
 var STALE_AFTER_S = 2          // 〔待凍結〕
 var FUTURE_TOLERANCE_S = 1     // 〔待凍結〕
-var ENERGY = { W: 60, N_MIN: 10, COVERAGE_MIN: 0.8, GAP_MAX_S: 10, EPS: 0.05, R2_MIN: 0.5, DISORDER_MAX: 0.2, ETA_MAX_MIN: 600 } // 〔待凍結〕
+var ENERGY = { W: 60, N_MIN: 10, COVERAGE_MIN: 0.8, GAP_MAX_S: 10, EPS: 0.05, R2_MIN: 0.8, JUMP_PCT: 5, DISORDER_MAX: 0.2, ETA_MAX_MIN: 600 } // 〔待凍結〕
 var SERIES_MAX_POINTS = 300
 var ROUTE_MAX_POINTS = 500
 var DOC_TOP_K = 5
@@ -107,7 +107,7 @@ function energyTrend(samples, opts) {
     var inputs = { W: W, reserve_pct: finite(reserve) ? reserve : null }
     var out = { slope_pct_per_min: null, r2: null, n_valid: 0, n_dropped: 0, coverage_ratio: null, direction: null,
                 eta_min: null, eta_reason: "", disorder_ratio: null, reserve_valid: reserveValid, reserve_invalid: !reserveValid,
-                reserve_pct: finite(reserve) ? reserve : null, reserve_assumed: !!opts.reserveAssumed, stale: false, insufficient_reason: "", reason: "" }
+                reserve_pct: finite(reserve) ? reserve : null, reserve_assumed: !!opts.reserveAssumed, stale: false, insufficient_reason: "", reason: "", jump_at: null }
     function done(status, facts, cov) { return result("T_ENERGY", inputs, status, facts || [], cov, { detail: out }) }
     if (opts.vehicleType && opts.vehicleType !== "multirotor") { out.reason = "vehicle_type"; return done("UNSUPPORTED") }
     if (!samples) { out.reason = "no_source"; return done("UNAVAILABLE") }
@@ -133,9 +133,13 @@ function energyTrend(samples, opts) {
         if (dedup.length && dedup[dedup.length - 1].t === clean[i].t) dedup[dedup.length - 1] = clean[i]
         else dedup.push(clean[i])
     }
+    // 3b 跳變（V3.1-2，使用者 11/16 13:19）：相鄰兩筆變化超過 5%，視窗從最後一次跳變後那一筆重新起算
+    var start = 0
+    for (i = 1; i < dedup.length; ++i) if (Math.abs(dedup[i].soc - dedup[i - 1].soc) > P.JUMP_PCT) start = i
+    out.jump_at = start > 0 ? dedup[start].t : null
     // 4 取視窗
     var tEnd = dedup[dedup.length - 1].t, win = []
-    for (i = 0; i < dedup.length; ++i) if (dedup[i].t >= tEnd - W) win.push(dedup[i])
+    for (i = start; i < dedup.length; ++i) if (dedup[i].t >= tEnd - W) win.push(dedup[i])
     out.n_valid = win.length
     var tFirst = win[0].t, cov = { requested: [tEnd - W, tEnd], covered: [tFirst, tEnd], gaps: [] }
     out.coverage_ratio = (tEnd - tFirst) / W

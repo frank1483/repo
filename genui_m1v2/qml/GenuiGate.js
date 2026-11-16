@@ -5,10 +5,10 @@
 // M1 只有第 1 層規則，source 一律是 "rule"；不呼叫模型、不算 embedding。
 // 所有門檻都是候選值〔待凍結〕，校準包跑完才凍結。
 
-var POLICY_VERSION = "gate-m1-0.2.1"
+var POLICY_VERSION = "gate-m1-0.3"
 var LEXICON_VERSION = "lex-m1-0.2"
 var MAX_INPUT_CHARS = 200
-var T_SCORE = 2      // 〔待凍結〕
+var T_SCORE = 1      // calibration_v1 A1 凍結值（hash8 b1da1e48）
 var M_MARGIN = 1     // 〔待凍結〕
 var MAX_TOOLS = 3
 var MAX_CLARIFY = 5

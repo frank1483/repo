@@ -1,8 +1,10 @@
 """把一份結果（JS 或 Python）和 vectors_v3.json 的 expect 比對。expect 是部分欄位；數字容差 1e-6。
-用法：python3 -I check_expect.py vectors_v3.json result.json  （結束碼 1 表示有不符）"""
+用法：python3 -I check_expect.py vectors.json result.json [overrides.json]  （結束碼 1 表示有不符）
+overrides：因已裁決的條文改變而更新的預期，依案例 id 取代 expect（原向量檔不動）。"""
 import json, math, sys
 
 V, R = json.load(open(sys.argv[1], encoding="utf-8")), json.load(open(sys.argv[2], encoding="utf-8"))
+OV = json.load(open(sys.argv[3], encoding="utf-8")) if len(sys.argv) > 3 else {}
 bad = n = 0
 
 
@@ -28,7 +30,8 @@ for group, cases in V["cases"].items():
     for c in cases:
         if "expect" not in c: continue
         n += 1
-        got, exp, diffs = R.get(c["id"]), dict(c["expect"]), []
+        got, exp, diffs = R.get(c["id"]), dict(OV.get(c["id"], c["expect"])), []
+        if c["id"] in OV: print("OVERRIDE " + c["id"])
         if got is None: diffs.append("missing case")
         else:
             if "points_head" in exp:
