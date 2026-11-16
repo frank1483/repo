@@ -1,0 +1,2 @@
+alertscore-m1-0.1 pass 10 fail 0
+rc=0
