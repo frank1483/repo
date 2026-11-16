@@ -24,6 +24,8 @@ function runAll(Gate, Tools, Claims, Layout, input) {
     for (var h = 0; h < hs.length; ++h) out.k6["layout_" + hs[h]] = Layout.layout(p, { width: 1920, height: hs[h], revision: 1 }, res)
     out.claims.extra_field = Claims.answer(res, {}, '{"schema":"qa.claims/1","selected_claim_ids":["C1"],"text":"電量999%"}')
     out.claims.json_tail = Claims.answer(res, {}, '{"schema":"qa.claims/1","selected_claim_ids":["C1"]} x')
+    var same = []; for (var k = 0; k < 40; ++k) same.push({ t: 10 * (k % 3), level: "warning", predictor: "p", text: "e" + k })
+    out.alerts_same_t = Tools.alertHistory(same, { t0: 0, t1: 60 }, []).facts[1].rows.map(function (x) { return x.text })
     out.tamper = Layout.validatePlan(JSON.parse(JSON.stringify(p).replace('"component_id":"W5_DOC"', '"component_id":"toString"')), res)
     return out
 }
