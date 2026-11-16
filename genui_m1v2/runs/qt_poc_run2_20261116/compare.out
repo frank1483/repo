@@ -1,0 +1,4 @@
+qt_version 6.8.3
+caps(qt) {"capabilityOk": true, "nfkc": "a b", "len200": "CLARIFY_ONE", "len201": "INPUT_TOO_LONG", "ext_a": "OUT_OF_DOMAIN", "sort_stable": false}
+gate inputs 169, energy cases 29, diffs 1
+  .caps.sort_stable: qt=False node=True
