@@ -1,4 +1,4 @@
-"""ADR-0002 覆蓋航點與預覽驗算的固定案例（演算法說明 v1 §6）。規則版，不需要真模型。
+"""ADR-0002 覆蓋航點與預覽驗算的固定案例（演算法說明 v1 §6＋v1.1；cg-v2／ac-v2）。規則版，不需要真模型。
 首次執行由 Claude 負責，結果與失敗原樣保留。"""
 import copy
 import json
@@ -109,6 +109,26 @@ class Generate(unittest.TestCase):
     def test_deterministic(self):
         self.assertEqual(gen(no_fly=NFZ_MID)["route_id"], gen(no_fly=NFZ_MID)["route_id"])
 
+    # ---- cg-v2 新增 ----
+    def test_v2_whole_route_clean_no_transit_detour_needed(self):
+        g = gen(no_fly=NFZ_MID)
+        self.assertEqual(g["algo_version"], "cg-v2")
+        self.assertEqual(g["stats"]["generation_crossings"], [])
+        self.assertFalse(g["stats"]["transit_detour"])
+
+    def test_v2_all_starts_cross_uses_transit_box(self):
+        home2 = ll(-60, 50)
+        o2 = (home2["lat"], home2["lon"])
+        z = [{"id": "Z2", **ll(-30, 50), "radius_m": 20.0}]
+        g = cv.coverage_generate(area=SQUARE, home=home2, spacing_m=20, no_fly=z)
+        self.assertEqual(g["status"], "OK")
+        self.assertTrue(g["stats"]["transit_detour"])
+        self.assertEqual(g["stats"]["generation_crossings"], [])
+        self.assertEqual(zone_violations(g["points"], z, o2), [])
+        self.assertTrue(any(p.get("transit") for p in g["points"]))
+        r = cv.preview_check(g, Vehicle(), Wind(), 90, 25, z)
+        self.assertNotIn("NFZ_CROSSING", [x["code"] for x in r["reasons"]])
+
 
 class PreviewAndApply(unittest.TestCase):
     def setUp(self):
@@ -152,6 +172,45 @@ class PreviewAndApply(unittest.TestCase):
         self.assertFalse(res["written"])
         self.assertEqual(written, [])
         self.assertTrue(res["check"]["reasons"])
+        self.assertEqual(res["action"], "BLOCK")
+
+    # ---- ac-v2 新增（I-01、I-02） ----
+    def test_v2_confirm_with_diff_is_not_written(self):
+        written = []
+        res = cv.confirm_and_write(self.rec, written.append, **current(takeoff=75))
+        self.assertEqual(res["action"], "REDISPLAY")
+        self.assertFalse(res["written"])
+        self.assertEqual(written, [])
+
+    def test_v2_write_after_user_confirms_shown_version(self):
+        shown = cv.apply_check(self.rec, **current(takeoff=75))
+        self.assertEqual(shown["decision"], "CONFIRM_WITH_DIFF")
+        written = []
+        res = cv.confirm_and_write(self.rec, written.append, shown=shown, **current(takeoff=74.5))
+        self.assertEqual(res["action"], "WRITE", res.get("diffs"))
+        self.assertEqual(len(written), 1)
+
+    def test_v2_discrete_change_after_shown_redisplays(self):
+        shown = cv.apply_check(self.rec, **current(takeoff=89))
+        res = cv.confirm_and_write(self.rec, lambda r: None, shown=shown, **current(takeoff=89, reserve=26))
+        self.assertEqual(res["action"], "REDISPLAY")
+        self.assertEqual([d["field"] for d in res["diffs"]], ["reserve_req_pct"])
+
+    def test_v2_redisplay_limit_then_block(self):
+        st = {}
+        acts = [cv.confirm_and_write(self.rec, lambda r: None, state=st, **current(takeoff=75))["action"]
+                for _ in range(3)]
+        self.assertEqual(acts, ["REDISPLAY", "REDISPLAY", "BLOCK"])
+
+    def test_v2_battery_hysteresis(self):
+        used = 90 - self.rec["est_end_pct"]
+        st = {}
+        self.assertEqual(cv.confirm_and_write(self.rec, lambda r: None, state=st, **current(takeoff=26))["action"], "BLOCK")
+        res = cv.confirm_and_write(self.rec, lambda r: None, state=st, **current(takeoff=25 + used + 0.5))
+        self.assertEqual(res["action"], "BLOCK")
+        self.assertIn("BATTERY_HYSTERESIS", [r["code"] for r in res["check"]["reasons"]])
+        res = cv.confirm_and_write(self.rec, lambda r: None, state=st, **current(takeoff=25 + used + 2))
+        self.assertNotEqual(res["action"], "BLOCK")
 
     def test_reserve_eff_uses_max_and_vehicle_not_mutated(self):
         v = Vehicle()
