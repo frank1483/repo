@@ -32,7 +32,9 @@ TEST_VALUES = {"lock_wait_s": 0.2, "header_cap": 8192, "max_area_vertices": 50, 
 BODY_CAP = {"/api/session/open": 1024, "/api/area/submit": 16384, "/api/preview/generate": 65536,
             "/api/preview/verify": 16384, "/api/preview/get": 4096, "/api/preview/apply_check": 8192,
             "/api/preview/presented": 8192, "/api/preview/commit": 8192,
-            "/api/preview/transaction/get": 4096, "/api/preview/undo": 4096}
+            "/api/preview/transaction/get": 4096, "/api/preview/undo": 4096,
+            "/api/agent/request": 16384, "/api/agent/resume": 16384, "/api/agent/task/get": 4096,
+            "/api/agent/cancel": 4096}
 COMMON = {"boot_epoch": "int", "request_epoch": "int"}
 SCHEMA = {
     "/api/session/open": ({}, {}),
@@ -52,6 +54,11 @@ SCHEMA = {
     "/api/preview/transaction/get": ({"session_id": "str", "transaction_id": "str", "target_slot_id": "str"}, {}),
     "/api/preview/undo": ({"session_id": "str", "target_slot_id": "str", "target_generation": "int",
                            "transaction_id": "str", "nonce": "str"}, {}),
+    # M3：Agent 端點（同樣的 token、檢查順序與封閉 schema）。text 超過 200 字由 Gate 回 TOO_LONG，不截斷。
+    "/api/agent/request": ({"session_id": "str", "text": "text"}, {}),
+    "/api/agent/resume": ({"session_id": "str", "task_id": "str"}, {"answers": "answers", "text": "text"}),
+    "/api/agent/task/get": ({"session_id": "str", "task_id": "str"}, {}),
+    "/api/agent/cancel": ({"session_id": "str", "task_id": "str"}, {}),
 }
 HTTP_OF = {"AUTH_MISSING": 401, "AUTH_INVALID": 401, "HOST_DENIED": 403, "ORIGIN_DENIED": 403,
            "AREA_BINDING_MISMATCH": 403, "NOT_FOUND": 404, "METHOD_DENIED": 405, "BODY_TOO_LARGE": 413,
@@ -80,6 +87,12 @@ def _check_type(v, t):
         if not math.isfinite(v):
             raise ApiError("NONFINITE")
         return True
+    if t == "text":
+        return isinstance(v, str) and 0 < len(v) <= 1000
+    if t == "answers":
+        return (isinstance(v, list) and 0 < len(v) <= 8 and all(
+            isinstance(a, dict) and set(a) == {"field", "value"} and a["field"] in
+            ("boundary", "area_choice", "cancel_confirm") and isinstance(a["value"], (str, bool)) for a in v))
     if t == "geo":
         return (isinstance(v, dict) and set(v) == {"lat", "lon"} and all(_check_type(v[k], "num") for k in v)
                 and -90 <= v["lat"] <= 90 and -180 <= v["lon"] <= 180)
@@ -160,7 +173,7 @@ class PreviewService:
         self.feeder = feeder
         self.store = cv.PreviewStore(evidence_path)
         self.boot_epoch = boot_epoch if boot_epoch is not None else int(time.time())
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()   # Agent 工具在同一程序內呼叫時可重入
         self.sessions = {}        # session_id → {principal, last_epoch}
         self.areas = {}           # area_ref → AreaRecord
         self.routes = {}          # route_ref → generate output
@@ -170,6 +183,11 @@ class PreviewService:
         self.intents = {}         # apply_intent_id → {redisplays}
         self.idem = {}            # (principal, boot, slot, nonce) → result
         self.seq = 0
+        self.controller = None    # M3：attach_controller() 之後才提供 /api/agent/*
+        self.task_owner = {}      # task_id → session_id
+
+    def attach_controller(self, controller):
+        self.controller = controller
 
     # --- 共用
     def _session(self, principal, body):
@@ -193,7 +211,9 @@ class PreviewService:
               "/api/preview/verify": self.verify, "/api/preview/get": self.get,
               "/api/preview/apply_check": self.apply_check, "/api/preview/presented": self.presented,
               "/api/preview/commit": self.commit, "/api/preview/transaction/get": self.transaction_get,
-              "/api/preview/undo": self.undo}[path]
+              "/api/preview/undo": self.undo, "/api/agent/request": self.agent_request,
+              "/api/agent/resume": self.agent_resume, "/api/agent/task/get": self.agent_get,
+              "/api/agent/cancel": self.agent_cancel}[path]
         with self.lock:
             return fn(principal, body["session_id"], body)
 
@@ -400,6 +420,57 @@ class PreviewService:
         out = {"transaction": r}
         self.idem[key] = ("", out)
         return out
+
+
+# ---------------- Agent 端點（M3） ----------------
+
+def _agent_view(r):
+    keep = ("status", "task_id", "reply_zh", "questions", "directions", "calls_used", "notes")
+    return {k: r.get(k) for k in keep}
+
+
+def _agent_owned(svc, sid, b):
+    if svc.controller is None:
+        raise ApiError("NOT_FOUND", ["agent 未啟用"])
+    tid = b.get("task_id")
+    if tid is not None and svc.task_owner.get(tid) != sid:
+        raise ApiError("NOT_FOUND", ["task_id"])
+    return tid
+
+
+def _agent_request(self, principal, sid, b):
+    _agent_owned(self, sid, b)
+    r = self.controller.request(b["text"])
+    if r.get("task_id"):
+        self.task_owner[r["task_id"]] = sid
+    return _agent_view(r)
+
+
+def _agent_resume(self, principal, sid, b):
+    tid = _agent_owned(self, sid, b)
+    if "answers" in b:
+        r = self.controller.resume(tid, b["answers"])
+    elif "text" in b:
+        r = self.controller.resume_text(tid, b["text"])
+    else:
+        r = self.controller.continue_task(tid)
+    return _agent_view(r)
+
+
+def _agent_get(self, principal, sid, b):
+    tid = _agent_owned(self, sid, b)
+    return _agent_view(self.controller._reply(self.controller.tasks[tid]))
+
+
+def _agent_cancel(self, principal, sid, b):
+    tid = _agent_owned(self, sid, b)
+    return _agent_view(self.controller.cancel(tid))
+
+
+PreviewService.agent_request = _agent_request
+PreviewService.agent_resume = _agent_resume
+PreviewService.agent_get = _agent_get
+PreviewService.agent_cancel = _agent_cancel
 
 
 # ---------------- HTTP ----------------

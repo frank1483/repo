@@ -82,7 +82,7 @@ class _StepLib:
 
 
 class Controller:
-    def __init__(self, tools, model=None, ledger_cfg=None, steps_max=None, k_max=None):
+    def __init__(self, tools, model=None, ledger_cfg=None, steps_max=None, k_max=None, alert_active=None):
         """tools：query_area/gen_coverage/verify_preview/propose_home_route/qa_lookup/report_draft。
         model(call) → 原始回覆文字（假模型或閘道）；None 表示不用模型（全部規則）。"""
         self.tools = tools
@@ -92,6 +92,7 @@ class Controller:
         self.k_max = k_max or TEST_VALUES["k_max"]
         self.tasks = {}
         self.n = 0
+        self.alert_active = alert_active      # M3：固定告警狀態；有告警就停在步間
 
     # ---------- 模型呼叫（經帳本） ----------
     def _ask(self, task, purpose, header, allowed, rule_code):
@@ -133,7 +134,24 @@ class Controller:
                                                                  f"{self.k_max} 件（{'、'.join(KIND_ZH[k] for k in kinds)}）"})
             return self._reply(task)
         self._build(task, kinds)
+        if "bind_task" in self.tools:
+            self.tools["bind_task"](task)
         return self._run(task)
+
+    def continue_task(self, task_id):
+        """告警解除後接續（不重設步數與預算）。"""
+        task = self.tasks[task_id]
+        if task.get("paused_by_alert"):
+            task["paused_by_alert"] = False
+            task["status"] = "ACTIVE"
+        return self._run(task)
+
+    def cancel(self, task_id):
+        """使用者明確取消（按鈕）。進行中的模型回覆若晚到，只記錄、不採用。"""
+        task = self.tasks[task_id]
+        task["cancelled"] = True
+        task["status"] = "CANCELLED"
+        return self._reply(task)
 
     def resume(self, task_id, answers):
         task = self.tasks[task_id]
@@ -326,6 +344,10 @@ class Controller:
         header = ["句子：" + task["text"], f"方向：{KIND_ZH[d['kind']]}",
                   "已有成果：" + ("、".join(sorted(task["artifacts"])) or "無"), f"剩餘步數：{self.steps_max - d['steps']}"]
         code, source = self._ask(task, "step:" + d["kind"], header, allowed, self._rule_next(task, d, allowed))
+        if task.get("cancelled"):
+            task["notes"].append(f"取消後才回來的回覆（{code}）只記錄、不採用")
+            task["steps"].append({"direction": d["kind"], "action": code, "source": source, "late": True})
+            return
         d["steps"] += 1
         before = _h(sorted(task["artifacts"].items()))
         if code == "HOLD":
@@ -370,6 +392,13 @@ class Controller:
                     d["status"] = "INCOMPLETE"
                     d["reason"] = "UPSTREAM_NO_MATCH"
                     continue
+                if task.get("cancelled"):
+                    return self._reply(task)
+                if self.alert_active is not None and self.alert_active():
+                    task["paused_by_alert"] = True
+                    task["status"] = "PARKED"
+                    task["notes"].append("告警中，迴圈停在步與步之間")
+                    return self._reply(task)
                 if task["ledger"].task_used >= task["ledger"].per_task and self.model is not None:
                     task["notes"].append("任務預算用完，其餘改由規則完成")
                 self._step(task, d)
@@ -385,6 +414,9 @@ class Controller:
                             progressed = w is None
                         else:
                             d["status"] = "NEEDS_USER" if w == "NEEDS_USER" else "INCOMPLETE"
+        if task.get("cancelled"):
+            task["status"] = "CANCELLED"
+            return self._reply(task)
         st = [d["status"] for d in task["directions"]]
         if any(s == "FAILED_SAFE" for s in st):
             task["status"] = "FAILED_SAFE"

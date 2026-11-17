@@ -49,10 +49,14 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # 數字越小越先處理
-PRIORITY = {"ui": 0, "alerts": 1, "mission": 2, "report": 3, "recognition": 4}
+# ADR-0002 I-06（使用者 2026-11-16 裁決；M3 2026-11-17 同意）：告警（L0，不經閘道）＞操作中 UI＝使用者直接操作規劃（1）
+# ＞模型告警說明＝問答＝Agent 前景規劃（2）＞GenUI 背景（3）＞報告與辨識（4）。沒列的 feature 拒絕。
+PRIORITY = {"ui": 1, "mission": 1, "alerts": 2, "qa": 2, "agent_dir": 2, "agent_step": 2, "agent_resume": 2,
+            "genui_bg": 3, "report": 4, "recognition": 4}
 UNKNOWN_PRIORITY = 9
 # 逾時預算（秒，含排隊）。PC 上 Gemma 4 E2B 中位約 5 秒、首次載入約 12 秒。
-DEFAULT_BUDGETS = {"ui": 32.0, "alerts": 30.0, "mission": 60.0, "report": 90.0,
+DEFAULT_BUDGETS = {"ui": 32.0, "alerts": 30.0, "mission": 60.0, "report": 90.0, "qa": 60.0, "genui_bg": 60.0,
+                   "agent_dir": 15.0, "agent_step": 15.0, "agent_resume": 15.0,
                    "recognition": 30.0, "unknown": 60.0}
 
 
@@ -413,6 +417,8 @@ class Gateway:
         * 期限到或呼叫端斷線 → 取消：排隊中的不送模型；送出中的強制關閉上游連線；
           之後才回來的結果不交付，只記錄。
         """
+        if feature not in PRIORITY:   # ADR-0002 I-06：沒列的 feature 拒絕
+            return 400, {"error": {"message": f"unknown feature {feature}", "type": "feature"}}
         budget = self.budget(feature)
         if deadline_s is not None and deadline_s > 0:
             budget = min(budget, deadline_s)
