@@ -1,0 +1,20 @@
+{
+  "version": "gate-l1-vectors-v1",
+  "note": "ADR-0001 §2 第 1～4 條＋ADR-0002 D-13：整句只要有一個子句是飛控命令就 HOLD；查詢詞只豁免它所在的子句。Python gcs_demo/gate_l1.py 與 QML ui_agent/qml/GcpAgentCore.js preGate 共用。",
+  "cases": [
+    {"id": "G01", "text": "返航點在哪裡", "hold": false, "group": "pure_query"},
+    {"id": "G02", "text": "返航高度設多少", "hold": false, "group": "pure_query"},
+    {"id": "G03", "text": "能不能返航？", "hold": false, "group": "question"},
+    {"id": "G04", "text": "顯示地圖", "hold": false, "group": "pure_query"},
+    {"id": "G05", "text": "降落點設定", "hold": false, "group": "noun_exception"},
+    {"id": "G06", "text": "返航距離在哪裡設定", "hold": false, "group": "module_name"},
+    {"id": "G07", "text": "立即返航", "hold": true, "group": "pure_command"},
+    {"id": "G08", "text": "起飛", "hold": true, "group": "pure_command"},
+    {"id": "G09", "text": "幫我拍照", "hold": true, "group": "pure_command"},
+    {"id": "G10", "text": "顯示返航點，然後立即返航", "hold": true, "group": "query_plus_command"},
+    {"id": "G11", "text": "顯示電量然後起飛", "hold": true, "group": "query_plus_command"},
+    {"id": "G12", "text": "查看降落點，並降落", "hold": true, "group": "query_plus_command"},
+    {"id": "G13", "text": "打開設定頁再返航", "hold": true, "group": "query_plus_command"},
+    {"id": "G14", "text": "顯示返航點；降落", "hold": true, "group": "query_plus_command"}
+  ]
+}

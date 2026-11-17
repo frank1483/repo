@@ -398,12 +398,21 @@ function preGate(intent) {
     // 模組名稱裡的字（例如「返航距離」）不算飛行指令
     // Strip complete parameter subjects before module aliases (高度) split them.
     // A separate explicit 起飛/返航 still blocks; no broad edit-verb exemption.
-    var cmdText = raw.replace(/返航(?:高度|電量|电量|速度|距離|距离)/g, " ")
+    // ADR-0002 D-13（ADR-0001 §2 第 3～4 條）：先切子句；查詢詞只豁免它所在的子句，
+    // 任一子句是飛控命令就 HOLD。與 gcs_demo/gate_l1.py 共用 gate_l1_vectors_v1.json。
+    NAV_HINTS = NAV_HINTS.concat(["嗎", "能不能", "可不可以", "？", "?"])
     var modNames = []
     for (var mi = 0; mi < MODULES.length; ++mi) modNames = modNames.concat([MODULES[mi].name], MODULES[mi].aliases)
     modNames.sort(function (a, b) { return b.length - a.length })
-    for (mi = 0; mi < modNames.length; ++mi) cmdText = cmdText.split(norm(modNames[mi])).join(" ")
-    if (hasAny(cmdText, CMD_WORDS) && !hasAny(raw, NAV_HINTS)) {
+    var clauses = raw.split(/[，,。；;]|然後|然后|再|並|并/), cmdClause = ""
+    for (var ci = 0; ci < clauses.length && !cmdClause; ++ci) {
+        var clause = clauses[ci].trim()
+        if (!clause) continue
+        var cmdText = clause.replace(/返航(?:高度|電量|电量|速度|距離|距离|點|点)|降落(?:點|点)|起飛(?:點|点)/g, " ")
+        for (mi = 0; mi < modNames.length; ++mi) cmdText = cmdText.split(norm(modNames[mi])).join(" ")
+        if (hasAny(cmdText, CMD_WORDS) && !hasAny(clause, NAV_HINTS)) cmdClause = clause
+    }
+    if (cmdClause) {
         return { intent: String(intent || ""), candidates: [], gate: "pre", safety_hold: true, evidence: [{ id: "E1", text: "意圖像是飛行或相機指令；介面助理只換頁與調整版面，不送指令" }],
                  rule: { decision: "HOLD", choice_id: "", final: true, reason_zh: "我不會送飛行或相機指令，請用畫面上的指令區（需滑動確認）" } }
     }
