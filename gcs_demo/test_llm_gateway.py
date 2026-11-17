@@ -196,7 +196,7 @@ class GatewayTest(unittest.TestCase):
             self.assertTrue(res["ok"], res)
             import urllib.request
             h = json.loads(urllib.request.urlopen(url + "/health").read())
-            self.assertEqual(h["priority"]["ui"], 0)
+            self.assertEqual(h["priority"]["ui"], 1)  # ADR-0002 I-06：ui 與使用者直接操作的規劃同為 1
             self.assertEqual(read_log(self.log)[0]["feature"], "report")
         finally:
             srv.shutdown(); fake.close()
