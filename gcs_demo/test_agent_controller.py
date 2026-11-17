@@ -147,11 +147,17 @@ class Budget(unittest.TestCase):
 
 class ModelFaults(unittest.TestCase):
     def test_garbage_repair_once_then_rule(self):
+        # run1（m2_controller_run1）此案例失敗：預設每句 12 次預算在第 6 步用完，測試預期沒算到預算上限。
+        # 行為正確（預算被遵守），只修正測試：放寬預算觀察「每步 2 次」，另加預設預算下的上限斷言。
         m = FakeModel(["plan", "ui"], raw="亂碼")
-        r = Controller(Tools(), m).request(TEXT)
+        r = Controller(Tools(), m, ledger_cfg={"per_sentence": 50, "per_task": 50}).request(TEXT)
         self.assertEqual(r["status"], "DONE")
         self.assertTrue(all(s == "rule" for s in r["sources"]))
         self.assertEqual(m.calls, 1 + 2 * len(r["steps"]))      # 方向 1 次＋每步 2 次（原答＋修正）
+        m2 = FakeModel(["plan", "ui"], raw="亂碼")
+        r2 = Controller(Tools(), m2).request(TEXT)
+        self.assertEqual(m2.calls, 12)                          # 預設每句上限
+        self.assertEqual(r2["status"], "DONE")
 
     def test_out_of_list_code_rejected(self):
         m = FakeModel(["plan"], raw='{"value":"TAKEOFF"}')
