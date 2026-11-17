@@ -16,7 +16,7 @@ from .commit_layer import TEST_VALUES
 def _current(vehicle, S, base):
     lim = S.get("limits") or {}
     return dict(vehicle=vehicle, wind=Wind(**S["wind"]), takeoff_pct=S["battery"],
-                reserve_req_pct=lim.get("reserve_req_pct", base["reserve_req_pct"]),
+                reserve_req_pct=base["reserve_req_pct"],   # 本次任務要求的保留值（使用者已確認），不取任務預設
                 no_fly=list(S.get("no_fly") or []), max_alt_m=lim.get("max_alt_m", base["max_alt_m"]),
                 line_threshold=base.get("line_threshold"), total_threshold=base.get("total_threshold"),
                 speed_mps=base.get("speed_mps"))
