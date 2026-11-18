@@ -103,6 +103,10 @@ class Controller:
             step = sess.next()
             if step["type"] == "done":
                 d = step["decision"]
+                # M4 v2（Codex 0399 第 3 點）：保存每一步引擎 trace，供 T1 嚴格／寬鬆／無效統計
+                task.setdefault("traces", []).append({"purpose": purpose, "source": d["source"],
+                                                      "decision": d["decision"], "trace": step["trace"],
+                                                      "model_calls": step["model_calls"]})
                 return d["decision"], ("model" if d["source"] == "model" else "rule")
             if not task["ledger"].reserve(purpose):
                 sess._rule_fallback("預算用完", "rule_budget")
