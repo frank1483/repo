@@ -1,0 +1,4 @@
+MISMATCH M06_battery_disposal
+  hit_set want=['m1', 'm2', 'm3', 'm5'] got=['m1']
+expect cases 16 / mismatch 1
+rc=1

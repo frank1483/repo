@@ -1,0 +1,3 @@
+status coverage: {"F:ERROR": 1, "F:OK": 2, "J:INSUFFICIENT": 1, "K:INSUFFICIENT": 1, "K:OK": 5, "K:STALE": 1, "M:EMPTY_COMPLETE": 2, "M:OK": 3}
+cases 16 / differ 0
+rc=0
