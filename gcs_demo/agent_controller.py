@@ -18,13 +18,15 @@ from .gate_l1 import gate
 from .planner_t3 import _canonical
 
 TEST_VALUES = {"per_sentence_calls": 12, "per_task_calls": 24, "clarify_rounds": 3, "steps_max": 10, "k_max": 3}
-KINDS = ("plan", "ui", "qa", "report", "chat")
-KIND_ZH = {"plan": "任務規劃", "ui": "介面", "qa": "問答", "report": "報告", "chat": "閒聊"}
+KINDS = ("plan", "ui", "qa", "report", "chat", "manual")   # manual：使用者 11/18 選 B，向量檢索進 M4
+KIND_ZH = {"plan": "任務規劃", "ui": "介面", "qa": "問答", "report": "報告", "chat": "閒聊", "manual": "手冊查詢"}
 KEYWORDS = {"plan": ["巡檢", "航線", "規劃", "覆蓋"], "ui": ["首頁", "顯示在", "放到", "畫面"],
-            "qa": ["是什麼", "如何", "為什麼", "多少", "怎麼"], "report": ["報告", "摘要"]}
+            "qa": ["是什麼", "如何", "為什麼", "多少", "怎麼"], "report": ["報告", "摘要"],
+            "manual": ["手冊", "說明書", "文件", "PX4", "QGC", "px4", "qgc"]}
 ACTION_ZH = {"QUERY_AREA": "查詢巡檢區域", "GEN_COVERAGE": "生成覆蓋航點", "VERIFY_PREVIEW": "預覽驗算",
              "PROPOSE_HOME_ROUTE": "開啟套用到首頁的確認視窗", "QA_LOOKUP": "查詢資料回答",
-             "REPORT_DRAFT": "產生報告草稿", "ASK_USER": "向使用者追問", "FINISH": "結束這個方向",
+             "REPORT_DRAFT": "產生報告草稿", "MANUAL_SEARCH": "查手冊（附出處）", "ASK_USER": "向使用者追問",
+             "FINISH": "結束這個方向",
              "HOLD": "停止（安全）"}
 
 
@@ -242,9 +244,9 @@ class Controller:
             task["directions"].append({"id": f"{task['id']}-{k}", "kind": k, "status": "PENDING", "steps": 0,
                                        "last_sig": None})
             req = {"plan": ["route_preview"], "ui": ["apply_proposal"], "qa": ["qa_claims"],
-                   "report": ["report_draft"], "chat": []}[k]
+                   "report": ["report_draft"], "chat": [], "manual": ["manual_claims"]}[k]
             task["goals"].append({"requirement_id": f"R-{k}", "goal_id": f"G-{k}-1", "direction": k,
-                                  "required": req, "predicate": "pass" if k == "plan" else "exists"})
+                                  "required": req, "predicate": {"plan": "pass", "manual": "ok"}.get(k, "exists")})
 
     # ---------- 合法動作（前置條件由程式判定） ----------
     def _allowed(self, task, d):
@@ -266,6 +268,8 @@ class Controller:
             acts.append("QA_LOOKUP")
         elif k == "report" and "report_draft" not in A:
             acts.append("REPORT_DRAFT")
+        elif k == "manual" and "manual_claims" not in A:
+            acts.append("MANUAL_SEARCH")
         return acts + ["FINISH", "HOLD"]
 
     def _goals_met(self, task, d):
@@ -275,7 +279,7 @@ class Controller:
                 continue
             for slot in g["required"]:
                 a = A.get(slot)
-                if a is None or (g["predicate"] == "pass" and a.get("verdict") != "pass"):
+                if a is None or (g["predicate"] in ("pass", "ok") and a.get("verdict") != g["predicate"]):
                     return False
         return True
 
@@ -333,6 +337,15 @@ class Controller:
             A["qa_claims"] = {"kind": "qa_claims", "ref": r.get("ref"), "verdict": "ok" if r.get("claims") else "none",
                               "claims": r.get("claims", [])}
             return r
+        if code == "MANUAL_SEARCH":
+            r = T["manual_search"](task["text"]) if "manual_search" in T else {"status": "NOT_LOADED", "results": []}
+            A["manual_claims"] = {"kind": "manual_claims", "ref": None,
+                                  "verdict": "ok" if r.get("results") else ("not_loaded" if r.get("status") == "NOT_LOADED"
+                                                                            else "not_found"),
+                                  "degraded": r.get("degraded"),
+                                  "refs": [{k2: x[k2] for k2 in ("manual", "path", "heading_path", "version", "chunk_id")}
+                                           for x in r.get("results", [])]}
+            return {"status": r.get("status"), "n": len(r.get("results", []))}
         if code == "REPORT_DRAFT":
             r = T["report_draft"](sorted(A))
             A["report_draft"] = {"kind": "report_draft", "ref": r.get("ref"), "verdict": "ok"}
@@ -449,6 +462,13 @@ class Controller:
                          else f"預覽驗算：{rp['verdict']}（出處：預覽 {rp['ref']}）")
         if "apply_proposal" in A:
             lines.append("已開啟套用到首頁的確認視窗，請在視窗內確認。")
+        if "manual_claims" in A:
+            mc = A["manual_claims"]
+            if mc["verdict"] == "ok":
+                for x in mc["refs"]:
+                    lines.append(f"手冊出處：{x['manual'].upper()} {x['path']}（{x['heading_path'] or '無標題'}，版本 {x['version'][:7]}）")
+            else:
+                lines.append("手冊查不到相關內容。" if mc["verdict"] == "not_found" else "手冊尚未載入。")
         for d in task["directions"]:
             if d["status"] in ("INCOMPLETE", "FAILED_SAFE"):
                 lines.append(f"{KIND_ZH[d['kind']]}：未完成（{d.get('reason', d['status'])}）")

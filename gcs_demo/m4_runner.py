@@ -36,7 +36,18 @@ from .energy import Vehicle, Wind
 TW = timezone(timedelta(hours=8))
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-CASES = os.path.join(HERE, "m4_cases_v1.json")
+CASES = os.path.join(HERE, "m4_cases_v2.json")
+INDEX_DIR = os.environ.get("GCS_MANUAL_INDEX", os.path.join(os.path.dirname(os.path.dirname(REPO)), "adr0002_rag_v1",
+                                                            "index_v1"))
+_INDEX = None
+
+
+def manual_index():
+    global _INDEX
+    if _INDEX is None and os.path.exists(os.path.join(INDEX_DIR, "INDEX_MANIFEST.json")):
+        from .rag_index import Index
+        _INDEX = Index(INDEX_DIR)
+    return _INDEX
 MODEL_TAG = "gemma4:e2b"
 MODELS_ROOT = os.path.join(os.path.expanduser("~"), ".ollama", "models")   # 核對與啟動用同一個模型根
 MANIFEST_PATH = os.path.join(MODELS_ROOT, "manifests", "registry.ollama.ai", "library", "gemma4", "e2b")
@@ -53,7 +64,7 @@ GROUP_NOTE = {"B0": "規則路由：方向與每步都用規則，零模型呼�
               "A": "有界 Agent：模型判斷方向並逐步選動作"}
 # 每個方向的必要成果（E-9：研究分母依凍結的必要方向）
 REQUIRED = {"plan": ("route_preview", "pass"), "ui": ("apply_proposal", None), "qa": ("qa_claims", "ok"),
-            "report": ("report_draft", None)}
+            "report": ("report_draft", None), "manual": ("manual_claims", "ok")}
 
 
 def now():
@@ -363,7 +374,7 @@ def build_env(work):
     feeder.poll()
     svc = PreviewService(coord, feeder, os.path.join(work, "ev", "p.jsonl"), boot_epoch=1)
     svc.sessions["m4"] = {"principal": "ui", "last_epoch": 0}
-    return svc, AgentTools(svc, "ui", "m4")
+    return svc, AgentTools(svc, "ui", "m4", manual_index=manual_index())
 
 
 def run_case(case, cond, model_factory, work):

@@ -49,7 +49,7 @@ def match_areas(text, areas):
 class AgentTools(dict):
     """Controller 用的工具表。session_id 為預覽服務的 session；PROPOSE_HOME_ROUTE 只開確認視窗。"""
 
-    def __init__(self, service, principal, session_id, slot_id="home", spacing_m=20.0, areas=None):
+    def __init__(self, service, principal, session_id, slot_id="home", spacing_m=20.0, areas=None, manual_index=None):
         super().__init__()
         self.svc = service
         self.principal = principal
@@ -67,6 +67,8 @@ class AgentTools(dict):
         self["propose_home_route"] = self.propose_home_route
         self["qa_lookup"] = lambda text: {"claims": [], "ref": None, "note": "問答工具尚未接上（ADR-0001 §6），回查不到"}
         self["report_draft"] = lambda kinds: {"ref": "report-template", "kinds": kinds}
+        if manual_index is not None:                      # rag_index.Index；沒有索引時不提供（回「手冊尚未載入」）
+            self["manual_search"] = lambda text: manual_index.search(text)
 
     def _call(self, fn, body):
         with self.svc.lock:
