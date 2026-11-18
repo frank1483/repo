@@ -2,10 +2,12 @@
 // 畫面超支狀態機（附件 §I、v3.1b §I'；M1 演算法說明 v3 補充第 1 節，使用者 11/16 13:58「五塊照說明」）。
 // 純邏輯：輸入每一格的量測，輸出新狀態與動作清單。真正擷取（grabToImage）、設不可見由宿主照動作執行。
 // 數值 q_gui 為候選值〔待凍結〕，由呼叫端傳入。
-var OVERRUN_VERSION = "overrun-m1-0.1"
+var OVERRUN_VERSION = "overrun-m1-0.2"
 var S = { NORMAL: "NORMAL", FROZEN: "FROZEN", RESTORING: "RESTORING", PROBATION: "PROBATION",
           SAFE_RULES: "SAFE_RULES", WORKSPACE_OFF: "WORKSPACE_OFF" }
-var P = { CONSEC: 3, SPIKE_X: 2, FREEZE_MIN_MS: 5000, PROBATION_MS: 30000, ANSWER_KIND: "W1_FACT" }
+var P = { CONSEC: 3, SPIKE_X: 2, FREEZE_MIN_MS: 5000, PROBATION_MS: 30000, ANSWER_KIND: "W1_FACT", CAPTURE_BUDGET_FRAMES: 1 }   // 擷取預算〔待凍結〕
+// 0.2（v3.1c I1～I3）：擷取超過預算改顯示固定文字；凍結後的 gui_ms 由宿主畫格計時（frameSwapped）提供；
+//   告警暫停時保存恢復索引與超支計數（本狀態機本來就不重設，計時照走）；值槽交接見 slotPublish／slotConsume。
 
 function init(cfg) {
   // cfg: { q_gui, order: [元件 id，依排版順序], kinds: {id: kind}, required_kinds: [kind] }
@@ -41,9 +43,15 @@ function step(st0, f) {
     if (r[0]) {
       st.state = S.FROZEN; st.frozenAt = f.t_ms; st.recorded = r[2]; st.consec = 0; st.consecKinds = []; st.skelConsec = 0
       acts.push("CAPTURE_AND_HIDE", "STOP_FRAMES", "SHOW_PAUSED_BANNER")
+      st.captureFrames = 0; st.captureDone = false
     }
     break
   case S.FROZEN:
+    // I1：擷取還沒完成且已用掉預算格數 → 不等圖，改固定文字
+    if (st.captureDone === false) {
+      if (f.capture_done) st.captureDone = true
+      else if (++st.captureFrames > P.CAPTURE_BUDGET_FRAMES) { st.captureDone = true; acts.push("CAPTURE_ABORT_SHOW_TEXT") }
+    }
     // 凍結中工作區已停畫格；gui_ms 此時只量骨架以外仍在花的時間
     st.skelConsec = (f.gui_ms > st.q) ? st.skelConsec + 1 : 0
     if (st.skelConsec >= P.CONSEC) st.pendingSafe = true
@@ -62,7 +70,7 @@ function step(st0, f) {
       var off = st.disabled.indexOf(P.ANSWER_KIND) >= 0
       for (var i = 0; i < st.required.length; i++) if (st.disabled.indexOf(st.required[i]) >= 0) off = true
       if (off) { st.state = S.WORKSPACE_OFF; acts.push("WORKSPACE_OFF", "ANSWER_TO_SKELETON_TEXT") }
-      else { st.state = S.FROZEN; st.frozenAt = f.t_ms; st.recorded = []; st.skelConsec = 0
+      else { st.state = S.FROZEN; st.frozenAt = f.t_ms; st.recorded = []; st.skelConsec = 0; st.captureFrames = 0; st.captureDone = false
              acts.push("CAPTURE_AND_HIDE", "STOP_FRAMES", "SHOW_PAUSED_BANNER", "REPLAN_WITHOUT_DISABLED") }
       break
     }
@@ -77,4 +85,12 @@ function step(st0, f) {
   default: break   // SAFE_RULES、WORKSPACE_OFF 為終態，直到重新啟動
   }
   return { st: st, actions: acts }
+}
+
+// I3 值槽交接：生產端先寫值、再設旗標；消費端先清旗標、再讀值，讀完再看一次旗標，又被設起就再讀。
+function slotPublish(slot, v) { slot.value = v; slot.flag = true }
+function slotConsume(slot, onValue) {
+  var n = 0
+  while (slot.flag) { slot.flag = false; onValue(slot.value); n++ ; if (n > 1000) break }
+  return n
 }

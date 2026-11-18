@@ -18,16 +18,26 @@ def fin(x):
     return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
 
+ORDER = ["no_valid_samples", "n_valid", "coverage", "gap", "disorder", "zero_time_variance", "r2"]
+
+
 def energy(samples, o):
-    """v3 §C 與 v3.1 草案 §C'：W 固定 60；保留值 0～100（含 100）有效且一律判定；過期與樣本不足都檢查，status 取過期優先。"""
+    """v3.1c E1～E4：清理 → 亂序 → 排序去重（同時戳留後到）→ 名目窗 [t_end-60, t_end] 內找最近跳變（絕對差 > 5）→ 有效窗；
+    覆蓋率分母 60；所有檢查都做；固定電量回歸前判；沒有趨勢 eta_reason = no_trend。"""
     res = o.get("reservePct")
     rv = fin(res) and 0 <= res <= 100
-    d = dict(slope_pct_per_min=None, r2=None, n_valid=0, n_dropped=0, coverage_ratio=None, direction=None, eta_min=None, eta_reason="",
+    d = dict(slope_pct_per_min=None, r2=None, n_valid=0, n_dropped=0, coverage_ratio=None, direction=None, eta_min=None, eta_reason="no_trend",
              disorder_ratio=None, reserve_valid=rv, reserve_invalid=not rv, reserve_pct=res if fin(res) else None,
-             reserve_assumed=bool(o.get("reserveAssumed")), stale=False, insufficient_reason="", reason="", jump_at=None)
+             reserve_assumed=bool(o.get("reserveAssumed")), stale=False, insufficient_reasons=[], insufficient_reason="", reason="", jump_at=None)
     out = dict(status=None, detail=d, requested=None, covered=None, points=None, intercept=None)
 
+    def why(c):
+        if c not in d["insufficient_reasons"]: d["insufficient_reasons"].append(c)
+
     def ret(status):
+        d["insufficient_reasons"].sort(key=ORDER.index)
+        d["insufficient_reason"] = d["insufficient_reasons"][0] if d["insufficient_reasons"] else ""
+        if not d["reason"]: d["reason"] = "stale" if status == "STALE" else d["insufficient_reason"]
         out["status"] = status; return out
 
     if o.get("vehicleType") and o["vehicleType"] != "multirotor":
@@ -37,86 +47,91 @@ def energy(samples, o):
     now = o.get("now")
     kept = []
     for i, s in enumerate(samples):
-        t, soc = (s or {}).get("t"), (s or {}).get("soc")
+        s = s if isinstance(s, dict) else {}
+        t, soc = s.get("t"), s.get("soc")
         if not fin(t) or (fin(now) and t > now + FUTURE_S) or not fin(soc) or soc < 0 or soc > 100:
             d["n_dropped"] += 1
         else:
             kept.append((t, i, soc))
     if not kept:
-        d["reason"] = d["insufficient_reason"] = "no_valid_samples"; return ret("INSUFFICIENT")
+        why("no_valid_samples"); return ret("INSUFFICIENT")
     seen_max, dis = -math.inf, 0
     for t, _, _ in kept:
         if t < seen_max: dis += 1
         else: seen_max = t
     d["disorder_ratio"] = dis / len(kept)
-    if d["disorder_ratio"] > DIS_MAX: d["insufficient_reason"] = "disorder"
+    if d["disorder_ratio"] > DIS_MAX: why("disorder")
     latest = {}
     for t, i, soc in sorted(kept):
         latest[t] = soc
     ts = sorted(latest)
     t_end = ts[-1]
+    nom = [t for t in ts if t >= t_end - W]
     start = 0
-    for k in range(1, len(ts)):
-        if abs(latest[ts[k]] - latest[ts[k - 1]]) > JUMP: start = k
-    d["jump_at"] = ts[start] if start > 0 else None
-    win = [(t, latest[t]) for t in ts[start:] if t >= t_end - W]
+    for k in range(1, len(nom)):
+        if abs(latest[nom[k]] - latest[nom[k - 1]]) > JUMP: start = k
+    d["jump_at"] = nom[start] if start > 0 else None
+    win = [(t, latest[t]) for t in nom[start:]]
     d["n_valid"] = len(win)
     t0 = win[0][0]
     d["coverage_ratio"] = (t_end - t0) / W
     out["requested"], out["covered"] = [t_end - W, t_end], [t0, t_end]
+    out["points"] = [[t, s] for t, s in win]
     d["stale"] = bool(o.get("checkStale") and fin(now) and now - t_end > STALE_S)
     gap = max([b[0] - a[0] for a, b in zip(win, win[1:])] or [0])
-    if not d["insufficient_reason"]:
-        if len(win) < N_MIN: d["insufficient_reason"] = "n_valid"
-        elif d["coverage_ratio"] < COV_MIN: d["insufficient_reason"] = "coverage"
-        elif gap > GAP_MAX: d["insufficient_reason"] = "gap"
-    if d["stale"]:
-        d["reason"] = "stale"; return ret("STALE")
-    if d["insufficient_reason"]:
-        d["reason"] = d["insufficient_reason"]; return ret("INSUFFICIENT")
+    if len(win) < N_MIN: why("n_valid")
+    if d["coverage_ratio"] < COV_MIN: why("coverage")
+    if gap > GAP_MAX: why("gap")
     n = len(win)
-    xs, ys = [t - t0 for t, _ in win], [s for _, s in win]
-    xb, yb = sum(xs) / n, sum(ys) / n
-    sxx = sum((x - xb) ** 2 for x in xs); syy = sum((y - yb) ** 2 for y in ys)
-    sxy = sum((x - xb) * (y - yb) for x, y in zip(xs, ys))
-    if sxx == 0:
-        d["reason"] = d["insufficient_reason"] = "zero_time_variance"; return ret("INSUFFICIENT")
-    out["points"] = [[t, s] for t, s in win]
-    if syy == 0:
-        d["slope_pct_per_min"], d["direction"], d["eta_reason"] = 0, "持平", "not_falling"
-        out["intercept"] = yb
-        return ret("OK")
-    slope, r2 = sxy / sxx * 60, sxy * sxy / (sxx * syy)
+    ys = [s for _, s in win]
+    slope = r2 = icpt = None
+    if n >= 2 and len(set(ys)) == 1 and t_end > t0:
+        slope, icpt, d["direction"] = 0, ys[0], "持平"
+    elif n >= 2:
+        xs = [t - t0 for t, _ in win]
+        xb, yb = sum(xs) / n, sum(ys) / n
+        sxx = sum((x - xb) ** 2 for x in xs); syy = sum((y - yb) ** 2 for y in ys)
+        sxy = sum((x - xb) * (y - yb) for x, y in zip(xs, ys))
+        if sxx == 0: why("zero_time_variance")
+        else:
+            slope, r2, icpt = sxy / sxx * 60, sxy * sxy / (sxx * syy), yb - (sxy / sxx) * xb
+            if r2 < R2_MIN: why("r2")
+            else: d["direction"] = "下降" if slope < -(EPS + NUM_EPS) else ("上升" if slope > EPS + NUM_EPS else "持平")
+    else:
+        why("zero_time_variance")
     d["slope_pct_per_min"], d["r2"] = slope, r2
-    if r2 < R2_MIN:
-        d["reason"] = d["insufficient_reason"] = "r2"; out["points"] = None; return ret("INSUFFICIENT")
-    d["direction"] = "下降" if slope < -(EPS + NUM_EPS) else ("上升" if slope > EPS + NUM_EPS else "持平")
+    if d["stale"]:
+        d["direction"], out["points"] = None, None; return ret("STALE")      # 過期不給可畫序列
+    if d["insufficient_reasons"]:
+        d["direction"] = None; return ret("INSUFFICIENT")
+    out["intercept"] = icpt
     if d["direction"] != "下降": d["eta_reason"] = "not_falling"
     elif not rv: d["eta_reason"] = "reserve_invalid"
     elif not ys[-1] > res: d["eta_reason"] = "at_or_below_reserve"
     else:
         eta = (ys[-1] - res) / abs(slope)
-        if eta <= ETA_MAX + NUM_EPS: d["eta_min"] = eta
+        if eta <= ETA_MAX + NUM_EPS: d["eta_min"], d["eta_reason"] = eta, ""
         else: d["eta_reason"] = "over_limit"
-    out["intercept"] = yb - (sxy / sxx) * xb
     return ret("OK")
 
 
 def telemetry(c):
     if c["samples"] is None: return dict(status="UNAVAILABLE", facts=[])
-    ok = [(s["t"], k, s["value"]) for k, s in enumerate(c["samples"]) if s and fin(s.get("t")) and fin(s.get("value")) and not (fin(c["now"]) and s["t"] > c["now"] + FUTURE_S)]
+    now = c.get("now")
+    ok = [(s["t"], k, s["value"]) for k, s in enumerate(c["samples"]) if isinstance(s, dict) and fin(s.get("t")) and fin(s.get("value")) and not (fin(now) and s["t"] > now + FUTURE_S)]
     if not ok: return dict(status="UNAVAILABLE", facts=[])
     t, _, v = max(ok)                        # 時間最大；同時間取後到的
-    return dict(status="STALE" if c["now"] - t > STALE_S else "OK", facts=[["F1", "value", c["field"], v, t]])
+    return dict(status="STALE" if fin(now) and now - t > STALE_S else "OK", facts=[["F1", "value", c["field"], v, t]])
 
 
 def flightlog(c):
     """v3.1 §D-6'：同時戳保留到達順序、不去重；統計用全部原始值；超過 300 點等分 150 桶（依時間），每桶留最小與最大。"""
-    if c["samples"] is None: return dict(status="UNAVAILABLE", facts=[], points=[])
-    pts = sorted([(s["t"], k, s["value"]) for k, s in enumerate(c["samples"]) if fin(s.get("t")) and fin(s.get("value")) and c["t0"] <= s["t"] <= c["t1"]],
+    if c["samples"] is None: return dict(status="ERROR", facts=[], points=[])            # v3.1c F3
+    raw = sorted([(s["t"], k, s["value"]) for k, s in enumerate(c["samples"]) if isinstance(s, dict) and fin(s.get("t")) and fin(s.get("value")) and c["t0"] <= s["t"] <= c["t1"]],
                  key=lambda p: (p[0], p[1]))
-    pts = [(t, v) for t, _, v in pts]
-    if not pts: return dict(status="PARTIAL" if c["gaps"] else "EMPTY_COMPLETE", facts=[], points=[])
+    arrival = [k for _, k, _ in raw]
+    pts = [(t, v) for t, _, v in raw]
+    if not pts: return dict(status="PARTIAL" if c["gaps"] else "ERROR", facts=[], points=[])
     vals = [v for _, v in pts]
     total = 0.0
     for v in vals: total += v
@@ -133,7 +148,7 @@ def flightlog(c):
         series = []
         for bi in sorted(groups):
             idx = groups[bi]
-            lo = min(idx, key=lambda i: (pts[i][1], i)); hi = max(idx, key=lambda i: (pts[i][1], -i))
+            lo = min(idx, key=lambda i: (pts[i][1], arrival[i])); hi = max(idx, key=lambda i: (pts[i][1], -arrival[i]))   # 同值取最早到達
             series += [pts[i] for i in sorted({lo, hi})]
     return dict(status="PARTIAL" if c["gaps"] else "OK", facts=facts, points=[[t, v] for t, v in series])
 
@@ -158,12 +173,49 @@ def tokens(text):
     return out
 
 
+QUERY_STOP = ["如何", "設定", "怎麼", "請問"]
+LEX = ["返航", "保留", "電量", "電池", "電壓", "電流", "高度", "速度", "航向", "姿態", "衛星", "訊號", "遙測", "位置",
+       "距離", "溫度", "風速", "告警", "警告", "異常", "航線", "航點", "任務", "地圖", "報告", "紀錄", "日誌", "手冊", "參數",
+       "起飛", "降落", "懸停", "解鎖", "上鎖", "低電量", "失控", "保護", "校準", "馬達", "螺旋槳", "遙控器", "電子圍籬", "禁航區"]
+
+
+def content_terms(query):
+    """v3.1c L2：停用詞去掉；詞表最長比對；剩下連續漢字切兩字（單字保留）；英數整詞。"""
+    q = (query or "").lower()
+    for w in DOC_STOP + QUERY_STOP: q = q.replace(w, " ")
+    lex = sorted(LEX, key=lambda w: (-len(w), LEX.index(w)))
+    out = []
+    def push(t):
+        if t not in out: out.append(t)
+    for w in re.findall(r"[a-z0-9_]+|[一-鿿]+", q):
+        if re.fullmatch(r"[a-z0-9_]+", w): push(w); continue
+        i, rest = 0, ""
+        def flush(r):
+            if len(r) == 1: push(r)
+            else:
+                for k in range(len(r) - 1): push(r[k:k + 2])
+        while i < len(w):
+            hit = next((x for x in lex if w.startswith(x, i)), None)
+            if hit:
+                if rest: flush(rest); rest = ""
+                push(hit); i += len(hit)
+            else:
+                rest += w[i]; i += 1
+        if rest: flush(rest)
+    return out
+
+
 def manual(chunks, c, glossary):
-    """v3 §L-3 去重（chunk_id，再同文件同文字）後排名；v3.1 §L' 合格：命中內容詞 ≥ 一半。"""
-    uniq, ids, texts = [], set(), set()
+    """v3.1c L1～L4：兩階段去重 → BM25 排名先截前 50 → 內容詞（規則 v1）合格 ≥ 一半 → 前 5。"""
+    s1, ids = [], set()
     for ch in chunks:
-        if ch["chunk_id"] in ids or (ch["doc"], ch["text"]) in texts: continue
-        ids.add(ch["chunk_id"]); texts.add((ch["doc"], ch["text"])); uniq.append(ch)
+        if str(ch["chunk_id"]) in ids: continue
+        ids.add(str(ch["chunk_id"])); s1.append(ch)
+    uniq, texts = [], set()
+    for ch in s1:
+        key = (ch["doc"], ("sha", ch["text_sha256"]) if ch.get("text_sha256") else ("raw", ch["text"]))
+        if key in texts: continue
+        texts.add(key); uniq.append(ch)
     q = c["query"] or ""
     for w in DOC_STOP: q = q.replace(w, " ")
     extra = [w for zh, ws in (glossary if c["use_glossary"] else {}).items() if zh in q for w in ws]
@@ -173,19 +225,27 @@ def manual(chunks, c, glossary):
     df = {}
     for d in docs:
         for t in set(d): df[t] = df.get(t, 0) + 1
-    content = [t for t in terms if not n or df.get(t, 0) / n <= DOC_DF_MAX]
-    if not any(df.get(t, 0) for t in content): content = list(terms)   # 剩下的詞都不在手冊裡就不做這一步（run1 發現）
-    scored = []
-    for ch, d in zip(uniq, docs):
-        hit = sum(1 for t in content if t in d)
-        cover = hit / len(content) if content else 0
+    ct = content_terms(c["query"])
+    cdf = {t: sum(1 for ch in uniq if t in ch["text"].lower()) for t in ct}
+    content = [t for t in ct if not n or cdf[t] / n <= DOC_DF_MAX]
+    if not any(cdf[t] for t in content): content = list(ct)
+    need = min(len(ct), 2 if len(ct) >= 2 else 1)
+    if len(content) < need:
+        keep = set(sorted(ct, key=lambda t: (cdf[t], ct.index(t)))[:need])
+        content = [t for t in ct if t in keep]
+    ranked = []
+    for k, (ch, d) in enumerate(zip(uniq, docs)):
         s = 0.0
         for t in terms:
             tf = d.count(t)
             if tf: s += math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5)) * tf * (K1 + 1) / (tf + K1 * (1 - B + B * (len(d) / avg if avg else 0)))
-        if s > 0 and hit >= 1 and cover >= DOC_MIN_COV: scored.append((-s, ch["chunk_id"]))
-    scored.sort()
-    hits = [[cid, -s] for s, cid in scored[:TOP_K]]
+        if s > 0: ranked.append((-s, k, ch))
+    ranked.sort(key=lambda x: (x[0], x[1]))
+    hits = []
+    for negs, _, ch in ranked[:50]:
+        hit = sum(1 for t in content if t in ch["text"].lower())
+        if content and hit >= 1 and hit / len(content) >= DOC_MIN_COV: hits.append([ch["chunk_id"], -negs])
+    hits = hits[:TOP_K]
     return dict(status="OK" if hits else "EMPTY_COMPLETE", hits=hits)
 
 
@@ -196,7 +256,7 @@ def main():
     for c in C["telemetry"]: out[c["id"]] = telemetry(c)
     for c in C["flightlog"]: out[c["id"]] = flightlog(c)
     for c in C["alerts"]: out[c["id"]] = alerts(c)
-    for c in C["manual"]: out[c["id"]] = manual(V["chunks"], c, V["glossary"])
+    for c in C["manual"]: out[c["id"]] = manual([k for k in V["chunks"] if not c.get("set") or k.get("set") == c["set"]], c, V["glossary"])
     json.dump(out, sys.stdout, ensure_ascii=False)
 
 

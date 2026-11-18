@@ -1,6 +1,8 @@
 """告警計分（附件 §F、v3.1b §F'；M1 演算法說明 v3 補充第 4 節，使用者 11/16 13:58「五塊照說明」）。
 純函式，評估端使用。時間單位秒（float）。對時門檻 RTT_MAX_S 為候選值〔待凍結〕。"""
-SCORE_VERSION = "alertscore-m1-0.1"
+SCORE_VERSION = "alertscore-m1-0.2"
+# 0.2（v3.1c F4～F5）：每個升起在每一段只歸一類（命中／重複／等級不足），三種計數互不重疊；
+#   對時改用整數奈秒，最小 RTT 同分取最早一次，offset = floor(((t1−t0)+(t2−t3))/2)、誤差界 = ceil(rtt/2)。
 MERGE_GAP_S = 5.0
 WINDOW_TAIL_S = 5.0
 RTT_MAX_S = 0.001
@@ -31,7 +33,7 @@ def score(segs_merged, events, level_ok):
         hit = next((i for i in inwin if level_ok(s, rises[i]["level"])), None)
         n_low = sum(1 for i in inwin if not level_ok(s, rises[i]["level"]))
         if hit is not None:
-            res = "HIT"; dup += sum(1 for i in inwin if i != hit and level_ok(s, rises[i]["level"]))
+            res = "HIT"; dup += sum(1 for i in inwin if i != hit and level_ok(s, rises[i]["level"]))   # 低等級（含命中之後的）只算等級不足
         elif inwin:
             res = "LEVEL_LOW"
         else:
@@ -43,15 +45,16 @@ def score(segs_merged, events, level_ok):
             "version": SCORE_VERSION}
 
 def clock_offset(samples):
-    """samples: 5 次來回，每次 (t0 重放器送, t1 Qt 收, t2 Qt 回, t3 重放器收)。
-    取 RTT 最短一次：offset = ((t1-t0)+(t2-t3))/2，rtt = (t3-t0)-(t2-t1)。rtt > 門檻整包無效。"""
+    """samples: 5 次來回，每次 (t0 重放器送, t1 Qt 收, t2 Qt 回, t3 重放器收)，單位：整數奈秒。
+    取 RTT 最短一次（同分取最早）：offset = floor(((t1-t0)+(t2-t3))/2)，rtt = (t3-t0)-(t2-t1)，誤差界 = ceil(rtt/2)。
+    rtt > 門檻（1 ms）整包無效。"""
+    if len(samples) != 5 or not all(isinstance(x, int) for smp in samples for x in smp):
+        return {"valid": False, "reason": "need_5_integer_ns_samples"}
     best = None
     for (t0, t1, t2, t3) in samples:
         rtt = (t3 - t0) - (t2 - t1)
-        off = ((t1 - t0) + (t2 - t3)) / 2.0
         if best is None or rtt < best[0]:
-            best = (rtt, off)
-    if best is None or len(samples) != 5:
-        return {"valid": False, "reason": "need_5_samples"}
-    return {"valid": best[0] <= RTT_MAX_S, "rtt": best[0], "offset": best[1],
-            "reason": None if best[0] <= RTT_MAX_S else "rtt_over_limit"}
+            best = (rtt, ((t1 - t0) + (t2 - t3)) // 2)
+    lim = int(RTT_MAX_S * 1e9)
+    return {"valid": best[0] <= lim, "rtt_ns": best[0], "offset_ns": best[1], "err_ns": -((-best[0]) // 2),
+            "reason": None if best[0] <= lim else "rtt_over_limit"}

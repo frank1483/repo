@@ -5,7 +5,7 @@
 // M1 只有第 1 層規則，source 一律是 "rule"；不呼叫模型、不算 embedding。
 // 所有門檻都是候選值〔待凍結〕，校準包跑完才凍結。
 
-var POLICY_VERSION = "gate-m1-0.3"
+var POLICY_VERSION = "gate-m1-0.4"
 var LEXICON_VERSION = "lex-m1-0.2"
 var MAX_INPUT_CHARS = 200
 var T_SCORE = 1      // calibration_v1 A1 凍結值（hash8 b1da1e48）
@@ -30,11 +30,14 @@ var CLAUSE_SEPARATOR_RE = /(然後|之後|接著|並且|再來|[,，。.．;；�
 var QUESTION_MARKS = ["?", "？"]
 // 能力詞：出現在飛控動詞前面（中間最多隔 2 個字）時，該動詞算「被問」（v3.1 §A-3'）
 var CAPABILITY_WORDS = ["能不能", "可不可以", "會不會", "是否", "能否", "可以"]
-var CAPABILITY_GAP_MAX = 2
+var CAPABILITY_GAP_MAX = 3   // v3.1c G2：碼位數（使用者 11/18 20:58「v3.1c 照草案」）
 // 一般疑問詞：只用來判問句，不算領域證據，意圖權重為 0（v3 §A-2c）
 var QUESTION_WORDS = ["怎麼", "如何", "為什麼", "為何", "哪", "多少", "幾", "什麼", "是否", "能不能", "可不可以", "會不會"]
 var QUESTION_ENDINGS = ["?", "？", "嗎", "呢"]
-var CAUSE_WORDS = ["原因", "為什麼", "為何", "怎麼會"]
+var CAUSE_WORDS = ["原因", "為什麼", "為何", "怎麼會"]           // 規則 7（問原因）用
+var CAUSE_PREFIX = ["為什麼", "為何", "怎麼會"]                  // v3.1c G2 第 5 點：動詞前的原因詞，不含「原因」
+var COMMAND_MARKERS = ["請", "立即", "立刻", "馬上", "給我"]      // v3.1c G3
+var TOPIC_CONNECTIVES = ["之後", "然後"]                          // v3.1c G4
 
 // 領域證據 ①：gcs_demo/domains/*.json 的 keywords_zh（複本；來源變動時要一起更新並升版）
 var DOMAIN_KEYWORDS = ["農業", "農田", "作物", "稻", "果園", "茶園", "病害", "病蟲害", "雜草", "噴灑", "施肥", "植保",
@@ -59,6 +62,7 @@ var CLARIFY_ORDER = ["ALERT_Q", "MISSION", "UI_OP", "QA", "REPORT"]
 // 依碼位切字串。Qt 6.8.3 的 Array.from(字串) 會按 UTF-16 切（qt_poc_run1 發現），所以用 for…of。
 function codePoints(s) { var out = []; for (var ch of s) out.push(ch); return out }
 // 能力檢查（v3.1 §A-0'）：沒有 NFKC 或碼位走訪就不啟用 Gate，不做降級替代。
+// 另依賴 String.prototype.codePointAt（hasContentChar 用；v3.1c G6 明寫）。
 function capabilityOk() {
     try { return typeof "".normalize === "function" && "Ａ".normalize("NFKC") === "A" && codePoints("𠀀a").length === 2 && "𠀀".codePointAt(0) === 0x20000 }
     catch (e) { return false }
@@ -99,7 +103,8 @@ function matched(text, terms) {
 }
 // 名詞例外遮罩：長的優先，把剛好那幾個字換成佔位符 \u0001（不會被任何詞庫命中）
 function maskNouns(text) {
-    var ex = NOUN_EXCEPTIONS.slice().sort(function (a, b) { return b.length - a.length })
+    // 長的優先；同長度依詞表原順序（v3.1c G6，不依賴 sort 是否穩定）
+    var ex = NOUN_EXCEPTIONS.slice().sort(function (a, b) { return b.length - a.length || NOUN_EXCEPTIONS.indexOf(a) - NOUN_EXCEPTIONS.indexOf(b) })
     var out = text, hits = []
     for (var i = 0; i < ex.length; ++i) {
         if (out.indexOf(ex[i]) < 0) continue
@@ -113,32 +118,56 @@ function splitClausesQ(text) {
     var parts = text.split(CLAUSE_SEPARATOR_RE), out = []
     for (var i = 0; i < parts.length; i += 2) {
         var p = parts[i].replace(/^ | $/g, ""), sep = i + 1 < parts.length ? parts[i + 1] : ""
-        if (p) out.push({ text: p, q: QUESTION_MARKS.indexOf(sep) >= 0 })
+        if (p) out.push({ text: p, q: QUESTION_MARKS.indexOf(sep) >= 0, sep: sep })
     }
     return out
 }
 function splitClauses(text) { var c = splitClausesQ(text), out = []; for (var i = 0; i < c.length; ++i) out.push(c[i].text); return out }
-// 子句裡每個飛控動詞的位置是不是「被問」（v3.1 §A-3'）。回傳命令用的動詞清單（空 = 沒有命令）。
-function commandVerbs(clause) {
-    var text = clause.text, cmds = []
+// 子句裡每個飛控動詞的位置是不是「被問」（v3.1b §A-3'、v3.1c G2～G4）。回傳命令用的動詞清單（空 = 沒有命令）。
+// 位置一律用碼位計算（v3.1c G2 第 1 點）。next：下一個子句（判 G4 用），可省略。
+function cpIndexOf(cps, term, from) {
+    var t = codePoints(term)
+    for (var i = from || 0; i + t.length <= cps.length; ++i) {
+        var ok = true
+        for (var j = 0; j < t.length && ok; ++j) if (cps[i + j] !== t[j]) ok = false
+        if (ok) return i
+    }
+    return -1
+}
+function cpLastEnd(cps, term, before) {   // term 在 [0, before) 內最後一次出現的結尾位置；沒有回 -1
+    var t = codePoints(term), best = -1
+    for (var i = 0; i + t.length <= before; ++i) { var k = cpIndexOf(cps, term, i); if (k < 0 || k + t.length > before) break; best = k + t.length; i = k }
+    return best
+}
+function commandVerbs(clause, next) {
+    var text = clause.text, cps = codePoints(text), cmds = []
+    var trimmed = text.replace(/\s+$/, ""), endsQ = clause.q || /[嗎呢]$/.test(trimmed)
     for (var v = 0; v < FLIGHT_VERBS.length; ++v) {
-        var verb = FLIGHT_VERBS[v], at = text.indexOf(verb)
+        var verb = FLIGHT_VERBS[v], vlen = codePoints(verb).length, at = cpIndexOf(cps, verb, 0)
         while (at >= 0) {
-            if (hasTerm(text.substr(at, verb.length), verb) && (isAsciiWord(verb) ? isWordAt(text, at, verb) : true)) {
-                var before = text.slice(0, at), after = text.slice(at + verb.length), asked = false
-                for (var k = 0; k < CAPABILITY_WORDS.length && !asked; ++k) {
-                    var e = before.lastIndexOf(CAPABILITY_WORDS[k])
-                    if (e >= 0 && at - (e + CAPABILITY_WORDS[k].length) <= CAPABILITY_GAP_MAX) asked = true
+            var before = cps.slice(0, at).join(""), after = cps.slice(at + vlen).join("")
+            var wordOk = isAsciiWord(verb) ? (!/[a-z0-9]/.test(at > 0 ? cps[at - 1] : " ") && !/[a-z0-9]/.test(at + vlen < cps.length ? cps[at + vlen] : " ")) : true
+            if (wordOk) {
+                var asked = false
+                // G3 明確命令優先：同子句、動詞前有命令標記 → 一律命令
+                if (!matched(before, COMMAND_MARKERS).length) {
+                    for (var k = 0; k < CAPABILITY_WORDS.length && !asked; ++k) {
+                        var e = cpLastEnd(cps, CAPABILITY_WORDS[k], at)
+                        if (e >= 0 && at - e <= CAPABILITY_GAP_MAX) asked = true
+                    }
+                    if (!asked && (endsQ || matched(after, QUESTION_WORDS).length)) asked = true      // 嗎／呢／問號只在子句尾
+                    if (!asked && matched(before, CAUSE_PREFIX).length) asked = true
+                    // G4：子句只有這個動詞、後面接「之後／然後」、下一子句是問句 → 話題
+                    if (!asked && text.replace(/\s/g, "") === verb && next && TOPIC_CONNECTIVES.indexOf(clause.sep) >= 0 && clauseIsQuestion(next)) asked = true
                 }
-                if (!asked && (matched(after, QUESTION_WORDS).length || after.indexOf("嗎") >= 0 || after.indexOf("呢") >= 0 || clause.q)) asked = true
-                if (!asked && matched(before, CAUSE_WORDS).length) asked = true
                 if (!asked && cmds.indexOf(verb) < 0) cmds.push(verb)
             }
-            at = text.indexOf(verb, at + 1)
+            at = cpIndexOf(cps, verb, at + 1)
         }
     }
     return cmds
 }
+function clauseIsQuestion(c) { return c.q || /[嗎呢]$/.test(c.text.replace(/\s+$/, "")) || matched(c.text, QUESTION_WORDS).length > 0 }
 function isWordAt(text, at, term) {
     var b = at > 0 ? text.charAt(at - 1) : " ", a = at + term.length < text.length ? text.charAt(at + term.length) : " "
     return !/[a-z0-9]/.test(b) && !/[a-z0-9]/.test(a)
@@ -168,7 +197,7 @@ function gate(input) {
     var clauses = splitClausesQ(masked.text)
     // 4 任一子句遮罩後仍有「命令用」的飛控動詞（v3.1 §A-3'：逐一看動詞位置是不是被問）
     for (var i = 0; i < clauses.length; ++i) {
-        var verbs = commandVerbs(clauses[i])
+        var verbs = commandVerbs(clauses[i], clauses[i + 1])
         if (verbs.length) {
             res.matched_terms.flight = verbs
             return done("FLIGHT_CMD", 4, REPLY_HOLD)

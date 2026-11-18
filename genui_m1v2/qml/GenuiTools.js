@@ -4,7 +4,7 @@
 // 版本 m1v2：依 v3 §C（已確認）與 v3.1 草案 §C'、§D-6'、§L' 修改；舊版 genui_m1/ 不動。
 // 資料由呼叫端（重放器或紀錄讀取器）以陣列傳入；缺值一律不補。數值門檻都是候選值〔待凍結〕。
 
-var TOOLS_VERSION = "tools-m1-0.3"
+var TOOLS_VERSION = "tools-m1-0.4"
 var STATUS = ["OK", "EMPTY_COMPLETE", "PARTIAL", "UNAVAILABLE", "STALE", "INSUFFICIENT", "UNSUPPORTED", "ERROR"]
 
 var STALE_AFTER_S = 2          // 〔待凍結〕
@@ -53,7 +53,8 @@ function telemetryLatest(field, unit, samples, now) {
 // samples: [{t, value}]；回傳統計與（必要時分桶的）序列。gaps: 呼叫端已知的缺段 [{t0,t1}]
 function flightlogSeries(field, unit, samples, t0, t1, gaps) {
     var inputs = { field: field, t0: t0, t1: t1 }
-    if (!samples) return result("T_FLIGHTLOG", inputs, "UNAVAILABLE")
+    // v3.1c F3：SAMPLES 對外狀態只能是 OK／PARTIAL／INSUFFICIENT／ERROR；沒有來源或區間內沒有資料（且無缺段）一律 ERROR
+    if (!samples) return result("T_FLIGHTLOG", inputs, "ERROR", [], null, { internal_status: "UNAVAILABLE" })
     var pts = []
     for (var i = 0; i < samples.length; ++i) {
         var s = samples[i]
@@ -62,7 +63,7 @@ function flightlogSeries(field, unit, samples, t0, t1, gaps) {
     // 依 t 排序，同一時戳保留到達順序（不依賴 sort 是否穩定）；不去重（v3.1 §D-6'）
     pts.sort(function (a, b) { return a.t - b.t || a.arrival - b.arrival })
     var coverage = { requested: [t0, t1], covered: pts.length ? [pts[0].t, pts[pts.length - 1].t] : null, gaps: gaps || [] }
-    if (!pts.length) return result("T_FLIGHTLOG", inputs, coverage.gaps.length ? "PARTIAL" : "EMPTY_COMPLETE", [], coverage)
+    if (!pts.length) return result("T_FLIGHTLOG", inputs, coverage.gaps.length ? "PARTIAL" : "ERROR", [], coverage, coverage.gaps.length ? null : { internal_status: "EMPTY_COMPLETE" })
     var min = pts[0].value, max = pts[0].value, sum = 0
     for (i = 0; i < pts.length; ++i) { min = Math.min(min, pts[i].value); max = Math.max(max, pts[i].value); sum += pts[i].value }
     var series = []
@@ -73,8 +74,9 @@ function flightlogSeries(field, unit, samples, t0, t1, gaps) {
         for (i = 0; i < pts.length; ++i) {
             var bi = width > 0 ? Math.min(SERIES_BUCKETS - 1, Math.floor((pts[i].t - tA) / width)) : 0
             var bk = bucket[bi] || (bucket[bi] = { mn: i, mx: i })
-            if (pts[i].value < pts[bk.mn].value) bk.mn = i
-            if (pts[i].value > pts[bk.mx].value) bk.mx = i
+            // v3.1c F1：同值極值取最早到達的那一列
+            if (pts[i].value < pts[bk.mn].value || (pts[i].value === pts[bk.mn].value && pts[i].arrival < pts[bk.mn].arrival)) bk.mn = i
+            if (pts[i].value > pts[bk.mx].value || (pts[i].value === pts[bk.mx].value && pts[i].arrival < pts[bk.mx].arrival)) bk.mx = i
         }
         for (i = 0; i < SERIES_BUCKETS; ++i) {
             if (!bucket[i]) continue
@@ -100,18 +102,33 @@ function flightlogSeries(field, unit, samples, t0, t1, gaps) {
 // ---------------------------------------------------------------- T_ENERGY（電量斜率）
 // samples: 依到達順序的 [{t, soc}]。opts: {now, reservePct, reserveAssumed, checkStale, vehicleType}
 // W 固定 60 秒，不接受呼叫端覆寫（v3.1 §C' 第 1 點）。
+// 0.4（v3.1c E1～E4，使用者 11/18 20:58「v3.1c 照草案」）：
+//   處理順序固定；跳變只在名目窗內找、取最近一次；覆蓋率分母固定 60 秒；
+//   所有檢查都做完（過期不提早結束），不足原因記成陣列；固定電量在回歸前判；沒有趨勢時 eta_reason = no_trend。
+//   名目窗沿用 v3 第一部分 §C 第 4 步：t_end = 去重後最後一筆的時間，窗為 [t_end − W, t_end]。
+var INSUFFICIENT_ORDER = ["no_valid_samples", "n_valid", "coverage", "gap", "disorder", "zero_time_variance", "r2"]
 function energyTrend(samples, opts) {
     opts = opts || {}
     var P = ENERGY, W = P.W, reserve = opts.reservePct
     var reserveValid = finite(reserve) && reserve >= 0 && reserve <= 100          // 100 有效（v3 §C）
-    var inputs = { W: W, reserve_pct: finite(reserve) ? reserve : null }
+    var reservePct = finite(reserve) ? reserve : null
+    var inputs = { W: W, reserve_pct: reservePct }
     var out = { slope_pct_per_min: null, r2: null, n_valid: 0, n_dropped: 0, coverage_ratio: null, direction: null,
-                eta_min: null, eta_reason: "", disorder_ratio: null, reserve_valid: reserveValid, reserve_invalid: !reserveValid,
-                reserve_pct: finite(reserve) ? reserve : null, reserve_assumed: !!opts.reserveAssumed, stale: false, insufficient_reason: "", reason: "", jump_at: null }
-    function done(status, facts, cov) { return result("T_ENERGY", inputs, status, facts || [], cov, { detail: out }) }
+                eta_min: null, eta_reason: "no_trend", disorder_ratio: null, reserve_valid: reserveValid, reserve_invalid: !reserveValid,
+                reserve_pct: reservePct, reserve_assumed: !!opts.reserveAssumed, stale: false, insufficient_reasons: [],
+                insufficient_reason: "", reason: "", jump_at: null }
+    var R = { reserve_pct: reservePct, reserve_valid: reserveValid, reserve_assumed: !!opts.reserveAssumed }
+    function why(code) { if (out.insufficient_reasons.indexOf(code) < 0) out.insufficient_reasons.push(code) }
+    function done(status, facts, cov) {
+        out.insufficient_reasons.sort(function (x, y) { return INSUFFICIENT_ORDER.indexOf(x) - INSUFFICIENT_ORDER.indexOf(y) })
+        out.insufficient_reason = out.insufficient_reasons.length ? out.insufficient_reasons[0] : ""
+        if (!out.reason) out.reason = status === "STALE" ? "stale" : out.insufficient_reason
+        return result("T_ENERGY", inputs, status, facts || [], cov, { detail: out })
+    }
+    function more(extra) { var m = {}, k; for (k in R) m[k] = R[k]; if (extra) for (k in extra) m[k] = extra[k]; return m }
     if (opts.vehicleType && opts.vehicleType !== "multirotor") { out.reason = "vehicle_type"; return done("UNSUPPORTED") }
     if (!samples) { out.reason = "no_source"; return done("UNAVAILABLE") }
-    // 1 清理
+    // E1-1 清理
     var clean = []
     for (var i = 0; i < samples.length; ++i) {
         var s = samples[i]
@@ -120,79 +137,75 @@ function energyTrend(samples, opts) {
         if (!finite(s.soc) || s.soc < 0 || s.soc > 100) { out.n_dropped++; continue }
         clean.push({ t: s.t, soc: s.soc, arrival: i })
     }
-    if (!clean.length) { out.reason = out.insufficient_reason = "no_valid_samples"; return done("INSUFFICIENT") }
-    // 2 亂序比例（分母：清理後、去重前、取視窗前的全部筆數）
+    if (!clean.length) { why("no_valid_samples"); return done("INSUFFICIENT") }
+    // E1-2 亂序比例（清理後、依到達順序的完整序列）
     var maxT = -Infinity, disorder = 0
     for (i = 0; i < clean.length; ++i) { if (clean[i].t < maxT) disorder++; else maxT = clean[i].t }
     out.disorder_ratio = disorder / clean.length
-    if (out.disorder_ratio > P.DISORDER_MAX) out.insufficient_reason = "disorder"
-    // 3 排序與去重（時間戳相同只留最後到達的一筆）
+    if (out.disorder_ratio > P.DISORDER_MAX) why("disorder")
+    // E1-3 排序與去重（同時戳留最後到達的一筆）
     clean.sort(function (a, b) { return a.t - b.t || a.arrival - b.arrival })
     var dedup = []
     for (i = 0; i < clean.length; ++i) {
         if (dedup.length && dedup[dedup.length - 1].t === clean[i].t) dedup[dedup.length - 1] = clean[i]
         else dedup.push(clean[i])
     }
-    // 3b 跳變（V3.1-2，使用者 11/16 13:19）：相鄰兩筆變化超過 5%，視窗從最後一次跳變後那一筆重新起算
+    // E1-4 名目窗內找跳變：相鄰差的絕對值 > 5 個百分點（恰 5 不算），取最近一次
+    var tEnd = dedup[dedup.length - 1].t, nominal = []
+    for (i = 0; i < dedup.length; ++i) if (dedup[i].t >= tEnd - W) nominal.push(dedup[i])
     var start = 0
-    for (i = 1; i < dedup.length; ++i) if (Math.abs(dedup[i].soc - dedup[i - 1].soc) > P.JUMP_PCT) start = i
-    out.jump_at = start > 0 ? dedup[start].t : null
-    // 4 取視窗
-    var tEnd = dedup[dedup.length - 1].t, win = []
-    for (i = start; i < dedup.length; ++i) if (dedup[i].t >= tEnd - W) win.push(dedup[i])
+    for (i = 1; i < nominal.length; ++i) if (Math.abs(nominal[i].soc - nominal[i - 1].soc) > P.JUMP_PCT) start = i
+    out.jump_at = start > 0 ? nominal[start].t : null
+    // E1-5 有效窗
+    var win = nominal.slice(start)
     out.n_valid = win.length
     var tFirst = win[0].t, cov = { requested: [tEnd - W, tEnd], covered: [tFirst, tEnd], gaps: [] }
-    out.coverage_ratio = (tEnd - tFirst) / W
+    out.coverage_ratio = (tEnd - tFirst) / W                                                  // 分母固定 60 秒
     out.stale = !!(opts.checkStale && finite(opts.now) && opts.now - tEnd > STALE_AFTER_S)
-    // 5 充分性（不論是否過期都檢查，結果都留在 detail；v3.1 §C' 第 5 點）
     var maxGap = 0
     for (i = 1; i < win.length; ++i) maxGap = Math.max(maxGap, win[i].t - win[i - 1].t)
-    if (!out.insufficient_reason) {
-        if (win.length < P.N_MIN) out.insufficient_reason = "n_valid"
-        else if (out.coverage_ratio < P.COVERAGE_MIN) out.insufficient_reason = "coverage"
-        else if (maxGap > P.GAP_MAX_S) { out.insufficient_reason = "gap"; cov.gaps.push({ max_gap_s: maxGap }) }
-    }
-    var last = win[win.length - 1]
-    if (out.stale) { out.reason = "stale"; return done("STALE", [fact("F1", "value", "soc", last.soc, "%", tEnd)], cov) }
-    if (out.insufficient_reason) { out.reason = out.insufficient_reason; return done("INSUFFICIENT", [], cov) }
-    // 6 零變異
-    var xb = 0, sb = 0, n = win.length
-    for (i = 0; i < n; ++i) { xb += win[i].t - tFirst; sb += win[i].soc }
-    xb /= n; sb /= n
-    var sxx = 0, sxy = 0, syy = 0
-    for (i = 0; i < n; ++i) { var dx = win[i].t - tFirst - xb, dy = win[i].soc - sb; sxx += dx * dx; sxy += dx * dy; syy += dy * dy }
-    if (sxx === 0) { out.reason = out.insufficient_reason = "zero_time_variance"; return done("INSUFFICIENT", [], cov) }
-    var windowLabel = { t0: tFirst, t1: tEnd }, points = []
+    if (win.length < P.N_MIN) why("n_valid")
+    if (out.coverage_ratio < P.COVERAGE_MIN) why("coverage")
+    if (maxGap > P.GAP_MAX_S) { why("gap"); cov.gaps.push({ max_gap_s: maxGap }) }
+    var last = win[win.length - 1], n = win.length
+    var points = []
     for (i = 0; i < n; ++i) points.push({ t: win[i].t, soc: win[i].soc })
-    function trendFact(slope, r2, intercept) {
-        return fact("F1", "trend", "soc", slope, "%/min", tEnd, { direction: out.direction, window: windowLabel, r2: r2,
-                    intercept: intercept, t_ref: tFirst, eta_min: out.eta_min, eta_reason: out.eta_reason,
-                    reserve_pct: out.reserve_pct, reserve_valid: reserveValid, reserve_assumed: !!opts.reserveAssumed })
-    }
-    function finish(slope, r2, intercept) {
-        return done("OK", [trendFact(slope, r2, intercept), fact("F2", "value", "soc", last.soc, "%", tEnd),
-                           fact("F3", "series", "soc", null, "%", tEnd, { points: points })], cov)
-    }
-    if (syy === 0) {
-        out.slope_pct_per_min = 0; out.direction = "持平"; out.eta_reason = "not_falling"
-        return finish(0, null, sb)
-    }
-    // 7 最小平方直線
-    var slope = sxy / sxx * 60, r2 = (sxy * sxy) / (sxx * syy)
+    var windowLabel = { t0: tFirst, t1: tEnd }
+    // E3 固定電量：回歸前先看是否全部相同
+    var allSame = true
+    for (i = 1; i < n; ++i) if (win[i].soc !== win[0].soc) allSame = false
+    var slope = null, r2 = null, intercept = null
+    if (n >= 2 && allSame && tEnd > tFirst) { slope = 0; r2 = null; intercept = win[0].soc; out.direction = "持平" }
+    else if (n >= 2) {
+        var xb = 0, sb = 0
+        for (i = 0; i < n; ++i) { xb += win[i].t - tFirst; sb += win[i].soc }
+        xb /= n; sb /= n
+        var sxx = 0, sxy = 0, syy = 0
+        for (i = 0; i < n; ++i) { var dx = win[i].t - tFirst - xb, dy = win[i].soc - sb; sxx += dx * dx; sxy += dx * dy; syy += dy * dy }
+        if (sxx === 0) why("zero_time_variance")
+        else {
+            slope = sxy / sxx * 60; r2 = (sxy * sxy) / (sxx * syy); intercept = sb - (sxy / sxx) * xb
+            if (r2 < P.R2_MIN) why("r2")
+            else out.direction = slope < -(P.EPS + NUM_EPS) ? "下降" : (slope > P.EPS + NUM_EPS ? "上升" : "持平")
+        }
+    } else why("zero_time_variance")
     out.slope_pct_per_min = slope; out.r2 = r2
-    if (r2 < P.R2_MIN) { out.reason = out.insufficient_reason = "r2"; return done("INSUFFICIENT", [], cov) }
-    // 8 方向（|斜率| ≤ 0.05 + 1e-9 為持平）
-    out.direction = slope < -(P.EPS + NUM_EPS) ? "下降" : (slope > P.EPS + NUM_EPS ? "上升" : "持平")
-    // 9 ETA（v3.1 §C' 第 3 點）
+    var lastFact = fact("F2", "value", "soc", last.soc, "%", tEnd, more())
+    var seriesFact = fact("F3", "series", "soc", null, "%", tEnd, { points: points })
+    if (out.stale) { out.direction = null; return done("STALE", [fact("F1", "value", "soc", last.soc, "%", tEnd, more())], cov) }   // 過期不發布趨勢與 ETA
+    if (out.insufficient_reasons.length) { out.direction = null; return done("INSUFFICIENT", [lastFact, seriesFact], cov) }
+    // E4／§C' 第 3 點 ETA
     if (out.direction !== "下降") out.eta_reason = "not_falling"
     else if (!reserveValid) out.eta_reason = "reserve_invalid"
     else if (!(last.soc > reserve)) out.eta_reason = "at_or_below_reserve"
     else {
         var eta = (last.soc - reserve) / Math.abs(slope)
-        if (eta <= P.ETA_MAX_MIN + NUM_EPS) out.eta_min = eta
+        if (eta <= P.ETA_MAX_MIN + NUM_EPS) { out.eta_min = eta; out.eta_reason = "" }
         else out.eta_reason = "over_limit"
     }
-    return finish(slope, r2, sb - (sxy / sxx) * xb)
+    var trend = fact("F1", "trend", "soc", slope, "%/min", tEnd, more({ slope: slope, direction: out.direction, window: windowLabel, r2: r2,
+                     intercept: intercept, t_ref: tFirst, eta_min: out.eta_min, eta_reason: out.eta_reason }))
+    return done("OK", [trend, lastFact, seriesFact], cov)
 }
 
 // ---------------------------------------------------------------- T_ALERT_HISTORY
@@ -225,32 +238,65 @@ function alertHistory(events, filter, gaps) {
 }
 
 // ---------------------------------------------------------------- T_MANUAL_SEARCH（M1：只有 BM25，標「降級」）
+// 0.4（v3.1c L1～L4）：兩階段去重、內容詞規則 v1（詞表最長比對＋剩餘兩字詞）、先截前 50 再篩、低頻過濾保底。
+// L5（兩路融合身分）要等向量路徑（B 包），M1 只有關鍵字一路。
+var DOC_KEYWORD_TOP = 50
+var QUERY_STOP = ["如何", "設定", "怎麼", "請問"]                // v3.1c L2 第 3 點
+var CONTENT_LEXICON = ["返航", "保留", "電量", "電池", "電壓", "電流", "高度", "速度", "航向", "姿態", "衛星", "訊號", "遙測", "位置",
+                       "距離", "溫度", "風速", "告警", "警告", "異常", "航線", "航點", "任務", "地圖", "報告", "紀錄", "日誌", "手冊", "參數",
+                       "起飛", "降落", "懸停", "解鎖", "上鎖", "低電量", "失控", "保護", "校準", "馬達", "螺旋槳", "遙控器", "電子圍籬", "禁航區"]
+var CONTENT_RULE_VERSION = "content-terms-v1"
 function tokenize(text) {
     var s = String(text || "").toLowerCase(), out = [], m, re = /[a-z0-9_]+|[一-鿿]+/g
     while ((m = re.exec(s))) {
         var w = m[0]
         if (/^[a-z0-9_]+$/.test(w)) out.push(w)
         else if (w.length === 1) out.push(w)
-        else for (var i = 0; i + 1 < w.length; ++i) out.push(w.substr(i, 2))   // 中文用相鄰兩字
+        else for (var i = 0; i + 1 < w.length; ++i) out.push(w.substr(i, 2))   // 中文用相鄰兩字（排名用）
     }
     return out
 }
-// glossary: {中文詞: [英文詞, ...]}；查詢含中文詞就補上英文詞
+// 內容詞規則 v1：領域詞表最長比對；沒被詞表蓋到的連續漢字才切兩字詞（單字保留）
+function contentTerms(query) {
+    var q = String(query || "").toLowerCase(), i
+    for (i = 0; i < DOC_STOP.length; ++i) q = q.split(DOC_STOP[i]).join(" ")
+    for (i = 0; i < QUERY_STOP.length; ++i) q = q.split(QUERY_STOP[i]).join(" ")
+    var lex = CONTENT_LEXICON.slice().sort(function (a, b) { return b.length - a.length || CONTENT_LEXICON.indexOf(a) - CONTENT_LEXICON.indexOf(b) })
+    var out = [], m, re = /[a-z0-9_]+|[一-鿿]+/g
+    function push(t) { if (out.indexOf(t) < 0) out.push(t) }
+    while ((m = re.exec(q))) {
+        var w = m[0]
+        if (/^[a-z0-9_]+$/.test(w)) { push(w); continue }
+        var pos = 0, rest = ""
+        function flush() { if (!rest) return; if (rest.length === 1) push(rest); else for (var k = 0; k + 1 < rest.length; ++k) push(rest.substr(k, 2)); rest = "" }
+        while (pos < w.length) {
+            var hit = ""
+            for (var j = 0; j < lex.length && !hit; ++j) if (w.substr(pos, lex[j].length) === lex[j]) hit = lex[j]
+            if (hit) { flush(); push(hit); pos += hit.length } else { rest += w.charAt(pos); pos++ }
+        }
+        flush()
+    }
+    return out
+}
+// glossary: {中文詞: [英文詞, ...]}；查詢含中文詞就補上英文詞（v3.1c L2：擴充詞只影響排名）
 function expandQuery(query, glossary) {
     var extra = [], q = String(query || "")
     for (var zh in (glossary || {})) if (q.indexOf(zh) >= 0) extra = extra.concat(glossary[zh])
     return extra.length ? q + " " + extra.join(" ") : q
 }
-// chunks: [{chunk_id, doc, heading, version, text}]
+function chunkHas(chunkText, term) { return String(chunkText).toLowerCase().indexOf(term) >= 0 }
+// chunks: [{chunk_id, doc, heading, version, text, text_sha256?}]
 function manualSearch(chunks, query, glossary) {
-    var inputs = { query: query, k: DOC_TOP_K }
+    var inputs = { query: query, k: DOC_TOP_K, content_rule: CONTENT_RULE_VERSION }
     if (!chunks) return result("T_MANUAL_SEARCH", inputs, "UNAVAILABLE", [], null, { degraded: true })
-    // 去重（v3 §L-3，排名前做）：先依 chunk_id，再依「同文件且文字相同」，都保留第一次出現的
-    var uniq = [], seenId = {}, seenText = {}
-    for (var u = 0; u < chunks.length; ++u) {
-        var ch = chunks[u], tk = String(ch.doc) + "\u0000" + String(ch.text)
-        if (Object.prototype.hasOwnProperty.call(seenId, ch.chunk_id) || Object.prototype.hasOwnProperty.call(seenText, tk)) continue
-        seenId[ch.chunk_id] = true; seenText[tk] = true; uniq.push(ch)
+    // L1 兩階段去重：先 chunk_id，再（doc, 文字雜湊或原文），都保留第一筆
+    var byId = Object.create(null), stage1 = [], u
+    for (u = 0; u < chunks.length; ++u) { var cid = String(chunks[u].chunk_id); if (byId[cid]) continue; byId[cid] = true; stage1.push(chunks[u]) }
+    var byText = Object.create(null), uniq = []
+    for (u = 0; u < stage1.length; ++u) {
+        var ch = stage1[u], tk = String(ch.doc) + "\u0000" + (ch.text_sha256 ? "sha:" + ch.text_sha256 : "raw:" + String(ch.text))
+        if (byText[tk]) continue
+        byText[tk] = true; uniq.push(ch)
     }
     chunks = uniq
     var stripped = String(query || "")
@@ -262,21 +308,28 @@ function manualSearch(chunks, query, glossary) {
         var toks = tokenize(chunks[i].text), tf = Object.create(null)
         for (var j = 0; j < toks.length; ++j) tf[toks[j]] = (tf[toks[j]] || 0) + 1
         for (var t in tf) df[t] = (df[t] || 0) + 1
-        docs.push({ chunk: chunks[i], tf: tf, len: toks.length }); avg += toks.length
+        docs.push({ chunk: chunks[i], tf: tf, len: toks.length, order: i }); avg += toks.length
     }
     avg = docs.length ? avg / docs.length : 0
-    // 內容詞：去掉出現在超過 20% 片段裡的詞；去掉後一個都不剩就不做這一步（v3.1b §L'）
+    // 內容詞（規則 v1）與其 df（以片段原文是否含該詞計）
+    var cterms = contentTerms(query), cdf = Object.create(null)
+    for (j = 0; j < cterms.length; ++j) { cdf[cterms[j]] = 0; for (i = 0; i < docs.length; ++i) if (chunkHas(docs[i].chunk.text, cterms[j])) cdf[cterms[j]]++ }
+    // 低頻過濾：去掉出現在超過 20% 片段的詞
     var content = []
-    for (j = 0; j < terms.length; ++j) if (!docs.length || (df[terms[j]] || 0) / docs.length <= DOC_QUALIFY.DF_MAX) content.push(terms[j])
-    // 退路：剩下的詞沒有一個出現在手冊裡，就不做這一步（m1v2 run1 發現的漏洞，見 runs/m1v2_run1_20261116/RECORD.md）
+    for (j = 0; j < cterms.length; ++j) if (!docs.length || cdf[cterms[j]] / docs.length <= DOC_QUALIFY.DF_MAX) content.push(cterms[j])
     var anyPresent = false
-    for (j = 0; j < content.length; ++j) if (df[content[j]]) anyPresent = true
-    if (!anyPresent) content = terms.slice()
-    var scored = []
+    for (j = 0; j < content.length; ++j) if (cdf[content[j]]) anyPresent = true
+    if (!anyPresent) content = cterms.slice()                     // 退路（v3.1b §L'）
+    // L4 保底：原本 ≥2 個內容詞時至少留 2 個（df 最低的兩個，同 df 依查詢順序）；任何情況至少 1 個
+    var need = Math.min(cterms.length, cterms.length >= 2 ? 2 : 1)
+    if (content.length < need) {
+        var rank = cterms.slice().sort(function (a, b) { return cdf[a] - cdf[b] || cterms.indexOf(a) - cterms.indexOf(b) })
+        content = []
+        for (j = 0; j < cterms.length; ++j) if (rank.indexOf(cterms[j]) < need) content.push(cterms[j])
+    }
+    // 關鍵字排名
+    var ranked = []
     for (i = 0; i < docs.length; ++i) {
-        var hitN = 0
-        for (j = 0; j < content.length; ++j) if (docs[i].tf[content[j]]) hitN++
-        var cover = content.length ? hitN / content.length : 0
         var score = 0
         for (j = 0; j < terms.length; ++j) {
             var f = docs[i].tf[terms[j]]
@@ -284,16 +337,23 @@ function manualSearch(chunks, query, glossary) {
             var idf = Math.log(1 + (docs.length - df[terms[j]] + 0.5) / (df[terms[j]] + 0.5))
             score += idf * f * (BM25.k1 + 1) / (f + BM25.k1 * (1 - BM25.b + BM25.b * (avg ? docs[i].len / avg : 0)))
         }
-        // 合格：命中的內容詞 ≥ 一半（至少 1 個）。M1 只有關鍵字，屬降級路徑。
-        if (score > 0 && hitN >= 1 && cover >= DOC_QUALIFY.MIN_COVERAGE) scored.push({ chunk: docs[i].chunk, score: score, cover: cover })
+        if (score > 0) ranked.push({ d: docs[i], score: score })
     }
-    scored.sort(function (a, b) { return b.score - a.score || (a.chunk.chunk_id < b.chunk.chunk_id ? -1 : a.chunk.chunk_id > b.chunk.chunk_id ? 1 : 0) })
+    ranked.sort(function (a, b) { return b.score - a.score || a.d.order - b.d.order })
+    ranked = ranked.slice(0, DOC_KEYWORD_TOP)                     // L3 先截前 50
+    var scored = []
+    for (i = 0; i < ranked.length; ++i) {
+        var hitN = 0
+        for (j = 0; j < content.length; ++j) if (chunkHas(ranked[i].d.chunk.text, content[j])) hitN++
+        var cover = content.length ? hitN / content.length : 0
+        if (content.length && hitN >= 1 && cover >= DOC_QUALIFY.MIN_COVERAGE) scored.push({ chunk: ranked[i].d.chunk, score: ranked[i].score, cover: cover })
+    }
     var facts = []
     for (i = 0; i < scored.length && i < DOC_TOP_K; ++i) {
         var c = scored[i].chunk
         facts.push(fact("F" + (i + 1), "doc_quote", "manual", c.text, "", null,
                         { chunk_id: c.chunk_id, doc: c.doc, heading: c.heading, doc_version: c.version, score: scored[i].score, content_coverage: scored[i].cover }))
     }
-    if (!facts.length) return result("T_MANUAL_SEARCH", inputs, "EMPTY_COMPLETE", [fact("F1", "not_found", "manual", null, "", null)], null, { degraded: true })
-    return result("T_MANUAL_SEARCH", inputs, "OK", facts, null, { degraded: true })
+    if (!facts.length) return result("T_MANUAL_SEARCH", inputs, "EMPTY_COMPLETE", [fact("F1", "not_found", "manual", null, "", null)], null, { degraded: true, content_terms: content })
+    return result("T_MANUAL_SEARCH", inputs, "OK", facts, null, { degraded: true, content_terms: content })
 }

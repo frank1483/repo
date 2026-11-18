@@ -1,0 +1,3 @@
+{"note": "程式 0.4（附件 v3.1c，使用者 11/18 20:58）起預期改變的案例；原向量檔不動。E18：R² 0.8（V3.1-2）。J03：Codex r3b 確認原預期是我手算錯（相鄰差 5+1/60 > 5，跳變在 61，只剩 1 筆 → n_valid）。覆寫保留原 expect 的每個鍵。",
+ "E18_noise": {"status": "INSUFFICIENT", "detail": {"direction": null, "reason": "r2"}},
+ "J03_step5": {"status": "INSUFFICIENT", "detail": {"jump_at": 61, "reason": "n_valid"}}}

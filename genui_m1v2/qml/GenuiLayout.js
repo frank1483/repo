@@ -4,7 +4,7 @@
 // 依據：M1 演算法說明 v2 §5～7、候選 ADR §4（H-24 逐列貪婪）、G-02（新增元件要按「套用」）。
 // 模型永遠不產生座標；LayoutSchema 只由 layout() 產生。尺寸數值都是候選值〔待凍結〕。
 
-var LAYOUT_VERSION = "layout-m1-0.2"
+var LAYOUT_VERSION = "layout-m1-0.3"
 var CATALOG_ID = "catalog-m1-0.2"
 var GRID_COLS = 12, GAP = 16, UNIT = 8
 var MAX_INSTANCES = 5
@@ -57,7 +57,7 @@ function plan(requestId, answer, toolResults) {
         if (tpl === "T-TREND" || (tpl === "T-VALUE" && r.tool === "T_FLIGHTLOG")) {
             var sf = seriesOf(ti)                                    // W2 綁可畫的序列（C-09）
             if (sf) add("W2_SERIES", "series", qid(ti, sf.fact_id), CATALOG.W2_SERIES.priority, false)
-        } else if (tpl === "T-THRESH" || tpl === "T-ETA") {
+        } else if ((tpl === "T-THRESH" || tpl === "T-ETA") && r.tool === "T_ENERGY") {   // v3.1c K1：W4 只綁電量工具
             var n4 = byComp.W4_DIAG
             if (!n4) add("W4_DIAG", "facts", [qid(ti, e.fact_id)], CATALOG.W4_DIAG.priority, false)
             else if (n4.binding_ref.ref.length < 2 && n4.binding_ref.ref[0].split(":")[0] === String(ti) && n4.binding_ref.ref.indexOf(qid(ti, e.fact_id)) < 0)
@@ -85,13 +85,21 @@ function plan(requestId, answer, toolResults) {
 }
 // 這份計畫要不要按「套用」：只有固定的 W1 就不用；有任何其他元件就要（G-02）
 function needsConfirm(uiPlan) { return uiPlan.nodes.length > 1 }
+// v3.1c K2：按下「套用」時核對交易編號；不一致記 stale_click 並忽略
+function checkApply(pendingTxnId, clickedTxnId) {
+    if (!pendingTxnId || clickedTxnId !== pendingTxnId) return { ok: false, log: "stale_click" }
+    return { ok: true, log: "" }
+}
 
 // ---------------------------------------------------------------- 預檢（排版前）
 // toolResults 必填：binding 要能在本請求的資料裡找到，priority／required 依資料重算後比對（v3.1 §K-2''）
-function validatePlan(p, toolResults) {
+// 0.3（v3.1c K1）：trusted = {request_id, answer} 由宿主給（不取自計畫）；用它重建規則版計畫，
+//   必要節點必須都在、W4 只能綁電量工具的門檻／ETA Fact、W3 只能綁告警 EventList、請求 ID 一律對 trusted。
+function validatePlan(p, toolResults, trusted) {
     function bad(code, id) { return { ok: false, error: code, node_id: id || "" } }
     if (!p || typeof p !== "object" || Array.isArray(p)) return bad("PLAN_TYPE")
     if (!Array.isArray(toolResults)) return bad("NO_DATA")
+    if (!trusted || typeof trusted.request_id !== "string" || !trusted.request_id) return bad("NO_TRUSTED")
     var k
     for (k in p) if (own(p, k) && PLAN_KEYS.indexOf(k) < 0) return bad("PLAN_UNKNOWN_FIELD")
     if (p.schema !== "UiPlan/1") return bad("PLAN_SCHEMA")
@@ -115,24 +123,24 @@ function validatePlan(p, toolResults) {
         var b = n.binding_ref
         if (!b || typeof b !== "object" || Array.isArray(b)) return bad("BINDING_INVALID", n.node_id)
         for (k in b) if (own(b, k) && BINDING_KEYS.indexOf(k) < 0) return bad("BINDING_INVALID", n.node_id)
-        if (b.request_id !== p.request_id) return bad("BINDING_FOREIGN", n.node_id)
+        if (b.request_id !== trusted.request_id || p.request_id !== trusted.request_id) return bad("BINDING_INVALID", n.node_id)
         if (b.kind !== BINDING_KIND[n.component_id]) return bad("BINDING_INVALID", n.node_id)
         // 依資料重算 priority 與 required
         var wantP = CATALOG[n.component_id].priority, wantR = n.component_id === "W1_FACT", hit, m
-        if (n.component_id === "W1_FACT") { if (b.ref !== p.request_id + ":answer") return bad("BINDING_INVALID", n.node_id) }
+        if (n.component_id === "W1_FACT") { if (b.ref !== trusted.request_id + ":answer") return bad("BINDING_INVALID", n.node_id) }
         else if (n.component_id === "W2_SERIES") {
             hit = findFact(toolResults, b.ref)
             if (!hit || hit.fact.kind !== "series" || !Array.isArray(hit.fact.points)) return bad("BINDING_INVALID", n.node_id)
         } else if (n.component_id === "W3_TABLE") {
             hit = findFact(toolResults, b.ref)
-            if (!hit || !Array.isArray(hit.fact.rows)) return bad("BINDING_INVALID", n.node_id)
+            if (!hit || !Array.isArray(hit.fact.rows) || hit.fact.subject !== "alert_events" || toolResults[hit.tool_index].tool !== "T_ALERT_HISTORY") return bad("BINDING_INVALID", n.node_id)
             if (hit.fact.has_critical) { wantP = PRIORITY_CRITICAL_TABLE; wantR = true }
         } else if (n.component_id === "W4_DIAG") {
             if (!Array.isArray(b.ref) || b.ref.length < 1 || b.ref.length > 2) return bad("BINDING_INVALID", n.node_id)
             var tool0 = -1
             for (m = 0; m < b.ref.length; ++m) {
                 hit = findFact(toolResults, b.ref[m])
-                if (!hit || (hit.fact.kind !== "value" && hit.fact.kind !== "trend")) return bad("BINDING_INVALID", n.node_id)
+                if (!hit || (hit.fact.kind !== "value" && hit.fact.kind !== "trend") || toolResults[hit.tool_index].tool !== "T_ENERGY") return bad("BINDING_INVALID", n.node_id)
                 if (tool0 >= 0 && hit.tool_index !== tool0) return bad("BINDING_INVALID", n.node_id)
                 tool0 = hit.tool_index
             }
@@ -150,6 +158,11 @@ function validatePlan(p, toolResults) {
         if (n.priority !== wantP || n.required !== wantR) return bad("PLAN_TAMPERED", n.node_id)
     }
     if (p.nodes[0].component_id !== "W1_FACT") return bad("W1_MISSING")
+    // 必要節點：用可信資料重建的規則版計畫裡 required 的元件，一定要在
+    if (trusted.answer) {
+        var expect = plan(trusted.request_id, trusted.answer, toolResults)
+        for (i = 0; i < expect.nodes.length; ++i) if (expect.nodes[i].required && !comps[expect.nodes[i].component_id]) return bad("PLAN_TAMPERED", expect.nodes[i].component_id)
+    }
     if (p.order.length !== p.nodes.length) return bad("ORDER_LENGTH")
     var seen = Object.create(null)
     for (i = 0; i < p.order.length; ++i) {
@@ -162,8 +175,8 @@ function validatePlan(p, toolResults) {
 // ---------------------------------------------------------------- LayoutEngine（逐列貪婪）
 // viewport: {width, height, revision}（Qt 實際回報的工作區內容區，像素）
 // 回傳 {ok, error, layout:{schema, request_id, viewport_revision, col_width, rects[], rows, dropped[], compact}}
-function layout(p, viewport, toolResults) {
-    var v = validatePlan(p, toolResults)
+function layout(p, viewport, toolResults, trusted) {
+    var v = validatePlan(p, toolResults, trusted)
     if (!v.ok) return { ok: false, error: v.error, layout: null }
     if (!viewport || !finite(viewport.width) || !finite(viewport.height) || viewport.width <= 0 || viewport.height <= 0)
         return { ok: false, error: "VIEWPORT", layout: null }

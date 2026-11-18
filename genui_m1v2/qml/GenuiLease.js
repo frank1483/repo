@@ -1,7 +1,7 @@
 .pragma library
 // 模型檔更新租約（附件 §M、v3.1b §M'；M1 演算法說明 v3 補充第 3 節，使用者 11/16 13:58「五塊照說明」）。
 // 純邏輯；複製檔案、算雜湊、寫指標由宿主做。drain_timeout_ms 為候選值〔待凍結〕。
-var LEASE_VERSION = "lease-m1-0.1"
+var LEASE_VERSION = "lease-m1-0.2"
 var L = { SERVING: "SERVING", DRAINING: "DRAINING" }
 function init(gen, cfg) { return { gen: gen, state: L.SERVING, inflight: {}, drainStart: -1, timeout: cfg.drain_timeout_ms, log: [] } }
 // 准入：排水中新的模型／向量／GenUI 請求改走規則版
@@ -33,8 +33,14 @@ function tick(st, now, files, allow, versionsMatch) {
 }
 // GUI 執行緒要把結果放上畫面時，當下比對世代
 function onResult(st, reqGen) { if (reqGen !== st.gen) { st.log.push("late_discard"); return "late_discard" } return "show" }
-// 已掛在畫面上的舊元件：重排後是否同一版面
-function remount(sameLayout) { return sameLayout ? ["SWAP_DATA"] : ["SAFE_SCREEN", "RECOVERY_PROPOSAL"] }
+// 已掛在畫面上的舊元件：重排後是否同一版面。
+// 0.2（v3.1c M2）：同一版面直接切換前，要整組新世代 binding 都驗過（含 W5 引用的片段還在）；bindingsOk 省略時視為 false。
+function remount(sameLayout, bindingsOk) { return (sameLayout && bindingsOk === true) ? ["SWAP_DATA"] : ["SAFE_SCREEN", "RECOVERY_PROPOSAL"] }
+// v3.1c M1：引用的取得與釋放。准入時取得、結果顯示或丟棄時釋放；掛載中的元件持有到卸載。
+// 切換世代不等舊畫面；舊畫面在切換之後才卸載（不會互相等待）。
+function acquire(refs, owner, gen) { refs[owner] = gen }
+function release(refs, owner) { delete refs[owner] }
+function switchOrder() { return ["PUBLISH_NEW_GEN", "SWAP_OR_SAFE_SCREEN", "UNMOUNT_OLD_AND_RELEASE"] }
 // 啟動：指標寫入結果不確定時先讀回驗證
 function startup(pointerCertain, verifyCurrent, verifyPrevious) {
   if (pointerCertain) return "CURRENT"

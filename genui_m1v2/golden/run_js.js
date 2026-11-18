@@ -12,6 +12,6 @@ for (const c of V.cases.flightlog) { const r = Tools.flightlogSeries(c.field, c.
   out[c.id] = { status: r.status, facts: fv(r).filter(f => f[1] === 'value'), points: r.facts.length ? r.facts[0].points.map(p => [p.t, p.value]) : [] } }
 for (const c of V.cases.alerts) { const r = Tools.alertHistory(c.events, c.filter, c.gaps)
   out[c.id] = { status: r.status, count: r.facts.length ? r.facts[0].value : null, by_level: r.facts.length ? r.facts[0].by_level : null, rows: r.facts[1] ? r.facts[1].rows.map(e => [e.t, e.text]) : [], has_critical: r.facts[1] ? r.facts[1].has_critical : false } }
-for (const c of V.cases.manual) { const r = Tools.manualSearch(V.chunks, c.query, c.use_glossary ? V.glossary : {})
+for (const c of V.cases.manual) { const r = Tools.manualSearch(c.set ? V.chunks.filter(k => k.set === c.set) : V.chunks, c.query, c.use_glossary ? V.glossary : {})
   out[c.id] = { status: r.status, hits: r.facts.filter(f => f.kind === 'doc_quote').map(f => [f.chunk_id, f.score]) } }
 process.stdout.write(JSON.stringify(out))

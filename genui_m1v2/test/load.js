@@ -7,7 +7,7 @@ function load(file, names) {
 module.exports = {
   Gate: load('GenuiGate.js', ['gate', 'route', 'selectTools', 'resolveParam', 'timeWindowCandidates', 'normalize', 'maskNouns', 'splitClauses', 'splitClausesQ', 'commandVerbs', 'hasContentChar', 'capabilityOk', 'codePoints', 'isQuestion', 'POLICY_VERSION', 'LEXICON_VERSION', 'REPLY_TOO_LONG', 'REPLY_NO_CAUSE', 'REPLY_HOLD']),
   Hash: load('GenuiHash.js', ['sha256Hex']),
-  Tools: load('GenuiTools.js', ['telemetryLatest', 'flightlogSeries', 'energyTrend', 'alertHistory', 'manualSearch', 'tokenize', 'TOOLS_VERSION', 'expandQuery', 'ENERGY', 'STATUS']),
+  Tools: load('GenuiTools.js', ['telemetryLatest', 'flightlogSeries', 'energyTrend', 'alertHistory', 'manualSearch', 'contentTerms', 'tokenize', 'TOOLS_VERSION', 'expandQuery', 'ENERGY', 'STATUS']),
   Claims: load('GenuiClaims.js', ['generate', 'selectRule', 'validateSelection', 'render', 'answer', 'quota', 'MAX_CLAIMS', 'CLAIMS_VERSION']),
-  Layout: load('GenuiLayout.js', ['plan', 'needsConfirm', 'validatePlan', 'layout', 'validateLayout', 'CATALOG', 'GAP', 'GRID_COLS', 'LAYOUT_VERSION'])
+  Layout: load('GenuiLayout.js', ['plan', 'needsConfirm', 'checkApply', 'validatePlan', 'layout', 'validateLayout', 'CATALOG', 'GAP', 'GRID_COLS', 'LAYOUT_VERSION'])
 }

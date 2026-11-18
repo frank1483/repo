@@ -5,17 +5,18 @@
 // 模型（M2）只回傳 {"schema":"qa.claims/1","selected_claim_ids":[...]}；M1 用 selectRule()。
 // 句子裡的數字、單位、方向全部取自程式產生的 Fact，不取自模型輸出。
 
-var CLAIMS_VERSION = "claims-m1-0.2"
+var CLAIMS_VERSION = "claims-m1-0.3"
 var SCHEMA_ID = "qa.claims/1"
 var MAX_CLAIMS = 8                      // 〔待凍結〕整個答案的句數上限
 var MANDATORY_ORDER = ["T-STALE", "T-PARTIAL", "T-CANNOT", "T-NOTFOUND", "T-DOC-NONE", "T-OMITTED"]
 var RULE_ORDER = ["T-VALUE", "T-THRESH", "T-TREND", "T-ETA", "T-ETA-NA", "T-COUNT", "T-NONE", "T-DOC"]
-var ETA_NA_TEXT = { reserve_invalid: "保留電量設定無效，無法估計剩餘時間", at_or_below_reserve: "目前電量已不高於保留電量，不估計剩餘時間",
-                    over_limit: "照目前趨勢剩餘時間超過 600 分鐘，不估計" }
+// v3.1c E4：T-ETA-NA 統一句型「無法估計剩餘時間（原因）」
+var ETA_NA_REASON = { reserve_invalid: "保留電量設定無效", at_or_below_reserve: "目前電量已不高於保留電量", over_limit: "照目前趨勢超過 600 分鐘",
+                      no_trend: "沒有有效的趨勢", not_falling: "電量沒有在下降" }
 var PARTIAL_SUFFIX = "（資料不完整）"
 
 var SUBJECT_ZH = { soc: "電量", alt: "高度", gs: "地速", rssi: "訊號強度", dist_home: "離家距離", alerts: "告警", manual: "手冊",
-                   T_TELEMETRY: "即時遙測", T_FLIGHTLOG: "飛行紀錄", T_ENERGY: "電量趨勢", T_ALERT_HISTORY: "告警紀錄", T_MANUAL_SEARCH: "手冊" }
+                   T_TELEMETRY: "即時遙測", T_FLIGHTLOG: "飛行紀錄", T_ENERGY: "電量趨勢", T_ALERT_HISTORY: "告警歷史", T_MANUAL_SEARCH: "手冊" }
 var SUFFIX_ZH = { min: "最小值", max: "最大值", mean: "平均值", first: "起始值", last: "結束值", duration: "時長" }
 var LEVEL_ZH = { all: "", critical: "嚴重", warning: "警告", info: "提示" }
 
@@ -39,14 +40,26 @@ function generate(toolResults, ctx) {
         for (var i = 0; i < factIds.length; ++i) refs.push({ tool_index: ti, fact_id: factIds[i] })
         list.push({ claim_id: "C" + (++seq), template_id: tpl, text: text, facts: refs, tool: toolResults[ti].tool })
     }
-    for (var ti = 0; ti < (toolResults || []).length; ++ti) {
-        var r = toolResults[ti], st = r.status, toolZh = SUBJECT_ZH[r.tool] || r.tool, partial = st === "PARTIAL"
+    // v3.1c D2：工具之間照 Router 原排序（ctx.tool_order，工具名陣列）；tool_index 仍是結果陣列裡的位置
+    var idx = [], tord = ctx.tool_order || []
+    for (var ii = 0; ii < (toolResults || []).length; ++ii) idx.push(ii)
+    idx.sort(function (a, b) {
+        var pa = tord.indexOf(toolResults[a].tool), pb = tord.indexOf(toolResults[b].tool)
+        return (pa < 0 ? 99 : pa) - (pb < 0 ? 99 : pb) || a - b
+    })
+    for (var oi = 0; oi < idx.length; ++oi) {
+        var ti = idx[oi], r = toolResults[ti], st = r.status, toolZh = SUBJECT_ZH[r.tool] || r.tool, partial = st === "PARTIAL"
         var sfx = partial ? PARTIAL_SUFFIX : "", d = r.detail || {}
-        // 每個工具最多 1 句必顯示句；多個狀態合成一句，依「過期 → 不完整 → 樣本不足 → 查不到」（v3.1 §D-3'）
+        // 每個工具最多 1 句必顯示句；多個狀態合成一句，依「過期 → 不完整 → 樣本不足」（v3.1b §D-3'、v3.1c D2）
+        var insuff = (d.insufficient_reasons && d.insufficient_reasons.length) || d.insufficient_reason
         if (st === "STALE") {
             var sf = r.facts[0], txt = (sf ? subjectZh(sf.subject) : toolZh) + "的資料已過期" + (sf && finite(sf.time) ? "（最後更新 " + fmt(sf.time) + "）" : "")
-            if (d.insufficient_reason) txt += "，且樣本不足，無法估計趨勢"
+            if (insuff) txt += "，且樣本不足，無法估計趨勢"
             add(mandatory, "T-STALE", txt, ti, sf ? [sf.fact_id] : [])
+            continue
+        }
+        if (partial && insuff) {
+            add(mandatory, "T-PARTIAL", toolZh + "的資料不完整，且樣本不足，無法估計", ti, [])
             continue
         }
         if (st === "UNAVAILABLE" || st === "ERROR") { add(mandatory, "T-NOTFOUND", "查不到" + toolZh + "的資料", ti, []); continue }
@@ -82,8 +95,8 @@ function generate(toolResults, ctx) {
                 add(optional, "T-TREND", subjectZh(f.subject) + " 在 " + span(f.window.t0, f.window.t1, fmt) + " 內" + f.direction, ti, [f.fact_id])
                 if (f.direction === "下降" && finite(f.eta_min))
                     add(optional, "T-ETA", "照目前趨勢，約 " + num(f.eta_min) + " 分鐘後到保留電量" + (f.reserve_assumed ? "（依假設保留值估計）" : ""), ti, [f.fact_id])
-                else if (f.direction === "下降" && ETA_NA_TEXT[f.eta_reason])
-                    add(optional, "T-ETA-NA", ETA_NA_TEXT[f.eta_reason], ti, [f.fact_id])
+                else if (f.direction === "下降" && ETA_NA_REASON[f.eta_reason])
+                    add(optional, "T-ETA-NA", "無法估計剩餘時間（" + ETA_NA_REASON[f.eta_reason] + "）", ti, [f.fact_id])
             } else if (f.kind === "count" && finite(f.value) && (f.value > 0 || partial)) {
                 add(optional, "T-COUNT", span(f.interval[0], f.interval[1], fmt) + (partial ? " 內已取得的資料中有 " : " 內有 ") + f.value + " 筆" + (LEVEL_ZH[f.level] || "") + "告警" + sfx, ti, [f.fact_id])
             } else if (f.kind === "doc_quote") {
