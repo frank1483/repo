@@ -95,8 +95,9 @@ def verify_bundle(bundle_dir, hash8):
             continue
         want, name = line.split(" ", 1)
         name = name.lstrip("*")
-        if name.startswith("ollama-manifest:"):
-            path = MANIFEST_PATH
+        if name.startswith("ollama-manifest:"):        # ollama-manifest:<model>:<tag>
+            _, mdl, tag = name.split(":", 2)
+            path = os.path.join(MODELS_ROOT, "manifests", "registry.ollama.ai", "library", mdl, tag)
         elif name.startswith("gcs_demo/") or name.startswith("ui_agent/"):
             path = os.path.join(REPO, name)
         else:
@@ -118,7 +119,7 @@ def verify_bundle(bundle_dir, hash8):
     if bad_git or report["dirty"]:
         report["ok"] = False
         report.setdefault("error", "git 結束碼、凍結 commit 或工作樹核對不通過")
-    if not any(l["name"].startswith("ollama-manifest:") and l["got"] == report["model_manifest_sha256"]
+    if not any(l["name"] == f"ollama-manifest:{MODEL_TAG}" and l["got"] == report["model_manifest_sha256"]
                for l in report["lines"]):
         report["ok"] = False
         report.setdefault("error", "模型 manifest 與來源包不符")
