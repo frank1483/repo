@@ -176,6 +176,7 @@ class Index:
         lex = json.load(open(os.path.join(index_dir, "lexical.json"), encoding="utf-8"))
         self.N, self.avgdl, self.df = lex["N"], lex["avgdl"], lex["df"]
         self.toks = [tokens(c["text"]) for c in self.chunks]
+        self.calls = []        # 每次 embedding 請求：端點、延遲、成功與否（與 LLM 呼叫分開記）
 
     def _bm25(self, q, top=50, k1=1.2, b=0.75):
         qt = tokens(q)
@@ -197,7 +198,14 @@ class Index:
         return [i for _, i in scores[:top]]
 
     def _vector(self, q, top=50, vector=None):
-        qv = vector or embed([PREFIX_QUERY.format(query=q)], self.url)[0]
+        t0 = time.monotonic()
+        try:
+            qv = vector or embed([PREFIX_QUERY.format(query=q)], self.url)[0]
+            self.calls.append({"url": self.url, "latency_s": round(time.monotonic() - t0, 3), "ok": True})
+        except Exception as e:  # noqa: BLE001
+            self.calls.append({"url": self.url, "latency_s": round(time.monotonic() - t0, 3), "ok": False,
+                               "error": repr(e)})
+            raise
         d = self.dim
         scores = []
         v = self.vec

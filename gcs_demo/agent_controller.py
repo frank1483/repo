@@ -343,8 +343,8 @@ class Controller:
                                   "verdict": "ok" if r.get("results") else ("not_loaded" if r.get("status") == "NOT_LOADED"
                                                                             else "not_found"),
                                   "degraded": r.get("degraded"),
-                                  "refs": [{k2: x[k2] for k2 in ("manual", "path", "heading_path", "version", "chunk_id")}
-                                           for x in r.get("results", [])]}
+                                  "refs": [dict({k2: x[k2] for k2 in ("manual", "path", "heading_path", "version", "chunk_id")},
+                                                excerpt=x["text"][:400]) for x in r.get("results", [])]}
             return {"status": r.get("status"), "n": len(r.get("results", []))}
         if code == "REPORT_DRAFT":
             r = T["report_draft"](sorted(A))

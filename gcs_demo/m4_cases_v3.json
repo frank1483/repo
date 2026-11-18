@@ -1,0 +1,242 @@
+{
+  "version": "m4-cases-v3",
+  "annotation": "AI 共同決定（使用者委任）：Claude 草擬，使用者 2026-11-17 13:17 同意由 Claude 草擬、使用者抽看（M4-3）。不是人工標註。 v2（2026-11-19）加 C21～C24 手冊問答（使用者 11/18 選 B：向量檢索進 M4）。 v3（2026-11-19）為 C21～C24 凍結檢索命中標準 manual_gold_any（AI 共同決定）。",
+  "fields": "gold_kinds＝必要方向（研究分母，E-9）；expect＝預期任務終態；note＝設計用意",
+  "cases": [
+    {
+      "id": "C01",
+      "text": "北側巡檢",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "DONE",
+      "note": "單一具名區域"
+    },
+    {
+      "id": "C02",
+      "text": "南側巡檢，留 30%",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "DONE",
+      "note": "明講保留電量"
+    },
+    {
+      "id": "C03",
+      "text": "北側二巡檢",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "DONE",
+      "note": "名稱前綴不可誤判成北側"
+    },
+    {
+      "id": "C04",
+      "text": "北側巡檢，保留 25%",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "DONE",
+      "note": "保留的另一種說法"
+    },
+    {
+      "id": "C05",
+      "text": "規劃南側覆蓋航線",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "DONE",
+      "note": "不同動詞"
+    },
+    {
+      "id": "C06",
+      "text": "北區巡檢航線",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "DONE",
+      "note": "別名"
+    },
+    {
+      "id": "C07",
+      "text": "東邊巡檢",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "PARKED",
+      "note": "查不到區域→請框選"
+    },
+    {
+      "id": "C08",
+      "text": "北側和南側巡檢",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "PARKED",
+      "note": "兩個候選→請選"
+    },
+    {
+      "id": "C09",
+      "text": "規劃北側巡檢，留 90%",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "INCOMPLETE",
+      "note": "保留值過高→預覽不合格，不可宣稱完成"
+    },
+    {
+      "id": "C10",
+      "text": "南邊航線規劃",
+      "gold_kinds": [
+        "plan"
+      ],
+      "expect": "DONE",
+      "note": "別名＋語序"
+    },
+    {
+      "id": "C11",
+      "text": "北側巡檢，留 25%，放到首頁",
+      "gold_kinds": [
+        "plan",
+        "ui"
+      ],
+      "expect": "DONE",
+      "note": "AC-1 主案例"
+    },
+    {
+      "id": "C12",
+      "text": "南側巡檢航線放到首頁",
+      "gold_kinds": [
+        "plan",
+        "ui"
+      ],
+      "expect": "DONE",
+      "note": "兩方向"
+    },
+    {
+      "id": "C13",
+      "text": "規劃北側二航線並顯示在首頁",
+      "gold_kinds": [
+        "plan",
+        "ui"
+      ],
+      "expect": "DONE",
+      "note": "「並」連接"
+    },
+    {
+      "id": "C14",
+      "text": "北側巡檢放到首頁，保留 20%",
+      "gold_kinds": [
+        "plan",
+        "ui"
+      ],
+      "expect": "DONE",
+      "note": "條件在句尾"
+    },
+    {
+      "id": "C15",
+      "text": "東邊巡檢放到首頁",
+      "gold_kinds": [
+        "plan",
+        "ui"
+      ],
+      "expect": "PARKED",
+      "note": "上游追問時下游不可被誤觸發"
+    },
+    {
+      "id": "C16",
+      "text": "電池容量是什麼",
+      "gold_kinds": [
+        "qa"
+      ],
+      "expect": "INCOMPLETE",
+      "note": "問答工具未接上→回查不到，不可宣稱完成"
+    },
+    {
+      "id": "C17",
+      "text": "禁航區如何設定",
+      "gold_kinds": [
+        "qa"
+      ],
+      "expect": "INCOMPLETE",
+      "note": "同上"
+    },
+    {
+      "id": "C18",
+      "text": "巡檢速度多少",
+      "gold_kinds": [
+        "qa"
+      ],
+      "expect": "INCOMPLETE",
+      "note": "含「巡檢」但其實是問答；關鍵字表會誤判成規劃"
+    },
+    {
+      "id": "C19",
+      "text": "顯示返航點，然後立即返航",
+      "gold_kinds": [],
+      "expect": "HOLD",
+      "note": "混合飛控命令→Gate 擋下"
+    },
+    {
+      "id": "C20",
+      "text": "北側巡檢然後起飛",
+      "gold_kinds": [],
+      "expect": "HOLD",
+      "note": "規劃＋飛控命令→整句擋下"
+    },
+    {
+      "id": "C21",
+      "text": "PX4 手冊裡返航高度的參數是什麼",
+      "gold_kinds": [
+        "manual"
+      ],
+      "expect": "DONE",
+      "note": "手冊檢索，應附出處",
+      "manual_gold_any": [
+        "rtl_return_alt",
+        "return altitude"
+      ]
+    },
+    {
+      "id": "C22",
+      "text": "QGC 怎麼設定地理圍欄，查一下手冊",
+      "gold_kinds": [
+        "manual"
+      ],
+      "expect": "DONE",
+      "note": "中英對照擴充（地理圍欄→geofence）",
+      "manual_gold_any": [
+        "geofence"
+      ]
+    },
+    {
+      "id": "C23",
+      "text": "查手冊：電池低電量時 PX4 會怎麼處理",
+      "gold_kinds": [
+        "manual"
+      ],
+      "expect": "DONE",
+      "note": "失效保護",
+      "manual_gold_any": [
+        "low battery",
+        "battery failsafe",
+        "bat_low",
+        "com_low_bat",
+        "low_bat"
+      ]
+    },
+    {
+      "id": "C24",
+      "text": "PX4 文件中任務模式的航點接受半徑",
+      "gold_kinds": [
+        "manual"
+      ],
+      "expect": "DONE",
+      "note": "參數類問題",
+      "manual_gold_any": [
+        "nav_acc_rad",
+        "acceptance radius"
+      ]
+    }
+  ]
+}

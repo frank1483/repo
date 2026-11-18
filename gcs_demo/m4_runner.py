@@ -36,18 +36,23 @@ from .energy import Vehicle, Wind
 TW = timezone(timedelta(hours=8))
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-CASES = os.path.join(HERE, "m4_cases_v2.json")
-INDEX_DIR = os.environ.get("GCS_MANUAL_INDEX", os.path.join(os.path.dirname(os.path.dirname(REPO)), "adr0002_rag_v1",
-                                                            "index_v1"))
-_INDEX = None
+CASES = os.path.join(HERE, "m4_cases_v3.json")
+BASE_DOC = os.path.dirname(os.path.dirname(REPO))
+DEFAULT_INDEX_DIR = os.path.join(BASE_DOC, "adr0002_rag_v1", "index_v1")   # 只給 --fake 用；live 一律取來源包裡的索引
+_INDEX = {"index": None, "use_vector": False}
+MANUAL_NOTE = ("手冊方向本輪衡量的是「檢索命中」：凍結案例的 manual_gold_any 任一詞出現在回傳片段（路徑、標題或內容）才算命中；"
+               "不衡量問答回答完成率。降級（只剩關鍵字）另計")
+
+
+def set_manual_index(index_dir, url, use_vector):
+    from .rag_index import Index
+    _INDEX["index"] = Index(index_dir, url=url)
+    _INDEX["use_vector"] = use_vector
+    return _INDEX["index"]
 
 
 def manual_index():
-    global _INDEX
-    if _INDEX is None and os.path.exists(os.path.join(INDEX_DIR, "INDEX_MANIFEST.json")):
-        from .rag_index import Index
-        _INDEX = Index(INDEX_DIR)
-    return _INDEX
+    return _INDEX["index"]
 MODEL_TAG = "gemma4:e2b"
 MODELS_ROOT = os.path.join(os.path.expanduser("~"), ".ollama", "models")   # 核對與啟動用同一個模型根
 MANIFEST_PATH = os.path.join(MODELS_ROOT, "manifests", "registry.ollama.ai", "library", "gemma4", "e2b")
@@ -155,7 +160,7 @@ def listener_pids(port):
 def start_ollama(port, log_path):
     if not port_free(port):
         raise SystemExit(f"埠 {port} 已被占用，依 H-01 停下，不沿用既有服務")
-    env = dict(os.environ, OLLAMA_HOST=f"127.0.0.1:{port}", OLLAMA_NUM_PARALLEL="1", OLLAMA_MAX_LOADED_MODELS="1",
+    env = dict(os.environ, OLLAMA_HOST=f"127.0.0.1:{port}", OLLAMA_NUM_PARALLEL="1", OLLAMA_MAX_LOADED_MODELS="2",   # LLM＋embedding 同時常駐
                OLLAMA_MODELS=MODELS_ROOT)       # 不繼承其他模型根
     lf = open(log_path, "ab")
     p = subprocess.Popen(["ollama", "serve"], env=env, stdout=lf, stderr=lf)
@@ -291,7 +296,14 @@ def score(case, task, reply):
         slot, verdict = REQUIRED.get(k, (None, None))
         a = A.get(slot) if slot else None
         ok = a is not None and (verdict is None or a.get("verdict") == verdict)
-        per.append({"kind": k, "slot": slot, "satisfied": ok})
+        item = {"kind": k, "slot": slot, "satisfied": ok}
+        if k == "manual" and ok:                       # 凍結命中標準
+            terms = [t.lower() for t in case.get("manual_gold_any", [])]
+            blob = " ".join((r.get("path", "") + " " + r.get("heading_path", "") + " " + r.get("excerpt", "")).lower()
+                            for r in a.get("refs", []))
+            hit = bool(terms) and any(t in blob for t in terms)
+            item.update({"satisfied": hit, "retrieval_hit": hit, "degraded": a.get("degraded")})
+        per.append(item)
     status = reply.get("status")
     if not gold:
         complete = status == "HOLD"
@@ -318,8 +330,10 @@ def classify_raw(call_content, raw):
     except (ValueError, TypeError):
         whole = None
     if isinstance(whole, dict):
-        if is_dir:
-            return "strict" if list(whole) == ["kinds"] else "invalid"
+        if is_dir:                     # 與 Controller._directions 的驗證同一規則
+            ks = whole.get("kinds") if list(whole) == ["kinds"] else None
+            ok = isinstance(ks, list) and ks and all(isinstance(k, str) and k in KINDS for k in ks)
+            return "strict" if ok else "invalid"
         if list(whole) == ["value"] and whole["value"] in allowed:
             return "strict"
         if list(whole) == ["value"] and isinstance(whole["value"], str) and any(
@@ -375,11 +389,17 @@ def build_env(work):
     feeder.poll()
     svc = PreviewService(coord, feeder, os.path.join(work, "ev", "p.jsonl"), boot_epoch=1)
     svc.sessions["m4"] = {"principal": "ui", "last_epoch": 0}
-    return svc, AgentTools(svc, "ui", "m4", manual_index=manual_index())
+    idx = manual_index()
+    tools = AgentTools(svc, "ui", "m4")
+    if idx is not None:
+        tools["manual_search"] = lambda text: idx.search(text, use_vector=_INDEX["use_vector"])
+    return svc, tools
 
 
 def run_case(case, cond, model_factory, work):
     svc, tools = build_env(work)
+    idx = manual_index()
+    n_embed_before = len(idx.calls) if idx else 0
     calls = []
     model = None if cond["group"] == "B0" else model_factory(calls)
     ledger = {"per_sentence": cond["budget"] if cond["group"] != "B0" else 0, "per_task": max(cond["budget"], 1) * 2}
@@ -406,6 +426,7 @@ def run_case(case, cond, model_factory, work):
     rec.update(score(case, task, r))
     rec["t1"] = t1_counts(task)
     rec["t1_raw"] = t1_from_calls(calls)
+    rec["embed_calls"] = idx.calls[n_embed_before:] if idx else []
     full = {"reply": r, "task": task, "traceback": tb, "calls": calls, "dialogs": tools.dialogs, "previews": svc.previews,
             "routes": {k: {"stats": v["stats"], "route_id": v["route_id"]} for k, v in svc.routes.items()}}
     return rec, full
@@ -461,6 +482,7 @@ def main(argv=None):
     if os.path.exists(a.out):
         raise SystemExit("輸出目錄已存在。依「只跑一次」規則不重跑；要修正請開新目錄。")
     info = {"phase": a.phase, "fake": a.fake, "start": now(), "group_definitions": GROUP_NOTE, "qa_note": QA_TOOL_NOTE,
+            "manual_note": MANUAL_NOTE,
             "consent_hash8_input": a.consent_hash8 or None}
     if not a.fake:
         if not a.bundle:
@@ -480,10 +502,19 @@ def main(argv=None):
     try:
         if a.fake:
             factory = fake_model
+            set_manual_index(DEFAULT_INDEX_DIR, "http://127.0.0.1:1", use_vector=False)   # --fake 不碰任何服務：只用關鍵字（降級）
+            info["manual_index"] = {"dir": DEFAULT_INDEX_DIR, "use_vector": False}
         else:
             proc = start_ollama(a.ollama_port, os.path.join(a.out, "ollama_serve.log"))
             info["ollama_pid"] = proc.pid
             check_owner(proc, a.ollama_port)
+            line = next(l for l in info["bundle_verification"]["lines"] if l["name"].endswith("INDEX_MANIFEST.json"))
+            idx_dir = os.path.dirname(os.path.join(BASE_DOC, line["name"]))
+            idx = set_manual_index(idx_dir, f"http://127.0.0.1:{a.ollama_port}", use_vector=True)   # 查詢 embedding 也走自有服務
+            if sha_file(os.path.join(idx_dir, "INDEX_MANIFEST.json")) != line["want"]:
+                raise SystemExit("載入的索引 manifest 與來源包不符，停下")
+            info["manual_index"] = {"dir": idx_dir, "manifest_sha256": line["want"], "use_vector": True,
+                                    "embed_url": idx.url, "embed_model": idx.man["embedding_model"]}
             up = G.make_upstream("ollama", f"http://127.0.0.1:{a.ollama_port}", MODEL_TAG)
             gw = G.Gateway(up, os.path.join(a.out, "gateway_calls.jsonl"))
             factory = lambda log: gateway_model(gw, log)  # noqa: E731
