@@ -4,7 +4,7 @@
 // 版本 m1v2：依 v3 §C（已確認）與 v3.1 草案 §C'、§D-6'、§L' 修改；舊版 genui_m1/ 不動。
 // 資料由呼叫端（重放器或紀錄讀取器）以陣列傳入；缺值一律不補。數值門檻都是候選值〔待凍結〕。
 
-var TOOLS_VERSION = "tools-m1-0.4"
+var TOOLS_VERSION = "tools-m1-0.4.1"
 var STATUS = ["OK", "EMPTY_COMPLETE", "PARTIAL", "UNAVAILABLE", "STALE", "INSUFFICIENT", "UNSUPPORTED", "ERROR"]
 
 var STALE_AFTER_S = 2          // 〔待凍結〕
@@ -346,7 +346,8 @@ function manualSearch(chunks, query, glossary) {
         var hitN = 0
         for (j = 0; j < content.length; ++j) if (chunkHas(ranked[i].d.chunk.text, content[j])) hitN++
         var cover = content.length ? hitN / content.length : 0
-        if (content.length && hitN >= 1 && cover >= DOC_QUALIFY.MIN_COVERAGE) scored.push({ chunk: ranked[i].d.chunk, score: ranked[i].score, cover: cover })
+        // 使用者 11/18 21:24「L4 加命中 2 個」：內容詞 ≥2 個時至少命中 2 個
+        if (content.length && hitN >= Math.min(2, content.length) && cover >= DOC_QUALIFY.MIN_COVERAGE) scored.push({ chunk: ranked[i].d.chunk, score: ranked[i].score, cover: cover })
     }
     var facts = []
     for (i = 0; i < scored.length && i < DOC_TOP_K; ++i) {

@@ -244,7 +244,7 @@ def manual(chunks, c, glossary):
     hits = []
     for negs, _, ch in ranked[:50]:
         hit = sum(1 for t in content if t in ch["text"].lower())
-        if content and hit >= 1 and hit / len(content) >= DOC_MIN_COV: hits.append([ch["chunk_id"], -negs])
+        if content and hit >= min(2, len(content)) and hit / len(content) >= DOC_MIN_COV: hits.append   # L4 加命中 2 個（11/18 21:24）([ch["chunk_id"], -negs])
     hits = hits[:TOP_K]
     return dict(status="OK" if hits else "EMPTY_COMPLETE", hits=hits)
 
