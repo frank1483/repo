@@ -9,6 +9,8 @@
   5. 啟動模型前核對完整來源包（SHA256SUMS 每一行、清單本身雜湊、hash8）與實際模型 manifest，記錄實際讀值。
 **真模型只有在 live 同意後才能執行**：兩方對同一份來源包 SHA256 精確同意，使用者親打「同意 <hash8>」。
 本程式的 hash8 核對只確認「輸入的 hash8 對應現在的來源包」，不能代替使用者本人的同意。
+v3 另修 Codex CODEX-APP-0400：凍結 commit 比對與 git 結束碼、Ollama 用已驗證的模型根、
+就緒後與每個案例前復核程序歸屬、T1 依原始回覆整串判定、單案例例外時保留部分任務與堆疊。
 --fake 模式只用固定回覆的假模型檢查執行器，不算 live。
 """
 from __future__ import annotations
@@ -36,8 +38,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 CASES = os.path.join(HERE, "m4_cases_v1.json")
 MODEL_TAG = "gemma4:e2b"
-MANIFEST_PATH = os.path.join(os.path.expanduser("~"), ".ollama", "models", "manifests", "registry.ollama.ai",
-                             "library", "gemma4", "e2b")
+MODELS_ROOT = os.path.join(os.path.expanduser("~"), ".ollama", "models")   # 核對與啟動用同一個模型根
+MANIFEST_PATH = os.path.join(MODELS_ROOT, "manifests", "registry.ollama.ai", "library", "gemma4", "e2b")
+QA_TOOL_NOTE = "問答工具尚未接上（agent_tools qa_lookup 固定回空 claims），QA 方向未完成應歸因於工具，不是模型"
 CONDITIONS = {
     "calib": [{"id": "A-s10-b12", "group": "A", "steps": 10, "budget": 12}],
     "research": ([{"id": "B0", "group": "B0", "steps": 10, "budget": 0},
@@ -91,11 +94,23 @@ def verify_bundle(bundle_dir, hash8):
         report["lines"].append({"name": name, "want": want, "got": got})
         if got != want:
             report["ok"] = False
-    commit = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    dirty = subprocess.run(["git", "-C", REPO, "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
-    report.update({"commit": commit, "dirty": bool(dirty), "model_manifest_sha256": sha_file(MANIFEST_PATH)})
-    if dirty:
+    h = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True)
+    st = subprocess.run(["git", "-C", REPO, "status", "--porcelain=v1", "--untracked-files=all"],
+                        capture_output=True, text=True)
+    commit = h.stdout.strip()
+    frozen_path = os.path.join(bundle_dir, "commit.txt")
+    frozen = open(frozen_path, encoding="utf-8").read().split()[0] if os.path.exists(frozen_path) else None
+    report.update({"commit": commit, "frozen_commit": frozen, "git_exit": [h.returncode, st.returncode],
+                   "dirty": bool(st.stdout.strip()), "models_root": MODELS_ROOT,
+                   "model_manifest_sha256": sha_file(MANIFEST_PATH) if os.path.exists(MANIFEST_PATH) else None})
+    bad_git = h.returncode != 0 or st.returncode != 0 or not commit or frozen is None or commit != frozen
+    if bad_git or report["dirty"]:
         report["ok"] = False
+        report.setdefault("error", "git 結束碼、凍結 commit 或工作樹核對不通過")
+    if not any(l["name"].startswith("ollama-manifest:") and l["got"] == report["model_manifest_sha256"]
+               for l in report["lines"]):
+        report["ok"] = False
+        report.setdefault("error", "模型 manifest 與來源包不符")
     return report
 
 
@@ -113,7 +128,10 @@ def port_free(port):
 
 
 def listener_pids(port):
-    out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True).stdout
+    r = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit("netstat 失敗，無法確認埠的歸屬，停下")
+    out = r.stdout
     pids = set()
     for line in out.splitlines():
         parts = line.split()
@@ -125,7 +143,8 @@ def listener_pids(port):
 def start_ollama(port, log_path):
     if not port_free(port):
         raise SystemExit(f"埠 {port} 已被占用，依 H-01 停下，不沿用既有服務")
-    env = dict(os.environ, OLLAMA_HOST=f"127.0.0.1:{port}", OLLAMA_NUM_PARALLEL="1", OLLAMA_MAX_LOADED_MODELS="1")
+    env = dict(os.environ, OLLAMA_HOST=f"127.0.0.1:{port}", OLLAMA_NUM_PARALLEL="1", OLLAMA_MAX_LOADED_MODELS="1",
+               OLLAMA_MODELS=MODELS_ROOT)       # 不繼承其他模型根
     lf = open(log_path, "ab")
     p = subprocess.Popen(["ollama", "serve"], env=env, stdout=lf, stderr=lf)
     import urllib.request
@@ -145,6 +164,15 @@ def start_ollama(port, log_path):
         time.sleep(0.5)
     p.terminate()
     raise SystemExit("專用 Ollama 沒有在 30 秒內就緒")
+
+
+def check_owner(p, port):
+    """就緒後、每個案例前復核：子程序仍存活，且監聽該埠的只有它。"""
+    if p.poll() is not None:
+        raise SystemExit(f"專用 Ollama 已結束（exit {p.returncode}），停下")
+    pids = listener_pids(port)
+    if pids != {p.pid}:
+        raise SystemExit(f"埠 {port} 的監聽者 {sorted(pids)} 不是自己啟動的 {p.pid}，停下")
 
 
 def stop_ollama(p, port):
@@ -216,6 +244,7 @@ def gateway_model(gw, calls_log, deadline_s=None):
         except (KeyError, IndexError, TypeError):
             pass
         calls_log.append({"feature": feature, "status": st, "latency_s": round(dt, 3), "raw": text,
+                          "format_class": classify_raw(content, text) if st == 200 else None,
                           "usage": body.get("usage") if isinstance(body, dict) else None})
         if st != 200:
             raise RuntimeError(f"gateway {st}")
@@ -234,7 +263,8 @@ def fake_model(calls_log):
                                          (k != "ui" or "首頁" in content)] or ["chat"]})
         else:
             text = fm(call)
-        calls_log.append({"feature": "fake", "status": 200, "latency_s": 0.0, "raw": text, "usage": None})
+        calls_log.append({"feature": "fake", "status": 200, "latency_s": 0.0, "raw": text,
+                          "format_class": classify_raw(content, text), "usage": None})
         return text
     return model
 
@@ -262,6 +292,44 @@ def score(case, task, reply):
             "claimed_done_wrong": status == "DONE" and not complete,
             "status_match": status == case["expect"],
             "kinds_selected": sorted((reply.get("directions") or {}).keys())}
+
+
+def classify_raw(call_content, raw):
+    """T1：依原始回覆整串判定格式。分母＝傳輸成功的回覆。"""
+    import re as _re
+    from .agent_loop import default_extract
+    is_dir = '"kinds"' in call_content
+    m = _re.search(r"只能選：(.*)", call_content)
+    allowed = [x.split(" ")[0] for x in m.group(1).split("｜")] if m else []
+    try:
+        whole = json.loads(raw)
+    except (ValueError, TypeError):
+        whole = None
+    if isinstance(whole, dict):
+        if is_dir:
+            return "strict" if list(whole) == ["kinds"] else "invalid"
+        if list(whole) == ["value"] and whole["value"] in allowed:
+            return "strict"
+        if list(whole) == ["value"] and isinstance(whole["value"], str) and any(
+                whole["value"].lstrip().startswith(c) for c in allowed if c):
+            return "lenient_prefix"
+        return "invalid"
+    ex = default_extract(raw)
+    if isinstance(ex, dict):
+        return "extracted"          # 整串不是 JSON，但能從前後文擷取出物件
+    return "invalid"
+
+
+def t1_from_calls(calls):
+    c = {"transport_ok": 0, "transport_fail": 0, "strict": 0, "lenient_prefix": 0, "extracted": 0, "invalid": 0}
+    for x in calls:
+        if x.get("status") != 200:
+            c["transport_fail"] += 1
+            continue
+        c["transport_ok"] += 1
+        c[x.get("format_class") or "invalid"] += 1
+    c["denominator"] = "transport_ok（傳輸成功的回覆數）"
+    return c
 
 
 def t1_counts(task):
@@ -306,12 +374,17 @@ def run_case(case, cond, model_factory, work):
     c = Controller(tools, model, ledger_cfg=ledger, steps_max=cond["steps"])
     t0 = time.monotonic()
     err = None
+    tb = None
     try:
         r = c.request(case["text"])
-    except Exception as e:  # noqa: BLE001 - 首敗原樣記錄
-        r, err = {}, repr(e)
+    except Exception as e:  # noqa: BLE001 - 首敗原樣記錄，保留部分任務與堆疊
+        import traceback
+        r, err, tb = {}, repr(e), traceback.format_exc()
     dt = time.monotonic() - t0
-    task = c.tasks.get(r.get("task_id")) if r.get("task_id") else None
+    if r.get("task_id"):
+        task = c.tasks.get(r["task_id"])
+    else:
+        task = c.tasks[sorted(c.tasks)[-1]] if c.tasks else None
     rec = {"case": case["id"], "cond": cond["id"], "group": cond["group"], "steps_max": cond["steps"],
            "budget": cond["budget"], "status": r.get("status"), "expect": case["expect"],
            "gold_kinds": case["gold_kinds"], "steps": len(r.get("steps") or []),
@@ -320,7 +393,8 @@ def run_case(case, cond, model_factory, work):
            "elapsed_s": round(dt, 3), "dialogs": len(tools.dialogs), "error": err}
     rec.update(score(case, task, r))
     rec["t1"] = t1_counts(task)
-    full = {"reply": r, "task": task, "calls": calls, "dialogs": tools.dialogs, "previews": svc.previews,
+    rec["t1_raw"] = t1_from_calls(calls)
+    full = {"reply": r, "task": task, "traceback": tb, "calls": calls, "dialogs": tools.dialogs, "previews": svc.previews,
             "routes": {k: {"stats": v["stats"], "route_id": v["route_id"]} for k, v in svc.routes.items()}}
     return rec, full
 
@@ -374,7 +448,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if os.path.exists(a.out):
         raise SystemExit("輸出目錄已存在。依「只跑一次」規則不重跑；要修正請開新目錄。")
-    info = {"phase": a.phase, "fake": a.fake, "start": now(), "group_definitions": GROUP_NOTE,
+    info = {"phase": a.phase, "fake": a.fake, "start": now(), "group_definitions": GROUP_NOTE, "qa_note": QA_TOOL_NOTE,
             "consent_hash8_input": a.consent_hash8 or None}
     if not a.fake:
         if not a.bundle:
@@ -397,6 +471,7 @@ def main(argv=None):
         else:
             proc = start_ollama(a.ollama_port, os.path.join(a.out, "ollama_serve.log"))
             info["ollama_pid"] = proc.pid
+            check_owner(proc, a.ollama_port)
             up = G.make_upstream("ollama", f"http://127.0.0.1:{a.ollama_port}", MODEL_TAG)
             gw = G.Gateway(up, os.path.join(a.out, "gateway_calls.jsonl"))
             factory = lambda log: gateway_model(gw, log)  # noqa: E731
@@ -404,6 +479,8 @@ def main(argv=None):
         with open(os.path.join(a.out, "results.jsonl"), "a", encoding="utf-8") as f:
             for cond in CONDITIONS[a.phase]:
                 for case in cases:
+                    if proc is not None:
+                        check_owner(proc, a.ollama_port)
                     work = os.path.join(a.out, "cases", cond["id"], case["id"])
                     os.makedirs(work)
                     rec, full = run_case(case, cond, factory, work)
@@ -413,7 +490,10 @@ def main(argv=None):
                     json.dump(full, open(os.path.join(work, "full.json"), "w", encoding="utf-8"),
                               ensure_ascii=False, indent=1, default=str)   # 工作目錄與完整回傳保留
         if a.phase == "calib":
+            if proc is not None:
+                check_owner(proc, a.ollama_port)
             info["t5"] = t5_probes(factory, a.out, gw)
+            info["t5_note"] = "取消探測只量到閘道返回；逐次模型停止未證實（H-01：僅整次結束自有 Ollama 程序時有停止證據）"
     finally:
         sampler.stop.set()
         info["ram_all_ollama_peak_kb"] = sampler.peak_all_kb
