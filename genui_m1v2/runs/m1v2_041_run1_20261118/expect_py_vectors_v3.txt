@@ -1,0 +1,6 @@
+OVERRIDE E18_noise
+MISMATCH M01_dedup
+  hit_ids want=['c01', 'c03'] got=[]
+  M01_dedup.status: want='OK' got='EMPTY_COMPLETE'
+expect cases 31 / mismatch 1
+rc=1

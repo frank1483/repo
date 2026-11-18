@@ -1,0 +1,14 @@
+MISMATCH M03_proto
+  hit_ids want=['__proto__'] got=[]
+  M03_proto.status: want='OK' got='EMPTY_COMPLETE'
+MISMATCH M04_content_v1
+  hit_ids want=['x1'] got=[]
+  M04_content_v1.status: want='OK' got='EMPTY_COMPLETE'
+MISMATCH M06_battery_disposal
+  hit_set want=['m1'] got=[]
+  M06_battery_disposal.status: want='OK' got='EMPTY_COMPLETE'
+MISMATCH M07_single_term
+  hit_ids want=['__proto__'] got=[]
+  M07_single_term.status: want='OK' got='EMPTY_COMPLETE'
+expect cases 17 / mismatch 4
+rc=1

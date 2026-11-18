@@ -1,0 +1,2 @@
+alertscore-m1-0.2 ollamastop-m1-0.2 pass 11 fail 0
+rc=0
