@@ -85,6 +85,31 @@ class LoopWiring(unittest.TestCase):
         self.assertEqual(r["status"], "DONE", r)
         self.assertIn("手冊出處：PX4", r["reply_zh"])
 
+    def test_query_embedding_before_any_llm_call(self):
+        order = []
+        qv = {}
+
+        def pre_embed(text):
+            order.append("embed")
+            qv["v"] = IDX.query_vector(text)
+
+        class M(FakeModel):
+            def __call__(self, call):
+                order.append("llm")
+                return super().__call__(call)
+        tools = {"pre_embed": pre_embed,
+                 "manual_search": lambda t: IDX.search(t, vector=qv.get("v"), require_pre=True)}
+        r = Controller(tools, M(["manual"])).request("PX4 手冊裡返航高度的參數是什麼")
+        self.assertEqual(order[0], "embed")
+        self.assertEqual(order.count("embed"), 1)
+        mc = Controller.__dict__  # noqa: F841
+        self.assertEqual(r["status"], "DONE")
+
+    def test_missing_pre_vector_is_degraded_with_reason(self):
+        r = IDX.search("geofence", vector=None, require_pre=True)
+        self.assertTrue(r["degraded"])
+        self.assertEqual(r["degraded_reason"], "no_query_vector")
+
     def test_manual_not_loaded_is_not_done(self):
         r = Controller({}, FakeModel(["manual"])).request("PX4 手冊裡返航高度的參數是什麼")
         self.assertNotEqual(r["status"], "DONE")

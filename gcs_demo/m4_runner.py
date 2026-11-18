@@ -40,8 +40,8 @@ CASES = os.path.join(HERE, "m4_cases_v3.json")
 BASE_DOC = os.path.dirname(os.path.dirname(REPO))
 DEFAULT_INDEX_DIR = os.path.join(BASE_DOC, "adr0002_rag_v1", "index_v1")   # 只給 --fake 用；live 一律取來源包裡的索引
 _INDEX = {"index": None, "use_vector": False}
-MANUAL_NOTE = ("手冊方向本輪衡量的是「檢索命中」：凍結案例的 manual_gold_any 任一詞出現在回傳片段（路徑、標題或內容）才算命中；"
-               "不衡量問答回答完成率。降級（只剩關鍵字）另計")
+MANUAL_NOTE = ("手冊方向本輪衡量的是「檢索命中」：凍結案例的 manual_gold_any 任一詞出現在任一回傳片段的單一欄位（路徑、標題或內容）"
+               "才算命中，並記第一段命中的 chunk_id；不衡量問答回答完成率。降級＝只剩任一種排名（關鍵字或向量），另記原因")
 
 
 def set_manual_index(index_dir, url, use_vector):
@@ -64,7 +64,7 @@ CONDITIONS = {
                  + [{"id": f"A-s{s}-b30", "group": "A", "steps": s, "budget": 30} for s in (3, 5, 7, 10, 12, 15)]
                  + [{"id": f"A-s10-b{b}", "group": "A", "steps": 10, "budget": b} for b in (6, 12, 24)]),
 }
-GROUP_NOTE = {"B0": "規則路由：方向與每步都用規則，零模型呼叫",
+GROUP_NOTE = {"B0": "規則路由：方向與每步都用規則，零次 LLM 決策呼叫；查詢 embedding 一律在 LLM 之前算一次，另計於 embed_calls",
               "B1": "固定流程：模型只做一次方向判斷（每句預算 1），之後每步由規則選",
               "A": "有界 Agent：模型判斷方向並逐步選動作"}
 # 每個方向的必要成果（E-9：研究分母依凍結的必要方向）
@@ -297,12 +297,20 @@ def score(case, task, reply):
         a = A.get(slot) if slot else None
         ok = a is not None and (verdict is None or a.get("verdict") == verdict)
         item = {"kind": k, "slot": slot, "satisfied": ok}
-        if k == "manual" and ok:                       # 凍結命中標準
+        if k == "manual" and ok:                       # 凍結命中標準：逐片段、逐欄位判定
             terms = [t.lower() for t in case.get("manual_gold_any", [])]
-            blob = " ".join((r.get("path", "") + " " + r.get("heading_path", "") + " " + r.get("excerpt", "")).lower()
-                            for r in a.get("refs", []))
-            hit = bool(terms) and any(t in blob for t in terms)
-            item.update({"satisfied": hit, "retrieval_hit": hit, "degraded": a.get("degraded")})
+            first = None
+            for r in a.get("refs", []):
+                for field in ("path", "heading_path", "excerpt"):
+                    val = (r.get(field) or "").lower()
+                    if any(t in val for t in terms):
+                        first = {"chunk_id": r.get("chunk_id"), "field": field}
+                        break
+                if first:
+                    break
+            hit = first is not None
+            item.update({"satisfied": hit, "retrieval_hit": hit, "first_hit": first, "degraded": a.get("degraded"),
+                         "degraded_reason": a.get("degraded_reason"), "mode": a.get("mode")})
         per.append(item)
     status = reply.get("status")
     if not gold:
@@ -392,7 +400,14 @@ def build_env(work):
     idx = manual_index()
     tools = AgentTools(svc, "ui", "m4")
     if idx is not None:
-        tools["manual_search"] = lambda text: idx.search(text, use_vector=_INDEX["use_vector"])
+        qv = {}
+
+        def pre_embed(text):            # 每個案例、每組都在 LLM 前算一次（向量檢索說明 §3）
+            qv["v"] = idx.query_vector(text) if _INDEX["use_vector"] else None
+
+        tools["pre_embed"] = pre_embed
+        tools["manual_search"] = lambda text: idx.search(text, use_vector=_INDEX["use_vector"], vector=qv.get("v"),
+                                                     require_pre=True)
     return svc, tools
 
 

@@ -201,7 +201,10 @@ class Index:
         t0 = time.monotonic()
         try:
             qv = vector or embed([PREFIX_QUERY.format(query=q)], self.url)[0]
-            self.calls.append({"url": self.url, "latency_s": round(time.monotonic() - t0, 3), "ok": True})
+            if len(qv) != self.dim:
+                raise ValueError(f"查詢向量維度 {len(qv)} 與索引 {self.dim} 不符")
+            if vector is None:
+                self.calls.append({"url": self.url, "latency_s": round(time.monotonic() - t0, 3), "ok": True})
         except Exception as e:  # noqa: BLE001
             self.calls.append({"url": self.url, "latency_s": round(time.monotonic() - t0, 3), "ok": False,
                                "error": repr(e)})
@@ -218,13 +221,36 @@ class Index:
         scores.sort(key=lambda x: -x[0])
         return [i for _, i in scores[:top]]
 
-    def search(self, q, k=5, use_vector=True):
-        lex = self._bm25(q)
+    def query_vector(self, q):
+        """在 LLM 之前呼叫一次；回傳正規化向量或 None（失敗時記錄）。"""
+        t0 = time.monotonic()
         try:
-            vec = self._vector(q) if use_vector else []
-            degraded = not use_vector
-        except Exception:  # noqa: BLE001 - 向量不可用時只用關鍵字並標降級
-            vec, degraded = [], True
+            v = embed([PREFIX_QUERY.format(query=q)], self.url)[0]
+            if len(v) != self.dim:
+                raise ValueError(f"查詢向量維度 {len(v)} 與索引 {self.dim} 不符")
+            self.calls.append({"url": self.url, "latency_s": round(time.monotonic() - t0, 3), "ok": True,
+                               "stage": "pre_llm"})
+            return v
+        except Exception as e:  # noqa: BLE001
+            self.calls.append({"url": self.url, "latency_s": round(time.monotonic() - t0, 3), "ok": False,
+                               "stage": "pre_llm", "error": repr(e)})
+            return None
+
+    def search(self, q, k=5, use_vector=True, vector=None, require_pre=False):
+        lex = self._bm25(q)
+        reason = None
+        try:
+            if not use_vector:
+                vec, reason = [], "vector_disabled"
+            elif vector is None and require_pre:
+                vec, reason = [], "no_query_vector"
+            elif vector is None:
+                vec = self._vector(q)
+            else:
+                vec = self._vector(q, vector=vector)
+        except Exception as e:  # noqa: BLE001 - 向量不可用時只用關鍵字並標降級
+            vec, reason = [], "vector_error:" + repr(e)[:80]
+        degraded = reason is not None
         score = {}
         for ranks in (lex, vec):
             for r, i in enumerate(ranks, 1):
@@ -243,7 +269,11 @@ class Index:
                        | {"score": round(score[i], 6)})
             if len(out) >= k:
                 break
-        return {"results": out, "degraded": degraded or not vec or not lex, "status": "OK" if out else "NOT_FOUND"}
+        if not lex and reason is None:
+            reason = "no_lexical_hits"
+        mode = "rrf" if vec and lex else ("vector_only" if vec else ("lexical_only" if lex else "none"))
+        return {"results": out, "degraded": degraded or not vec or not lex, "degraded_reason": reason,
+                "mode": mode, "status": "OK" if out else "NOT_FOUND"}
 
 
 if __name__ == "__main__":

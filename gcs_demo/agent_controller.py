@@ -128,6 +128,8 @@ class Controller:
         g = gate(text)
         if g["status"] != "PASS":
             return {"status": g["status"], "reply_zh": g.get("message_zh", "無法處理這句話"), "task_id": None}
+        if "pre_embed" in self.tools:      # 向量檢索說明 §3：查詢向量在任何 LLM 呼叫之前算一次
+            self.tools["pre_embed"](text)
         self.n += 1
         tid = f"task-{self.n}"
         task = {"id": tid, "text": text, "status": "ACTIVE", "ledger": Ledger(**self.ledger_cfg), "directions": [],
@@ -342,7 +344,8 @@ class Controller:
             A["manual_claims"] = {"kind": "manual_claims", "ref": None,
                                   "verdict": "ok" if r.get("results") else ("not_loaded" if r.get("status") == "NOT_LOADED"
                                                                             else "not_found"),
-                                  "degraded": r.get("degraded"),
+                                  "degraded": r.get("degraded"), "degraded_reason": r.get("degraded_reason"),
+                                  "mode": r.get("mode"),
                                   "refs": [dict({k2: x[k2] for k2 in ("manual", "path", "heading_path", "version", "chunk_id")},
                                                 excerpt=x["text"][:400]) for x in r.get("results", [])]}
             return {"status": r.get("status"), "n": len(r.get("results", []))}
