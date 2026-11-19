@@ -27,10 +27,10 @@ class PlanBTests(unittest.TestCase):
         m = scripted(['{"directions":["plan","ui"]}', PLAN_UI, '{"reply":"已開確認視窗"}'])
         log, T = tools(["A001", "U100"])
         r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢放到首頁")
-        self.assertEqual([t["purpose"] for t in r["traces"]], ["stage1", "plan", "summary"])
+        self.assertEqual([t["purpose"] for t in r["traces"]], ["stage1", "plan"])     # v3：回覆固定模板
         self.assertEqual([s["state"] for s in r["plan"]], ["OK", "OK", "OK", "PROPOSED"])
         self.assertEqual(r["status"], "DONE")
-        self.assertEqual(r["calls_used"], 3)
+        self.assertEqual(r["calls_used"], 2)
 
     def test_when_false_skipped_not_failure(self):
         m = scripted(['{"directions":["plan","ui"]}', PLAN_UI])
@@ -72,21 +72,90 @@ class PlanBTests(unittest.TestCase):
         self.assertEqual(r["status"], "DONE")
 
     def test_failure_replans_only_affected(self):
-        # s2 缺 bind → GEN_COVERAGE 仍可執行；改成讓 GEN 失敗：區域不存在時 BLOCKED
+        # 第一次生成覆蓋航點失敗（工具回非 OK）→ 只重規劃 s3、s4；獨立的 s1（主題）與已完成的 s2 不動
         p1 = plan(st("s1", "color", "UI_THEME_PROPOSE", ["T001"]),
-                  st("s2", "plan", "GEN_COVERAGE"),
-                  st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}))
-        p2 = plan(st("s4", "plan", "QUERY_AREA", ["A001"]),
-                  st("s5", "plan", "GEN_COVERAGE", bind={"area": "s4.area_record"}),
+                  st("s2", "plan", "QUERY_AREA", ["A001"]),
+                  st("s3", "plan", "GEN_COVERAGE", bind={"area": "s2.area_record"}),
+                  st("s4", "plan", "VERIFY_PREVIEW", bind={"route": "s3.coverage_route"}))
+        p2 = plan(st("s5", "plan", "GEN_COVERAGE", bind={"area": "s2.area_record"}),
                   st("s6", "plan", "VERIFY_PREVIEW", bind={"route": "s5.coverage_route"}))
         m = scripted(['{"directions":["plan","color"]}', p1, p2])
         _, T = tools(["A001", "T001"])
-        r = PlanBController(T, m, GRAPH, COUNTER, summary_llm=False).request("規劃北側巡檢，改成深色主題")
+        n = {"gen": 0}
+
+        def gen(ref):
+            n["gen"] += 1
+            return {"status": "OK", "route_ref": "R2"} if n["gen"] > 1 else {"status": "NO_ROUTE"}
+        T["gen_coverage"] = gen
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢，改成深色主題")
         states = {s["id"]: s["state"] for s in r["plan"]}
-        self.assertEqual(states["s1"], "PROPOSED")               # 獨立步驟不受影響
-        self.assertEqual((states["s2"], states["s3"]), ("REPLACED", "REPLACED"))
-        self.assertEqual((states["s4"], states["s5"], states["s6"]), ("OK", "OK", "OK"))
+        self.assertEqual(states["s1"], "PROPOSED")
+        self.assertEqual(states["s2"], "OK")
+        self.assertEqual((states["s3"], states["s4"]), ("REPLACED", "REPLACED"))
+        self.assertEqual((states["s5"], states["s6"]), ("OK", "OK"))
         self.assertEqual(r["replans"], 1)
+        self.assertEqual(r["status"], "DONE")
+
+    def test_replan_cannot_redo_completed_step(self):
+        p1 = plan(st("s1", "plan", "QUERY_AREA", ["A001"]),
+                  st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                  st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}))
+        redo = plan(st("s4", "plan", "QUERY_AREA", ["A001"]),
+                    st("s5", "plan", "GEN_COVERAGE", bind={"area": "s4.area_record"}))
+        m = scripted(['{"directions":["plan"]}', p1, redo, redo])
+        _, T = tools(["A001"])
+        T["gen_coverage"] = lambda ref: {"status": "NO_ROUTE"}
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
+        self.assertEqual(r["replans"], 2)                       # 重規劃 1 次＋修正 1 次，額度用完
+        self.assertFalse(any(s["id"] == "s4" for s in r["plan"]))
+        self.assertNotEqual(r["status"], "DONE")
+
+    def test_bind_reads_source_step_not_global(self):
+        # s3 合格、s6 不合格；s7 的 when 引用 s3 → 應執行（若讀全域最新的 s6 會誤判 SKIPPED）
+        p = plan(st("s1", "plan", "QUERY_AREA", ["A001"]),
+                 st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                 st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+                 st("s4", "plan", "QUERY_AREA", ["A003"], after=["s3"]),
+                 st("s5", "plan", "GEN_COVERAGE", bind={"area": "s4.area_record"}),
+                 st("s6", "plan", "VERIFY_PREVIEW", bind={"route": "s5.coverage_route"}),
+                 st("s7", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
+                    when="s3.route_preview.verdict==pass", after=["s6"]))
+        m = scripted(['{"directions":["plan","ui"]}', p])
+        _, T = tools(["A001", "A003", "U100"])
+        n = {"v": 0}
+
+        def verify(ref):
+            n["v"] += 1
+            return {"result": "pass" if n["v"] == 1 else "fail", "preview_ref": f"PV{n['v']}", "est_end_pct": 50.0}
+        T["verify_preview"] = verify
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側和南側巡檢，北側放到首頁")
+        s7 = next(s for s in r["plan"] if s["id"] == "s7")
+        self.assertEqual(s7["state"], "PROPOSED")
+        self.assertEqual(r["proposals"][0]["source"], {"preview_ref": "PV1", "verdict": "pass"})
+
+    def test_missing_required_bind_rejected(self):
+        noind = plan(st("s1", "plan", "QUERY_AREA", ["A001"]), st("s2", "plan", "GEN_COVERAGE", after=["s1"]))
+        m = scripted(['{"directions":["plan"]}', noind, noind, noind])
+        _, T = tools(["A001"])
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
+        self.assertEqual(r["replans"], 2)
+        self.assertIn("計畫無效或未呼叫模型，改用規則計畫", r["notes"])
+
+    def test_weird_types_plan_does_not_crash(self):
+        bad = plan(dict(st("s1", "color", "UI_THEME_PROPOSE", ["T001"]), after=[[]]))
+        m = scripted(['{"directions":["color"]}', bad, plan(st("s1", "color", "UI_THEME_PROPOSE", ["T001"]))])
+        _, T = tools(["T001"])
+        r = PlanBController(T, m, GRAPH, COUNTER).request("改成深色主題")
+        self.assertEqual(r["replans"], 1)
+        self.assertEqual(len(r["proposals"]), 1)
+
+    def test_preset_directions_shared_from_a(self):
+        m = scripted([PLAN_UI])
+        _, T = tools(["A001", "U100"])
+        r = PlanBController(T, m, GRAPH, COUNTER, preset={"directions": ["plan", "ui"], "stage1_calls": 1}).request(
+            "規劃北側巡檢放到首頁")
+        self.assertEqual([t["purpose"] for t in r["traces"]], ["stage1_shared", "plan"])
+        self.assertEqual(r["calls_used"], 2)
         self.assertEqual(r["status"], "DONE")
 
     def test_require_waits_for_applied(self):

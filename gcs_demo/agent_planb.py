@@ -27,7 +27,34 @@ WHEN_RE = re.compile(r"^(s\d+)\.route_preview\.verdict==(pass|fail)$")
 TERMINAL_OK = ("OK", "PROPOSED", "SKIPPED")
 
 
+BOUND = {"area_record", "coverage_route", "route_preview"}      # 只能經 bind 從來源步驟取得的成果
+
+
+def _strs(x):
+    return isinstance(x, list) and all(isinstance(i, str) for i in x)
+
+
+def _str_map(x):
+    return isinstance(x, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in x.items())
+
+
 class PlanBController(M4bController):
+    def __init__(self, *a, preset=None, **kw):
+        """preset＝{"directions": [...], "stage1_calls": n}：同一案例在方案 A 的第 1 段輸出（v3.5 第 4 題：A／B 共用輸入）。"""
+        super().__init__(*a, **kw)
+        self.preset = preset
+
+    def _directions(self, task):
+        if self.preset is None:
+            return super()._directions(task)
+        n = int(self.preset.get("stage1_calls") or 0)
+        for _ in range(n):                                   # 共用的第 1 段照 A 的實際次數記帳
+            task["ledger"].reserve()
+        task["traces"].append({"purpose": "stage1_shared", "replies": [], "source": "shared_from_A",
+                               "directions": list(self.preset["directions"]), "calls": n})
+        task["notes"].append("第 1 段方向沿用同一案例在方案 A 的輸出")
+        return list(self.preset["directions"])
+
     # ---------- 共用排程（每批） ----------
     def _schedule(self, task, qv):
         task.setdefault("plan", [])
@@ -71,12 +98,14 @@ class PlanBController(M4bController):
     def _next_id(self, task):
         return 1 + max([int(s["id"][1:]) for s in task["plan"]] or [0])
 
-    def _validate(self, task, dirs, raw, fixed_ids):
+    def _validate(self, task, dirs, raw, fixed_ids, forbid=frozenset(), max_steps=None):
         obj = default_extract(raw)
         if not isinstance(obj, dict) or list(obj) != ["steps"] or not isinstance(obj["steps"], list):
             return False, None, "只能有 steps 一個欄位，且為清單"
         known = {s["id"]: s for s in task["plan"] if s["state"] != "REPLACED"}
         out, seen = [], set()
+        if max_steps is not None and len(obj["steps"]) > max_steps:
+            return False, None, f"重規劃最多 {max_steps} 步"
         for st in obj["steps"]:
             if not isinstance(st, dict) or not {"id", "direction", "action"} <= set(st) or \
                     not set(st) <= {"id", "direction", "action", "ids", "params", "after", "bind", "when", "require"}:
@@ -86,11 +115,19 @@ class PlanBController(M4bController):
                 return False, None, f"步驟編號 {sid} 不合法或重複"
             if d not in dirs or a not in ACTIONS.get(d, []):
                 return False, None, f"{sid}：方向或動作不在白名單"
-            ids, params = st.get("ids") or [], st.get("params") or {}
-            after, bind, req = st.get("after") or [], st.get("bind") or {}, st.get("require") or {}
+            ids, params = st.get("ids", []), st.get("params", {})
+            after, bind, req = st.get("after", []), st.get("bind", {}), st.get("require", {})
+            ids, after = ([] if ids is None else ids), ([] if after is None else after)
+            params, bind, req = ({} if params is None else params), ({} if bind is None else bind), ({} if req is None else req)
             when = st.get("when")
-            if not all(isinstance(x, list) for x in (ids, after)) or not all(isinstance(x, dict) for x in (params, bind, req)):
+            if not (_strs(ids) and _strs(after) and _str_map(params) and _str_map(bind) and _str_map(req)) or \
+                    not (when is None or isinstance(when, str)):
                 return False, None, f"{sid}：欄位型別錯誤"
+            if (d, a) in forbid:
+                return False, None, f"{sid}：不可重做已完成的 {d}／{a}"
+            missing = set(INPUTS.get(a, {})) - set(bind)
+            if missing:
+                return False, None, f"{sid}：{a} 必須用 bind 指定 {'、'.join(sorted(missing))} 的來源步驟"
             ok, _, err = self._parse_step(task, d, json.dumps({"action": a, "ids": ids, "params": params}), ACTIONS[d])
             if not ok:
                 return False, None, f"{sid}：{err}"
@@ -125,7 +162,7 @@ class PlanBController(M4bController):
                         "bind": bind, "when": when, "require": req})
         return True, out, ""
 
-    def _plan(self, task, dirs, initial, fixed=None, redo=None):
+    def _plan(self, task, dirs, initial, fixed=None, redo=None, forbid=frozenset(), max_steps=None):
         """initial＝每批第一次規劃（另計）；不合格的修正與重規劃都扣每任務 2 次額度。"""
         fixed = fixed if fixed is not None else [s for s in task["plan"] if s["state"] != "REPLACED"]
         fixed_ids = {s["id"] for s in task["plan"]}        # 新編號不可和任何舊步驟（含已取代）重複
@@ -154,7 +191,10 @@ class PlanBController(M4bController):
                 err, first = "沒有回覆", False
                 continue
             trace["replies"].append({"raw": (raw or "")[:600]})
-            ok, steps, err = self._validate(task, dirs, raw, fixed_ids)
+            try:
+                ok, steps, err = self._validate(task, dirs, raw, fixed_ids, forbid, max_steps)
+            except Exception as e:  # noqa: BLE001 - 合法 JSON 但型別怪異：當作不合格計畫
+                ok, steps, err = False, None, f"計畫格式錯誤（{type(e).__name__}）"
             if ok:
                 trace["source"] = "model"
                 return steps
@@ -211,13 +251,15 @@ class PlanBController(M4bController):
         for x in s["require"]:
             if P[x].get("applied") is not True:
                 return "wait"
+        for slot, ref in s["bind"].items():                 # 取值一律來自來源步驟自己的輸出
+            sid, field = ref.split(".", 1)
+            if field not in (P[sid].get("out") or {}):
+                return "fail_dep"
         if s["when"]:
             m = WHEN_RE.match(s["when"])
             src = P[m.group(1)]
-            if src["state"] == "SKIPPED":
-                return "fail_dep"
-            verdict = (task["artifacts"].get("route_preview") or {}).get("verdict")
-            if verdict is None:
+            verdict = ((src.get("out") or {}).get("route_preview") or {}).get("verdict")
+            if src["state"] == "SKIPPED" or verdict is None:
                 return "fail_dep"
             if verdict != m.group(2):
                 return "skip"
@@ -241,7 +283,7 @@ class PlanBController(M4bController):
                 else:
                     step = {"action": s["action"], "ids": s["ids"], "params": s["params"]}
                     task["steps"].append(dict(step, direction=s["direction"], source="plan", step_id=s["id"]))
-                    res = self._exec(task, s["direction"], step, qv)
+                    res = self._exec_bound(task, s, step, qv)
                     s["state"] = {"OK": "PROPOSED" if s["action"] in PROPOSE else "OK"}.get(res, res)
                     if res == "BLOCKED" and self._replan(task, s):
                         progressed = True
@@ -253,6 +295,25 @@ class PlanBController(M4bController):
         for s in task["plan"]:
             if s["state"] == "WAITING":
                 s["reason"] = "等待前一步（未就緒或尚未 APPLIED）"
+
+    def _exec_bound(self, task, s, step, qv):
+        """以步驟自己的視圖執行：可綁定成果只看 bind 指到的來源步驟輸出，不讀任務全域同名成果。"""
+        P = {x["id"]: x for x in task["plan"]}
+        glob = task["artifacts"]
+        view = {k: v for k, v in glob.items() if k not in BOUND}
+        for slot, ref in s["bind"].items():
+            sid, field = ref.split(".", 1)
+            view[field] = P[sid]["out"][field]
+        before = {k: id(v) for k, v in view.items()}
+        task["artifacts"] = view
+        try:
+            res = self._exec(task, s["direction"], step, qv)
+        finally:
+            task["artifacts"] = glob
+        s["out"] = {k: v for k, v in view.items() if before.get(k) != id(v)}
+        for k, v in s["out"].items():                         # 全域只留最新一份給回覆模板
+            glob[k] = v
+        return res
 
     def _downstream(self, task, sid):
         out, frontier = {sid}, {sid}
@@ -285,7 +346,9 @@ class PlanBController(M4bController):
         dirs = list(dict.fromkeys(s["direction"] for s in affected))
         redo = (f"步驟 {failed['id']}（{failed['action']}）失敗；請只重寫這些步驟：" +
                 "、".join(f"{s['id']} {s['action']}" for s in affected) + f"；新步驟從 s{self._next_id(task)} 起編號")
-        new = self._plan(task, dirs, initial=False, fixed=keep, redo=redo)
+        forbid = frozenset((s["direction"], s["action"]) for s in keep if s["state"] in ("OK", "PROPOSED"))
+        new = self._plan(task, dirs, initial=False, fixed=keep, redo=redo, forbid=forbid,
+                         max_steps=len(affected) + 2)
         if not new:
             for s in affected:
                 s["state"] = prev[s["id"]]
