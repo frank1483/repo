@@ -1,0 +1,1 @@
+注意：本次在 commit 之前執行（違反「執行前先 commit」）；執行時的原始碼雜湊見 SOURCES.sha256，與隨後的 commit 內容相同。
