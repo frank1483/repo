@@ -242,17 +242,40 @@ class M4bController:
         for i in ids:
             if i not in cands:
                 return False, None, f"{i} 不在本次候選"
-        need = ID_INPUT.get(a, [])
-        cats = [self.graph.nodes[i]["cat"] for i in ids]
-        if need and not all(c in need for c in cats):
-            return False, None, "ID 型別不符動作輸入"
-        for k, v in params.items():
-            allowed_vals = set()
-            for i in ids:
-                allowed_vals |= set(self.graph.nodes[i].get("allowed") or [])
-            if not isinstance(v, str) or (allowed_vals and v not in allowed_vals):
-                return False, None, f"參數 {k} 的值不在允許值"
+        err = self.check_schema(a, ids, params)
+        if err:
+            return False, None, err
         return True, {"action": a, "ids": ids, "params": params}, ""
+
+    def check_schema(self, a, ids, params):
+        """依動作逐槽驗證 ID 角色、數量與參數鍵值（CODEX-APP-0405 第 3 點）。回傳錯誤字串或空字串。"""
+        if len(set(ids)) != len(ids):
+            return "ids 重複"
+        cats = [self.graph.nodes[i]["cat"] for i in ids]
+        if a == "UI_LAYOUT_PROPOSE":
+            ps = [i for i, c in zip(ids, cats) if c == "P"]
+            cs = [i for i, c in zip(ids, cats) if c == "C"]
+            if len(ps) != 1 or len(cs) + len(ps) != len(ids):
+                return "版面提案要剛好一個參數（P），其餘只能是元件（C）"
+            if ps[0] == "P001" and cs:
+                return "全域文字大小（P001）不帶元件"
+            if ps[0] != "P001" and len(cs) != 1:
+                return "元件參數要剛好指定一個元件"
+            allowed = self.graph.nodes[ps[0]].get("allowed") or []
+            if list(params) != ["value"] or params["value"] not in allowed:
+                return f"params 只能是 {{\"value\": {'／'.join(allowed)}}}"
+            return ""
+        if params:
+            return f"{a} 不收 params"
+        if a == "UI_THEME_PROPOSE":
+            return "" if cats == ["T"] else "主題提案要剛好一個主題（T）"
+        if a == "MODEL_SWITCH_PROPOSE":
+            return "" if cats == ["M"] else "模型提案要剛好一個模型（M）"
+        if a == "PROPOSE_HOME_ROUTE":
+            return "" if ids in ([], ["U100"]) else "首頁提案只能指定 U100"
+        if a == "QUERY_AREA":
+            return "" if all(c == "A" for c in cats) else "區域查詢只能指定區域（A）"
+        return "" if not ids else f"{a} 不收 ids"
 
     def _rule_step(self, task, d):
         """規則腳本：依目前缺的成果選下一步；ID 取該方向候選中相似度最高的對應型別。"""
@@ -294,12 +317,20 @@ class M4bController:
                 ids = []
                 for c in ID_INPUT.get(a, []):
                     ids += first(c)
+                if a == "UI_LAYOUT_PROPOSE" and "P001" in ids:      # 全域文字大小不帶元件
+                    ids = ["P001"]
+                if a == "PROPOSE_HOME_ROUTE":
+                    ids = ["U100"]
                 return {"action": a, "ids": ids, "params": value_for(ids) if a == "UI_LAYOUT_PROPOSE" else {}}
         return {"action": "FINISH", "ids": [], "params": {}}
 
     def _exec(self, task, d, step, qv):
         A, T, a = task["artifacts"], self.tools, step["action"]
         ids, params = step["ids"], step["params"]
+        err = self.check_schema(a, ids, params) if a in PROPOSE else ""
+        if err:
+            task["notes"].append(f"{a}：{err}")
+            return "NEEDS_USER"
         if a == "QUERY_AREA":
             areas = [i for i in ids if self.graph.nodes[i]["cat"] == "A"]
             if len(areas) != 1:
@@ -325,7 +356,14 @@ class M4bController:
         if a == "PROPOSE_HOME_ROUTE":
             if not self._ui_ready(task):
                 return "BLOCKED"
-            r = T["propose_home_route"](A["route_preview"]["ref"])
+            try:
+                r = T["propose_home_route"](A["route_preview"]["ref"])
+            except Exception as e:  # noqa: BLE001 - 開窗失敗不算提案
+                task["notes"].append(f"首頁確認視窗沒有開成：{e!r}")
+                return "BLOCKED"
+            if r.get("decision") == "BLOCK" or not r.get("shown_hash"):
+                task["notes"].append(f"首頁確認視窗被擋下（decision={r.get('decision')}）")
+                return "BLOCKED"
             self._propose(task, d, a, ["U100"], {}, r.get("shown_hash"))
             return "OK"
         if a == "UI_LAYOUT_PROPOSE":
@@ -333,13 +371,6 @@ class M4bController:
             ps = [i for i in ids if self.graph.nodes[i]["cat"] == "P"]
             if not ps:
                 return "BLOCKED"
-            p = self.graph.nodes[ps[0]]
-            if params.get("value") not in (p.get("allowed") or []):       # 提案一定要有允許值
-                task["notes"].append(f"{ps[0]} 缺少允許值")
-                return "NEEDS_USER"
-            if ps[0] != "P001" and len(cs) != 1:
-                task["notes"].append("版面目標元件未唯一指定")
-                return "NEEDS_USER"
             if ps[0] == "P004" and cs and self.graph.nodes[cs[0]].get("locked") and params.get("value") == "隱藏":
                 task["notes"].append("鎖定元件不可隱藏")
                 return "BLOCKED"
@@ -348,9 +379,7 @@ class M4bController:
         if a in ("UI_THEME_PROPOSE", "MODEL_SWITCH_PROPOSE"):
             need = "T" if a == "UI_THEME_PROPOSE" else "M"
             xs = [i for i in ids if self.graph.nodes[i]["cat"] == need]
-            if len(xs) != 1:
-                return "NEEDS_USER"
-            self._propose(task, d, a, xs, params, None)
+            self._propose(task, d, a, xs, {}, None)
             return "OK"
         if a == "MANUAL_SEARCH":
             r = T["manual_search"](task["text"], qv) if "manual_search" in T else {"results": [], "status": "NOT_LOADED"}
@@ -399,6 +428,14 @@ class M4bController:
         bits += [f"提案:{p['action']}" for p in task["proposals"]]
         return "、".join(bits) or "無"
 
+    def _metrics(self, task):
+        """回覆可用的數字：{名稱: (字串值, 出處)}；字串值與模板寫法相同。"""
+        out = {}
+        rp = task["artifacts"].get("route_preview")
+        if rp and rp.get("est_end_pct") is not None:
+            out["預估落地電量"] = (f"{rp['est_end_pct']:.1f}", f"預覽 {rp['ref']}")
+        return out
+
     # ---------- 回覆 ----------
     def _template(self, task):
         A = task["artifacts"]
@@ -425,16 +462,20 @@ class M4bController:
         t_pre = round(time.monotonic() - task["t0"], 3)       # 提案就緒（整理回覆前）
         template = self._template(task) if ask is None else ask
         reply, reply_src = template, "template"
-        facts = json.dumps({"artifacts": task["artifacts"], "proposals": task["proposals"]}, ensure_ascii=False,
-                           default=str)
-        if self.summary_llm and self.model is not None and ask is None:
+        metrics = self._metrics(task)                          # 具名、帶出處的數字（CODEX-APP-0405 第 4 點）
+        allowed_nums = {v for v, _ in metrics.values()} | set(re.findall(r"\d+(?:\.\d+)?", task["text"]))
+        use_llm = self.summary_llm and self.model is not None and ask is None
+        if use_llm and len(metrics) > 1:                        # 多個數字時模型可能配錯指標 → 用模板
+            use_llm = False
+            task["notes"].append("成果含多個數字，整理回覆直接用模板")
+        if use_llm:
             def parse(raw):
                 obj = default_extract(raw)
                 if not isinstance(obj, dict) or list(obj) != ["reply"] or not isinstance(obj["reply"], str):
                     return False, None, "只能有 reply 一個欄位"
                 nums = re.findall(r"\d+(?:\.\d+)?", obj["reply"])
-                if any(n not in facts and n not in task["text"] for n in nums):
-                    return False, None, "回覆中的數字不在成果裡"
+                if any(n not in allowed_nums for n in nums):
+                    return False, None, "回覆中的數字不是成果欄位的值（要完全相同）"
                 if "已寫入" in obj["reply"] or "已套用" in obj["reply"]:
                     return False, None, "提案尚未寫入，不可宣稱已寫入"
                 return True, obj["reply"], ""

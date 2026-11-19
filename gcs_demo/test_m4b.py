@@ -141,7 +141,7 @@ class M4bTests(unittest.TestCase):
         _, T = tools(["C014", "P002"])
         r = M4bController(T, m, GRAPH, COUNTER, summary_llm=False).request("風速計調整一下")
         self.assertEqual(r["proposals"], [])
-        self.assertEqual(r["status"], "PARKED")
+        self.assertNotEqual(r["status"], "DONE")         # v2：缺值在解析時就退回；模型改回 FINISH
 
     def test_rule_uses_named_ids_and_text_value(self):
         _, T = tools([])                                   # 向量全零：規則只能靠名稱比對
@@ -167,6 +167,50 @@ class M4bTests(unittest.TestCase):
         r = M4bController(T, None, GRAPH, lambda text: 1600 if "T00" in text else 0).request("改成深色主題")
         self.assertEqual(r["status"], "PARKED")
         self.assertEqual(r["packing"]["over_dir_limit"], ["color"])
+
+    # ---- v2（CODEX-APP-0405）----
+    def test_schema_p001_rejects_component(self):
+        c = M4bController({}, None, GRAPH, COUNTER)
+        self.assertTrue(c.check_schema("UI_LAYOUT_PROPOSE", ["C014", "P001"], {"value": "大"}))
+        self.assertEqual(c.check_schema("UI_LAYOUT_PROPOSE", ["P001"], {"value": "大"}), "")
+        self.assertTrue(c.check_schema("UI_LAYOUT_PROPOSE", ["P001"], {"size": "大"}))
+        self.assertTrue(c.check_schema("UI_THEME_PROPOSE", ["T001"], {"x": "y"}))
+        self.assertTrue(c.check_schema("UI_THEME_PROPOSE", ["T001", "T002"], {}))
+        self.assertTrue(c.check_schema("MANUAL_SEARCH", ["T001"], {}))
+
+    def test_home_block_decision_not_proposed(self):
+        _, T = tools(["A001", "U100"])
+        T["propose_home_route"] = lambda ref: {"shown_hash": "h", "decision": "BLOCK"}
+        r = M4bController(T, None, GRAPH, COUNTER).request("規劃北側巡檢放到首頁")
+        self.assertEqual(r["proposals"], [])
+        self.assertNotEqual(r["status"], "DONE")
+
+    def test_summary_rejects_partial_number(self):
+        m = scripted(['{"directions":["plan"]}', '{"action":"QUERY_AREA","ids":["A001"],"params":{}}',
+                      '{"action":"GEN_COVERAGE","ids":[],"params":{}}', '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}',
+                      '{"action":"FINISH","ids":[],"params":{}}', '{"reply":"預估落地電量 1.5%"}', '{"reply":"電量 61%"}'])
+        _, T = tools(["A001"])
+        r = M4bController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
+        self.assertEqual(r["reply_source"], "template")      # 1.5 與 61 都只是 61.5 的子字串
+
+    def test_runner_score_params_and_duplicates(self):
+        from .m4b_runner import score
+        case = {"expect_proposals": [{"action": "UI_LAYOUT_PROPOSE", "ids": ["P001"], "values": ["大"]}],
+                "expect_artifacts": {}, "expect_status": "DONE", "gold_dirs": ["layout"]}
+        p = {"action": "UI_LAYOUT_PROPOSE", "ids": ["P001"], "params": {"value": "大"}, "state": "PROPOSED", "t_ready_s": 1.0}
+        ok = score(case, {"status": "DONE", "proposals": [p]})
+        self.assertTrue(ok["correct"])
+        self.assertEqual(ok["t_proposal_ready_s"], 1.0)
+        self.assertFalse(score(case, {"status": "DONE", "proposals": [p, p]})["correct"])          # 重複開窗
+        q = dict(p, params={"size": "大"})
+        self.assertFalse(score(case, {"status": "DONE", "proposals": [q]})["correct"])             # 鍵不同
+        neg = {"expect_proposals": [], "expect_artifacts": {}, "expect_status": "INCOMPLETE", "gold_dirs": []}
+        self.assertTrue(score(neg, {"status": "INCOMPLETE", "proposals": [p]})["false_open"])
+
+    def test_tokenizer_counter_loads(self):
+        from . import gemma4_tokenizer as TK
+        tok = TK.load_vocab()
+        self.assertGreater(len(TK.encode("北側巡檢 hello", tok)), 0)
 
 
 if __name__ == "__main__":

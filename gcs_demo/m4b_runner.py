@@ -20,6 +20,7 @@ import time
 from . import llm_gateway as G
 from . import m4_runner as R
 from .agent_m4b import M4bController
+from . import gemma4_tokenizer as TK
 from .id_graph import load_index
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -73,15 +74,23 @@ def fake_model(calls_log):
     return model
 
 
+def _want(p):
+    params = {"value": p["values"][0]} if p["values"] else {}
+    return (p["action"], frozenset(p["ids"]), tuple(sorted(params.items())))
+
+
 def score(case, r):
-    want = [(p["action"], frozenset(p["ids"]), frozenset(p["values"])) for p in case["expect_proposals"]]
-    got = [(p["action"], frozenset(p["ids"]), frozenset(p["params"].values())) for p in r.get("proposals") or []]
+    """v2（CODEX-APP-0405 第 2、3 點）：提案逐項比動作、ID 集合、具名參數（鍵＋值）與狀態 PROPOSED；重複開窗算多開。
+    提案就緒時間＝最後一個應有提案「第一次」記 PROPOSED 的時間，只在該案例提案全對時定義。"""
+    want = [_want(p) for p in case["expect_proposals"]]
+    got = [((p["action"], frozenset(p["ids"]), tuple(sorted(p["params"].items()))), p) for p in r.get("proposals") or []]
     rest = list(got)
-    hit = 0
+    hit_t = []
     for w in want:
-        if w in rest:
-            rest.remove(w)
-            hit += 1
+        m = next((g for g in rest if g[0] == w and g[1].get("state") == "PROPOSED"), None)
+        if m is not None:
+            rest.remove(m)
+            hit_t.append(m[1].get("t_ready_s"))
     A = r.get("artifacts") or {}
     arts = {}
     for k, v in case["expect_artifacts"].items():
@@ -92,11 +101,15 @@ def score(case, r):
             ok = any(any(t in (ref.get(f) or "").lower() for t in terms)
                      for ref in a.get("refs", []) for f in ("path", "heading_path", "excerpt"))
         arts[k] = ok
-    props_ok = hit == len(want) and not rest
+    props_ok = len(hit_t) == len(want) and not rest
     correct = props_ok and all(arts.values()) and r.get("status") == case["expect_status"]
-    return {"correct": correct, "proposals_ok": props_ok, "expected_hit": hit, "expected_n": len(want),
-            "extra_proposals": [[a, sorted(i), sorted(v)] for a, i, v in rest], "artifacts_ok": arts,
-            "status_match": r.get("status") == case["expect_status"],
+    is_prop_case = bool(want)
+    return {"correct": correct, "prop_case": is_prop_case, "proposals_ok": props_ok, "expected_hit": len(hit_t),
+            "expected_n": len(want),
+            "extra_proposals": [[g[0][0], sorted(g[0][1]), dict(g[0][2]), g[1].get("state")] for g in rest],
+            "false_open": (not is_prop_case) and bool(got),
+            "t_proposal_ready_s": max(hit_t) if (is_prop_case and correct and all(t is not None for t in hit_t)) else None,
+            "artifacts_ok": arts, "status_match": r.get("status") == case["expect_status"],
             "dirs_selected": r.get("directions"), "dirs_gold": case["gold_dirs"],
             "dirs_set_match": set(r.get("directions") or []) == set(case["gold_dirs"]),
             "flight_notice": "flight_notice" in A, "claimed_done_wrong": r.get("status") == "DONE" and not correct}
@@ -132,22 +145,40 @@ def run_case(case, cond, model_factory, graph, counter, work):
     dt = time.monotonic() - t0
     rec = {"case": case["id"], "cond": cond["id"], "group": cond["group"], "status": r.get("status"),
            "expect_status": case["expect_status"], "calls_used": r.get("calls_used"),
-           "t_ready_s": r.get("t_pre_summary_s"), "elapsed_s": round(dt, 3), "reply_source": r.get("reply_source"),
+           "t_pre_summary_s": r.get("t_pre_summary_s"), "elapsed_s": round(dt, 3), "reply_source": r.get("reply_source"),
            "packing_pending": (r.get("packing") or {}).get("pending"), "error": err,
            "embed_calls": idx.calls[n_embed_before:] if idx else []}
-    rec.update(score(case, r) if r else {"correct": False})
+    rec.update(score(case, r) if r else {"correct": False, "prop_case": bool(case["expect_proposals"]),
+                                          "false_open": False, "t_proposal_ready_s": None})
     full = {"reply": r, "traceback": tb, "calls": calls, "dialogs": tools.dialogs}
     return rec, full
 
 
 def summarize(recs):
+    """主表（v3.5 §7 比較口徑）：正確提案完成率（分母＝應提案案例）、提案就緒 P95（只算提案全對的案例，旁列納入數）、
+    每案例 LLM 呼叫次數；另列誤開率、未達終點／錯誤數、整理前與含整理的 P95，以及各組都答對的相同案例 P95。"""
     out = {}
-    for cond in sorted({r["cond"] for r in recs}):
-        rs = [r for r in recs if r["cond"] == cond]
-        out[cond] = {"n": len(rs), "correct_rate": round(sum(r["correct"] for r in rs) / len(rs), 4),
-                     "p95_ready_s": p95([r["t_ready_s"] for r in rs]), "p95_total_s": p95([r["elapsed_s"] for r in rs]),
-                     "llm_calls_mean": round(sum(r["calls_used"] or 0 for r in rs) / len(rs), 3),
-                     "errors": sum(1 for r in rs if r["error"]), "claimed_done_wrong": sum(r.get("claimed_done_wrong", 0) for r in rs)}
+    conds = sorted({r["cond"] for r in recs})
+    by = {c: {r["case"]: r for r in recs if r["cond"] == c} for c in conds}
+    common = set.intersection(*[{k for k, r in by[c].items() if r.get("t_proposal_ready_s") is not None}
+                                for c in conds]) if conds else set()
+    for c in conds:
+        rs = list(by[c].values())
+        pc = [r for r in rs if r.get("prop_case")]
+        neg = [r for r in rs if not r.get("prop_case")]
+        ready = [r["t_proposal_ready_s"] for r in pc if r.get("t_proposal_ready_s") is not None]
+        out[c] = {"n_cases": len(rs), "n_prop_cases": len(pc),
+                  "correct_prop_rate": round(sum(r["correct"] for r in pc) / len(pc), 4) if pc else None,
+                  "correct_all_rate": round(sum(r["correct"] for r in rs) / len(rs), 4),
+                  "p95_proposal_ready_s": p95(ready), "p95_included": f"{len(ready)}/{len(pc)}",
+                  "not_reached": len(pc) - len(ready), "errors": sum(1 for r in rs if r.get("error")),
+                  "false_open_rate": round(sum(r.get("false_open", False) for r in neg) / len(neg), 4) if neg else None,
+                  "p95_pre_summary_s": p95([r.get("t_pre_summary_s") for r in rs]),
+                  "p95_total_s": p95([r.get("elapsed_s") for r in rs]),
+                  "p95_proposal_ready_common_s": p95([by[c][k]["t_proposal_ready_s"] for k in common]),
+                  "common_cases": sorted(common),
+                  "llm_calls_mean": round(sum(r.get("calls_used") or 0 for r in rs) / len(rs), 3),
+                  "claimed_done_wrong": sum(r.get("claimed_done_wrong", False) for r in rs)}
     return out
 
 
@@ -184,8 +215,6 @@ def main(argv=None):
             factory = fake_model
             R.set_manual_index(R.DEFAULT_INDEX_DIR, "http://127.0.0.1:1", use_vector=False)
             graph, man = load_index(DEFAULT_ID_INDEX)
-            counter = len                        # --fake：字數當 token（live 用 Gemma 4 tokenizer 的 prompt_eval_count 記錄）
-            info["token_counter"] = "len(text)（fake）"
         else:
             proc = R.start_ollama(a.ollama_port, os.path.join(a.out, "ollama_serve.log"))
             info["ollama_pid"] = proc.pid
@@ -196,12 +225,15 @@ def main(argv=None):
             R.set_manual_index(idx_dir, f"http://127.0.0.1:{a.ollama_port}", use_vector=True)
             lid = next(l for l in lines if l["name"].endswith("ID_INDEX_MANIFEST.json"))
             graph, man = load_index(os.path.dirname(os.path.join(R.BASE_DOC, lid["name"])))
-            counter = len                        # 待定：Gemma 4 tokenizer（見來源包 MANIFEST 說明）
-            info["token_counter"] = "len(text)；live 另記每次呼叫的 prompt_eval_count"
             up = G.make_upstream("ollama", f"http://127.0.0.1:{a.ollama_port}", R.MODEL_TAG)
             gw = G.Gateway(up, os.path.join(a.out, "gateway_calls.jsonl"))
             factory = lambda log: gateway_model(gw, log)  # noqa: E731
         info["id_index"] = {"graph_sha256": man["graph_sha256"], "vectors_sha256": man["vectors_sha256"]}
+        tok = TK.load_vocab()                    # v2：Gemma 4 E2B tokenizer（離線，讀本機 GGUF；manifest 雜湊不符就停）
+        counter = lambda text: len(TK.encode(text, tok))  # noqa: E731
+        info["token_counter"] = {"impl": "gcs_demo/gemma4_tokenizer.py（llama.cpp gemma4 規則，曾與伺服器 token ID 比對 12/12）",
+                                 "blob_digest": tok["blob_digest"], "vocab_merges_types_sha256": tok["vocab_merges_types_sha256"],
+                                 "n_tokens": tok["n_tokens"], "n_merges": tok["n_merges"]}
         sampler.start()
         with open(os.path.join(a.out, "results.jsonl"), "a", encoding="utf-8") as f:
             for cond in CONDITIONS[a.phase]:
