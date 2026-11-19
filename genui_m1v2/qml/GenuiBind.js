@@ -1,7 +1,7 @@
 .pragma library
 // GenuiBind：預檢通過的節點 → 每個框的「畫面資料」（W1～W5 轉接元件說明 v1.2 §1、§2）。純函式，不讀即時狀態。
 // 版本 bind-m1-0.1。QML 元件只顯示這裡給的資料；找不到就回 {ok:false}，該框畫「資料無法顯示」，不畫半份。
-var BIND_VERSION = "bind-m1-0.1"
+var BIND_VERSION = "bind-m1-0.1.1"   // 0.1.1：只改 GenuiWidget.qml 的路徑解析，本檔邏輯不變
 var MAX_POINTS = 150
 var ACCENT = { normal_soc: "telemetryMetricGreen", normal: "telemetryMetricBlue", warn: "telemetryMetricOrange" }
 // 與 GenuiClaims 相同的數字格式與 ETA 原因句（說明 §1：答案和卡片顯示同一個數字）
