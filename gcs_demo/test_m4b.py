@@ -121,7 +121,7 @@ class M4bTests(unittest.TestCase):
     def test_summary_number_must_come_from_facts(self):
         m = scripted(['{"directions":["plan"]}', '{"action":"QUERY_AREA","ids":["A001"],"params":{}}',
                       '{"action":"GEN_COVERAGE","ids":[],"params":{}}', '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}',
-                      '{"action":"FINISH","ids":[],"params":{}}',
+                      
                       '{"reply":"預估電量 70%"}', '{"reply":"預估落地電量 61.5%"}'])
         _, T = tools(["A001"])
         r = M4bController(T, m, GRAPH, COUNTER, summary_llm=True).request("規劃A區巡檢")
@@ -188,7 +188,7 @@ class M4bTests(unittest.TestCase):
     def test_summary_rejects_partial_number(self):
         m = scripted(['{"directions":["plan"]}', '{"action":"QUERY_AREA","ids":["A001"],"params":{}}',
                       '{"action":"GEN_COVERAGE","ids":[],"params":{}}', '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}',
-                      '{"action":"FINISH","ids":[],"params":{}}', '{"reply":"預估落地電量 1.5%"}', '{"reply":"電量 61%"}'])
+                       '{"reply":"預估落地電量 1.5%"}', '{"reply":"電量 61%"}'])
         _, T = tools(["A001"])
         r = M4bController(T, m, GRAPH, COUNTER, summary_llm=True).request("規劃北側巡檢")
         self.assertEqual(r["reply_source"], "template")      # 1.5 與 61 都只是 61.5 的子字串

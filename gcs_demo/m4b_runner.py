@@ -25,6 +25,8 @@ from .id_graph import load_index
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CASES = os.path.join(HERE, "m4b_cases_v2.json")
+# v4（v3.6 §6）：校準＝開發集（首跑 36 題，已看過失敗）；研究＝評估集（沒有用來調提示）
+CASES_BY_PHASE = {"calib": os.path.join(HERE, "m4b_cases_v2.json"), "research": os.path.join(HERE, "m4b_cases_eval_v1.json")}
 DEFAULT_ID_INDEX = os.path.join(R.BASE_DOC, "adr0002_rag_v1", "id_index_v1")
 CONDITIONS = {
     "calib": [{"id": "A-s6-b30", "group": "A", "steps": 6, "budget": 30}],
@@ -45,20 +47,31 @@ def deadline_for(purpose):
     return DEADLINE_S.get(purpose.split(":")[0], 60.0)
 
 
+MAX_TOKENS = {"summary": 256, "plan": 512, "replan": 512}
+HARNESS = {"name": "m4b-v4"}
+TIMING_KEYS = ("prompt_eval_count", "eval_count", "prompt_eval_duration", "eval_duration", "load_duration", "total_duration")
+
+
 def gateway_model(gw, calls_log):
+    """v4（演算法說明 v3.6 §6）：有 schema 就交給 Ollama 做 JSON Schema 約束；記錄提示處理／生成／載入時間。"""
     def model(call):
         purpose = call.get("purpose", "")
         feature = FEATURE.get(purpose, "agent_step")
+        req = {"messages": call["messages"], "max_tokens": MAX_TOKENS.get(purpose.split(":")[0], 96)}
+        if call.get("schema") is not None:
+            req["response_format"] = {"type": "json_schema", "json_schema": {"schema": call["schema"]}}
         t0 = time.monotonic()
-        st, body = gw.submit(feature, {"messages": call["messages"], "max_tokens": 256 if purpose == "summary" else 96},
-                             harness="m4b-v3", deadline_s=deadline_for(purpose))
+        st, body = gw.submit(feature, req, harness=HARNESS["name"], deadline_s=deadline_for(purpose))
         text = ""
         try:
             text = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):
             pass
+        meta = (body.get("gcs_upstream_meta") or {}) if isinstance(body, dict) else {}
         calls_log.append({"purpose": purpose, "feature": feature, "status": st, "latency_s": round(time.monotonic() - t0, 3),
-                          "raw": text, "usage": body.get("usage") if isinstance(body, dict) else None})
+                          "raw": text, "schema": call.get("schema") is not None,
+                          "timing": {k: meta.get(k) for k in TIMING_KEYS if k in meta},
+                          "error": (body.get("error") or {}).get("message") if isinstance(body, dict) and st != 200 else None})
         if st != 200:
             raise RuntimeError(f"gateway {st}")
         return text
@@ -92,6 +105,7 @@ def score(case, r):
     """v2（CODEX-APP-0405 第 2、3 點）：提案逐項比動作、ID 集合、具名參數（鍵＋值）與狀態 PROPOSED；重複開窗算多開。
     提案就緒時間＝最後一個應有提案「第一次」記 PROPOSED 的時間，只在該案例提案全對時定義。"""
     want = [_want(p) for p in case["expect_proposals"]]
+    by = []
     deps = case.get("expect_dependency") or {}
     got = [((p["action"], frozenset(p["ids"]), tuple(sorted(p["params"].items()))), p) for p in r.get("proposals") or []]
     rest = list(got)
@@ -101,6 +115,7 @@ def score(case, r):
         if m is not None:
             rest.remove(m)
             hit_t.append(m[1].get("t_ready_s"))
+            by.append(m[1].get("by", "rule"))
     A = r.get("artifacts") or {}
     arts = {}
     for k, v in case["expect_artifacts"].items():
@@ -122,7 +137,10 @@ def score(case, r):
     props_ok = len(hit_t) == len(want) and not rest and all(dep_ok.values())
     correct = props_ok and all(arts.values()) and r.get("status") == case["expect_status"]
     is_prop_case = bool(want)
-    return {"correct": correct, "prop_case": is_prop_case, "proposals_ok": props_ok, "expected_hit": len(hit_t),
+    return {"correct": correct, "prop_case": is_prop_case,
+            "model_decided": correct and is_prop_case and bool(by) and all(b == "model" for b in by),
+            "rule_assisted": correct and is_prop_case and any(b != "model" for b in by),
+            "stage1_source": r.get("stage1_source"), "proposals_ok": props_ok, "expected_hit": len(hit_t),
             "expected_n": len(want),
             "extra_proposals": [[g[0][0], sorted(g[0][1]), dict(g[0][2]), g[1].get("state")] for g in rest],
             "false_open": (not is_prop_case) and bool(got),
@@ -167,12 +185,37 @@ def run_case(case, cond, model_factory, graph, counter, work):
            "packing_pending": (r.get("packing") or {}).get("pending"), "error": err,
            "embed_calls": idx.calls[n_embed_before:] if idx else [],
            "model_calls_sent": len(calls),
+           "timing": _sum_timing(calls),
            "model_call_failures": sum(1 for x in calls if x.get("status") != 200),
            "model_call_timeouts": sum(1 for x in calls if x.get("status") == 504)}
     rec.update(score(case, r) if r else {"correct": False, "prop_case": bool(case["expect_proposals"]),
                                           "false_open": False, "t_proposal_ready_s": None})
     full = {"reply": r, "traceback": tb, "calls": calls, "dialogs": tools.dialogs}
     return rec, full
+
+
+def _sum_timing(calls):
+    """每案例：提示處理、生成、載入時間（秒，Ollama 回報）與重試（同一用途的第 2 次以後）次數與耗時。"""
+    t = {"prompt_eval_s": 0.0, "eval_s": 0.0, "load_s": 0.0, "retries": 0, "retry_wall_s": 0.0, "failed_calls": 0}
+    seen = {}
+    for c in calls:
+        tm = c.get("timing") or {}
+        t["prompt_eval_s"] += (tm.get("prompt_eval_duration") or 0) / 1e9
+        t["eval_s"] += (tm.get("eval_duration") or 0) / 1e9
+        t["load_s"] += (tm.get("load_duration") or 0) / 1e9
+        seen[c["purpose"]] = seen.get(c["purpose"], 0) + 1
+        if seen[c["purpose"]] > 1:
+            t["retries"] += 1
+            t["retry_wall_s"] += c.get("latency_s") or 0
+        if c.get("status") != 200:
+            t["failed_calls"] += 1
+    return {k: round(v, 3) if isinstance(v, float) else v for k, v in t.items()}
+
+
+def _timing(rs):
+    keys = ("prompt_eval_s", "eval_s", "load_s", "retry_wall_s")
+    return {k: round(sum((r.get("timing") or {}).get(k, 0) for r in rs) / len(rs), 3) for k in keys} | \
+        {"retries_total": sum((r.get("timing") or {}).get("retries", 0) for r in rs)}
 
 
 def summarize(recs):
@@ -191,6 +234,10 @@ def summarize(recs):
         out[c] = {"n_cases": len(rs), "n_prop_cases": len(pc),
                   "correct_prop_rate": round(sum(r["correct"] for r in pc) / len(pc), 4) if pc else None,
                   "correct_all_rate": round(sum(r["correct"] for r in rs) / len(rs), 4),
+                  "model_decided_rate": round(sum(bool(r.get("model_decided")) for r in pc) / len(pc), 4) if pc else None,
+                  "rule_assisted_rate": round(sum(bool(r.get("rule_assisted")) for r in pc) / len(pc), 4) if pc else None,
+                  "stage1_model_share": f"{sum(1 for r in rs if r.get('stage1_source') == 'model')}/{len(rs)}",
+                  "timing_s": _timing(rs),
                   "p95_proposal_ready_s": p95(ready), "p95_included": f"{len(ready)}/{len(pc)}",
                   "not_reached": len(pc) - len(ready), "case_errors": sum(1 for r in rs if r.get("error")),
                   "model_call_failures": sum(r.get("model_call_failures") or 0 for r in rs),
@@ -229,6 +276,9 @@ def main(argv=None):
             json.dump(info, open(os.path.join(a.out, "RUN_INFO.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
             raise SystemExit("來源包核對不通過，未啟動模型（紀錄見 RUN_INFO.json）")
     os.makedirs(a.out)
+    global CASES
+    CASES = CASES_BY_PHASE[a.phase]
+    info["cases_file"] = os.path.basename(CASES)
     cases = json.load(open(CASES, encoding="utf-8"))["cases"]
     proc = gw = None
     sampler = R.RamSampler()

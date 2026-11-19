@@ -1,0 +1,438 @@
+{
+ "version": "m4b-cases-eval-v1",
+ "annotation": "AI 共同決定（使用者委任）：Claude 2026-11-20 草擬的評估集，不是人工標註；句子沒有用來調提示，首跑 36 題（m4b_cases_v2）改稱開發集。請使用者抽看。",
+ "fields": "同 m4b_cases_v2",
+ "cases": [
+  {
+   "id": "E01",
+   "text": "南側巡檢",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "單一具名區域"
+  },
+  {
+   "id": "E02",
+   "text": "幫我規劃北側二的覆蓋航線",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "名稱前綴＋不同動詞"
+  },
+  {
+   "id": "E03",
+   "text": "北邊巡檢，保留 30%",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "別名＋保留電量"
+  },
+  {
+   "id": "E04",
+   "text": "西側巡檢",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "PARKED",
+   "note": "查不到區域→請框選"
+  },
+  {
+   "id": "E05",
+   "text": "南區巡檢航線放首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "兩方向、別名",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "E06",
+   "text": "規劃北側航線，完成後顯示在首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "明講先後",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "E07",
+   "text": "北側巡檢留 95% 放到首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "fail"
+   },
+   "expect_status": "INCOMPLETE",
+   "note": "預覽不合格→首頁合法略過，不可開窗"
+  },
+  {
+   "id": "E08",
+   "text": "字體調成小",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "小"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "全域文字大小"
+  },
+  {
+   "id": "E09",
+   "text": "文字大一點",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "口語"
+  },
+  {
+   "id": "E10",
+   "text": "把高度顯示縮小",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C012",
+      "P002"
+     ],
+     "values": [
+      "縮小"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "元件大小"
+  },
+  {
+   "id": "E11",
+   "text": "隱藏羅盤",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C013",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "元件顯示"
+  },
+  {
+   "id": "E12",
+   "text": "把速度顯示移到左下",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C011",
+      "P003"
+     ],
+     "values": [
+      "左下"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "元件位置"
+  },
+  {
+   "id": "E13",
+   "text": "隱藏姿態儀",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "INCOMPLETE",
+   "note": "鎖定元件不可隱藏"
+  },
+  {
+   "id": "E14",
+   "text": "切換到淺色主題",
+   "gold_dirs": [
+    "color"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_THEME_PROPOSE",
+     "ids": [
+      "T002"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "主題"
+  },
+  {
+   "id": "E15",
+   "text": "用夜間模式",
+   "gold_dirs": [
+    "color"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_THEME_PROPOSE",
+     "ids": [
+      "T001"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "主題別名"
+  },
+  {
+   "id": "E16",
+   "text": "改用影像模型",
+   "gold_dirs": [
+    "model"
+   ],
+   "expect_proposals": [
+    {
+     "action": "MODEL_SWITCH_PROPOSE",
+     "ids": [
+      "M002"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "模型"
+  },
+  {
+   "id": "E17",
+   "text": "辨識改成多機",
+   "gold_dirs": [
+    "model"
+   ],
+   "expect_proposals": [
+    {
+     "action": "MODEL_SWITCH_PROPOSE",
+     "ids": [
+      "M013"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "辨識類別"
+  },
+  {
+   "id": "E18",
+   "text": "辨識類別換成巡檢",
+   "gold_dirs": [
+    "model"
+   ],
+   "expect_proposals": [
+    {
+     "action": "MODEL_SWITCH_PROPOSE",
+     "ids": [
+      "M012"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "含「巡檢」但不是規劃"
+  },
+  {
+   "id": "E19",
+   "text": "QGC 手冊裡怎麼設定任務航點",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "手冊",
+   "manual_gold_any": [
+    "waypoint",
+    "mission"
+   ]
+  },
+  {
+   "id": "E20",
+   "text": "PX4 的電池失效保護參數在手冊哪裡",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "手冊參數",
+   "manual_gold_any": [
+    "bat_",
+    "battery"
+   ]
+  },
+  {
+   "id": "E21",
+   "text": "起飛",
+   "gold_dirs": [
+    "flight_request"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "flight_notice": null
+   },
+   "expect_status": "DONE",
+   "note": "只回固定說明"
+  },
+  {
+   "id": "E22",
+   "text": "南側巡檢然後返航",
+   "gold_dirs": [
+    "plan",
+    "flight_request"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass",
+    "flight_notice": null
+   },
+   "expect_status": "DONE",
+   "note": "規劃＋飛控要求"
+  },
+  {
+   "id": "E23",
+   "text": "把小地圖放大然後改深色",
+   "gold_dirs": [
+    "layout",
+    "color"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C016",
+      "P002"
+     ],
+     "values": [
+      "放大"
+     ]
+    },
+    {
+     "action": "UI_THEME_PROPOSE",
+     "ids": [
+      "T001"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "兩個提案"
+  },
+  {
+   "id": "E24",
+   "text": "現在電量多少",
+   "gold_dirs": [
+    "qa"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "INCOMPLETE",
+   "note": "問答工具未接"
+  }
+ ]
+}

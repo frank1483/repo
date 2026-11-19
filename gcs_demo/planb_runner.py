@@ -22,26 +22,6 @@ MAX_TOKENS = {"plan": 512, "replan": 512, "summary": 256}
 _SHARED = {"dir": None, "current": None}
 
 
-def gateway_model(gw, calls_log):
-    def model(call):
-        purpose = call.get("purpose", "")
-        feature = R4.FEATURE.get(purpose, "agent_step")
-        t0 = time.monotonic()
-        st, body = gw.submit(feature, {"messages": call["messages"], "max_tokens": MAX_TOKENS.get(purpose, 96)},
-                             harness="planb-v3", deadline_s=R4.deadline_for(purpose))
-        text = ""
-        try:
-            text = body["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            pass
-        calls_log.append({"purpose": purpose, "feature": feature, "status": st, "latency_s": round(time.monotonic() - t0, 3),
-                          "raw": text, "usage": body.get("usage") if isinstance(body, dict) else None})
-        if st != 200:
-            raise RuntimeError(f"gateway {st}")
-        return text
-    return model
-
-
 def a_row(cond, case):
     rows = [json.loads(l) for l in open(os.path.join(_SHARED["dir"], "results.jsonl"), encoding="utf-8") if l.strip()]
     hit = [r for r in rows if r["cond"] == cond and r["case"] == case]
@@ -68,7 +48,7 @@ def a_record(cond, case):
     n = sum(len(t.get("replies") or []) for t in rep.get("traces") or [] if t.get("purpose") == "stage1")
     batches = [[b["directions"], {d: v["items"] for d, v in b["per_dir"].items()}]
                for b in (rep.get("packing") or {}).get("batches") or []]
-    preset = {"directions": rep.get("directions"), "stage1_calls": n}
+    preset = {"directions": rep.get("directions"), "stage1_calls": n, "stage1_source": rep.get("stage1_source")}
     if rep.get("status") in ("INVALID_INPUT", "TOO_LONG"):
         preset = None                            # Gate 擋下：第 1 段沒跑，B 自己的 Gate 會得到同樣結果
     elif not rep.get("directions"):              # 第 1 段跑了但在規劃前結束（例如方向超過上限）→ B 照 A 的結果結束
@@ -86,7 +66,7 @@ def controller(*a, **kw):
 
 
 R4.M4bController = controller
-R4.gateway_model = gateway_model
+R4.HARNESS["name"] = "planb-v8"
 _run_case = R4.run_case
 
 
@@ -129,7 +109,7 @@ R4.summarize = summarize
 
 
 def check_a_dir(phase, fake):
-    """鎖定 A 同 phase 的完整輸出：phase、fake／live、來源包（live 須為 M4b v3 已同意的包）、結束時間與案例數。"""
+    """鎖定 A 同 phase 的完整輸出：phase、fake／live、來源包（live 須與這次 --bundle 相同）、結束時間與案例數。"""
     info = json.load(open(os.path.join(_SHARED["dir"], "RUN_INFO.json"), encoding="utf-8"))
     rows = [json.loads(l) for l in open(os.path.join(_SHARED["dir"], "results.jsonl"), encoding="utf-8") if l.strip()]
     n_cases = len(json.load(open(R4.CASES, encoding="utf-8"))["cases"])
@@ -140,7 +120,7 @@ def check_a_dir(phase, fake):
     if bool(info.get("fake")) != bool(fake):
         errs.append("A 與 B 的 fake／live 不一致")
     if not fake and (info.get("bundle_verification") or {}).get("sums_sha256") != A_BUNDLE_SHA:
-        errs.append("A 不是用已同意的 M4b v3 來源包跑的")
+        errs.append("A 不是用這次同一個來源包跑的")
     if not info.get("end"):
         errs.append("A 沒有正常結束")
     case_ids = {c["id"] for c in json.load(open(R4.CASES, encoding="utf-8"))["cases"]}
@@ -166,7 +146,7 @@ def check_a_dir(phase, fake):
             "a_bundle_sha256": (info.get("bundle_verification") or {}).get("sums_sha256"), "a_end": info.get("end")}
 
 
-A_BUNDLE_SHA = "81b575ac6dd9ce157b25a9278a5115258801b9e701cb69bd3b2bd6c76809b0bb"
+A_BUNDLE_SHA = None   # v8：由 --a-bundle-sha 指定 A 同輪來源包（見 main）
 
 
 def main(argv=None):
@@ -179,6 +159,10 @@ def main(argv=None):
     if not os.path.exists(os.path.join(_SHARED["dir"], "results.jsonl")):
         raise SystemExit("--shared-from 目錄沒有 results.jsonl")
     phase = argv[argv.index("--phase") + 1]
+    R4.CASES = R4.CASES_BY_PHASE[phase]
+    global A_BUNDLE_SHA                                    # 第二輪 A、B 用同一個來源包：A 的包雜湊必須等於這次 --bundle
+    if "--bundle" in argv:
+        A_BUNDLE_SHA = R4.sha_file(os.path.join(argv[argv.index("--bundle") + 1], "SHA256SUMS.txt"))
     shared = check_a_dir(phase, "--fake" in argv)
     out = argv[argv.index("--out") + 1]
     rc = R4.main(argv)

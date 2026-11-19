@@ -14,6 +14,7 @@ import json
 import re
 
 from .agent_loop import default_extract
+from . import outcomes as OC
 from .agent_m4b import ACTIONS, ID_INPUT, KIND_ZH, PROPOSE, M4bController
 
 REPLAN_MAX = 2
@@ -64,6 +65,7 @@ class PlanBController(M4bController):
         task["traces"].append({"purpose": "stage1_shared", "replies": [], "source": "shared_from_A",
                                "directions": list(self.preset["directions"]), "calls": n})
         task["notes"].append("第 1 段方向沿用同一案例在方案 A 的輸出")
+        task["stage1_source"] = self.preset.get("stage1_source")
         return list(self.preset["directions"])
 
     # ---------- 共用排程（每批） ----------
@@ -76,6 +78,7 @@ class PlanBController(M4bController):
         if batch:                                           # 空批不呼叫模型
             self._add_steps(task, self._plan(task, batch, initial=True))
         self._execute(task, qv)                             # 先前批次在等的步驟也一起推進
+        self._accept(task, qv, batch or [])                 # v3.6：用實際成果驗收，缺什麼就補
         for d in [d for d in task["directions"] if d in batch or d in planned]:
             ss = [s for s in task["plan"] if s["direction"] == d and s["state"] != "REPLACED"]
             st = [s["state"] for s in ss]
@@ -88,12 +91,67 @@ class PlanBController(M4bController):
             else:
                 task["dir_status"][d] = "INCOMPLETE"
 
+    def _accept(self, task, qv, batch):
+        """執行後驗收：實際成果仍缺、而且沒有步驟在等、不是需要使用者補充或合法略過 → 只對這些方向補計畫（扣 2 次額度）。"""
+        while True:
+            have = self.have(task)
+            live = [x for x in task["plan"] if x["state"] != "REPLACED"]
+            gap = []
+            for d in batch:
+                ss = [x for x in live if x["direction"] == d]
+                if any(x["state"] in ("PENDING", "WAITING", "NEEDS_USER") for x in ss):
+                    continue
+                if OC.missing(d, have):
+                    gap.append(d)
+            if not gap or self.model is None or task["replans"] >= REPLAN_MAX:
+                if gap:
+                    task["plan_log"].append({"event": "accept_gap_unfilled", "dirs": gap,
+                                             "missing": {d: OC.missing(d, have) for d in gap}})
+                return
+            task["replans"] += 1
+            task["plan_log"].append({"event": "continue", "dirs": gap, "missing": {d: OC.missing(d, have) for d in gap},
+                                     "replans": task["replans"]})
+            redo = ("執行後驗收發現還缺：" + "；".join(f"{d} 缺 {'→'.join(OC.ZH[k] for k in OC.missing(d, have))}" for d in gap) +
+                    f"。請只補上產生這些成果的步驟（可引用已完成步驟的結果），新步驟從 s{self._next_id(task)} 起編號")
+            keep = [x for x in task["plan"] if x["state"] != "REPLACED"]
+            forbid = frozenset((x["direction"], x["action"], json.dumps([x["ids"], x["params"], x["bind"]], sort_keys=True))
+                               for x in keep if x["state"] in ("OK", "PROPOSED"))
+            new = self._plan(task, gap, initial=False, fixed=keep, redo=redo, forbid=forbid, max_steps=6)
+            if not new:
+                task["plan_log"].append({"event": "accept_gap_unfilled", "dirs": gap})
+                return
+            self._add_steps(task, new, origin="model")
+            self._execute(task, qv)
+
     # ---------- 規劃 ----------
+    def _example(self, task, dirs):
+        """依本批第一個方向自動生成的格式範例（不再寫死 plan／QUERY_AREA）。"""
+        d = dirs[0]
+        a = (ACTIONS.get(d) or ["DECLINE_FLIGHT"])[0]
+        need = ID_INPUT.get(a, [])
+        ids = [i for i in task["cands"].get(d, []) if self.graph.nodes[i]["cat"] in need][:1] if need else []
+        return json.dumps({"steps": [{"id": "s1", "direction": d, "action": a, "ids": ids, "params": {}, "after": [],
+                                      "bind": {}, "when": None, "require": {}}]}, ensure_ascii=False)
+
+    def _plan_schema(self, task, dirs):
+        acts = sorted({a for d in dirs for a in ACTIONS.get(d, [])}) or ["DECLINE_FLIGHT"]
+        ids = sorted({i for d in dirs for i in task["cands"].get(d, [])} | ({"U100"} if "ui" in dirs else set())) or ["U100"]
+        step = {"type": "object", "properties": {
+            "id": {"type": "string"}, "direction": {"type": "string", "enum": list(dirs)},
+            "action": {"type": "string", "enum": acts},
+            "ids": {"type": "array", "items": {"type": "string", "enum": ids}},
+            "params": {"type": "object"}, "after": {"type": "array", "items": {"type": "string"}},
+            "bind": {"type": "object"}, "when": {"type": ["string", "null"]}, "require": {"type": "object"}},
+            "required": ["id", "direction", "action", "ids", "params", "after", "bind", "when", "require"]}
+        return {"type": "object", "properties": {"steps": {"type": "array", "items": step}}, "required": ["steps"]}
+
     def _plan_prompt(self, task, dirs, fixed, redo=None):
         parts = [f"句子：{task['text']}", "方向（依序）：" + "、".join(f"{d}（{KIND_ZH[d]}）" for d in dirs)]
         for d in dirs:
-            parts.append(f"[{d}] 可選動作：{'｜'.join(ACTIONS[d]) or '（無）'}\n可用 ID：\n" +
-                         ("\n".join(task["lines"].get(d, [])) or "（無）"))
+            parts.append(f"[{d}] 可選動作：\n" + ("\n".join(f"- {a}：{OC.ACTION_ZH[a]}" for a in ACTIONS[d]) or "（無）") +
+                         "\n可用 ID：\n" + ("\n".join(task["lines"].get(d, [])) or "（無）"))
+        parts.append("目前狀態與每個方向的必要成果：\n" + OC.summary(dirs, self.have(task)))
+        parts.append("計畫必須讓每個方向的必要成果都能產生；需要輸入的動作要用 bind 指到產生該輸入的步驟。")
         if fixed:
             parts.append("已存在的步驟（可在 after／bind／when／require 引用，不可重寫）：" +
                          json.dumps([{k: s[k] for k in ("id", "direction", "action", "state")} for s in fixed],
@@ -102,8 +160,8 @@ class PlanBController(M4bController):
             parts.append("需要重新規劃的部分：" + redo)
         parts.append("規則：bind 寫 {\"輸入槽\":\"sN.輸出欄位\"}；when 只能寫 \"sN.route_preview.verdict==pass\"；"
                      "require 寫 {\"sN\":\"APPLIED\"}；params 只能填允許值。")
-        parts.append('只輸出 JSON：{"steps":[{"id":"s1","direction":"plan","action":"QUERY_AREA","ids":["A001"],'
-                     '"params":{},"after":[],"bind":{},"when":null,"require":{}}]}')
+        parts.append("格式範例（只示範格式，內容要依句子決定）：" + self._example(task, dirs))
+        parts.append('只輸出 JSON：{"steps":[...]}')
         return "\n".join(parts)
 
     def _next_id(self, task):
@@ -125,7 +183,8 @@ class PlanBController(M4bController):
             if not isinstance(sid, str) or not re.fullmatch(r"s\d+", sid) or sid in seen or sid in fixed_ids:
                 return False, None, f"步驟編號 {sid} 不合法或重複"
             if d not in dirs or a not in ACTIONS.get(d, []):
-                return False, None, f"{sid}：方向或動作不在白名單"
+                return False, None, (f"{sid}：direction 只能是 {'、'.join(dirs)}；" +
+                                     "；".join(f"{x} 的 action 只能是 {'、'.join(ACTIONS.get(x, [])) or '（無）'}" for x in dirs))
             ids, params = st.get("ids", []), st.get("params", {})
             after, bind, req = st.get("after", []), st.get("bind", {}), st.get("require", {})
             ids, after = ([] if ids is None else ids), ([] if after is None else after)
@@ -171,6 +230,15 @@ class PlanBController(M4bController):
             seen.add(sid)
             out.append({"id": sid, "direction": d, "action": a, "ids": ids, "params": params, "after": after,
                         "bind": bind, "when": when, "require": req})
+        # v3.6 執行前完整性：從目前成果與尚未完成的既有步驟出發，模擬整份計畫，每個方向的必要成果都要可達
+        pend = [x for x in task["plan"] if x["state"] in ("PENDING", "WAITING")]
+        sim, bad = OC.simulate(pend + out, self.have(task))
+        if bad:
+            return False, None, "；".join(f"{i} 缺輸入 {'、'.join(OC.ZH[n] for n in ns)}（先加產生它的步驟並用 bind 指過去）"
+                                         for i, ns in bad)
+        gaps = {d: OC.missing(d, sim) for d in dirs if OC.missing(d, sim)}
+        if gaps:
+            return False, None, "計畫不完整：" + "；".join(f"{d} 還缺 {'→'.join(OC.ZH[k] for k in m)}" for d, m in gaps.items())
         return True, out, ""
 
     def _plan(self, task, dirs, initial, fixed=None, redo=None, forbid=frozenset(), max_steps=None):
@@ -194,7 +262,7 @@ class PlanBController(M4bController):
                 break
             msg = content + (f"\n上次錯誤：{err}。請只輸出合法 JSON。" if err else "")
             call = {"messages": [{"role": "system", "content": task["rules"]}, {"role": "user", "content": msg}],
-                    "purpose": trace["purpose"]}
+                    "purpose": trace["purpose"], "schema": self._plan_schema(task, dirs)}
             try:
                 raw = self.model(call)
             except Exception as e:  # noqa: BLE001
@@ -208,11 +276,16 @@ class PlanBController(M4bController):
                 ok, steps, err = False, None, f"計畫格式錯誤（{type(e).__name__}）"
             if ok:
                 trace["source"] = "model"
+                for x in steps:
+                    x["origin"] = "model"
                 return steps
             first = False
         if initial:
             task["notes"].append("計畫無效或未呼叫模型，改用規則計畫")
-            return self._rule_plan(task, dirs)
+            steps = self._rule_plan(task, dirs)
+            for x in steps:
+                x["origin"] = "rule"
+            return steps
         return None
 
     def _rule_plan(self, task, dirs):
@@ -241,9 +314,11 @@ class PlanBController(M4bController):
             del task["steps"][done_before:]
         return steps
 
-    def _add_steps(self, task, steps):
+    def _add_steps(self, task, steps, origin=None):
         for s in steps or []:
             s = dict(s, state="PENDING")
+            if origin and "origin" not in s:
+                s["origin"] = origin
             task["plan"].append(s)
 
     # ---------- 執行 ----------
@@ -324,6 +399,7 @@ class PlanBController(M4bController):
             view[field] = P[sid]["out"][field]
         before = {k: id(v) for k, v in view.items()}
         task["artifacts"] = view
+        task["cur_by"] = s.get("origin", "rule")
         try:
             res = self._exec(task, s["direction"], step, qv)
         finally:

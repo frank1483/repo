@@ -14,9 +14,15 @@ import re
 import time
 
 from .agent_loop import default_extract
+from . import outcomes as OC
 from .id_graph import DIRECTION_CATS, pack
 
 KINDS = ("plan", "ui", "qa", "report", "chat", "manual", "layout", "color", "model", "flight_request")
+KIND_DEF = {"plan": "任務規劃：巡檢、航線、覆蓋", "ui": "放到首頁：把結果放到首頁",
+            "qa": "問答：問數值或原因", "report": "報告：產生摘要", "chat": "閒聊",
+            "manual": "手冊查詢：查 PX4／QGC 手冊", "layout": "版面：放大縮小、移動、顯示隱藏、文字大小",
+            "color": "顏色：主題、深色、淺色、高對比", "model": "模型切換：模型或辨識類別",
+            "flight_request": "飛控要求：起飛、降落、返航、拍照等（只回固定說明）"}
 KIND_ZH = {"plan": "任務規劃", "ui": "放到首頁", "qa": "問答", "report": "報告", "chat": "閒聊", "manual": "手冊查詢",
            "layout": "版面", "color": "顏色", "model": "模型切換", "flight_request": "飛控要求"}
 KEYWORDS = {"plan": ["巡檢", "航線", "規劃", "覆蓋"], "ui": ["首頁"], "qa": ["是什麼", "如何", "為什麼", "多少"],
@@ -62,7 +68,7 @@ class M4bController:
         self.summary_llm = summary_llm
 
     # ---------- 模型呼叫（經帳本，最多修正一次） ----------
-    def _call(self, task, purpose, content, parse):
+    def _call(self, task, purpose, content, parse, schema=None):
         trace = {"purpose": purpose, "replies": [], "source": "rule"}
         task["traces"].append(trace)
         if self.model is None:
@@ -75,6 +81,8 @@ class M4bController:
             msg = content + (f"\n上次錯誤：{err}。請只輸出合法 JSON。" if err else "")
             call = {"messages": [{"role": "system", "content": task["rules"]}, {"role": "user", "content": msg}],
                     "purpose": purpose}
+            if schema is not None:                          # v3.6：Ollama JSON Schema 約束結構與候選值
+                call["schema"] = schema
             try:
                 raw = self.model(call)
             except Exception as e:  # noqa: BLE001
@@ -163,11 +171,16 @@ class M4bController:
                 return False, None, "只能有 directions 一個欄位"
             ds = obj["directions"]
             if not isinstance(ds, list) or not ds or not all(isinstance(d, str) and d in KINDS for d in ds):
-                return False, None, "directions 必須是白名單內的方向清單"
+                return False, None, "directions 只能填這些代碼：" + "、".join(KINDS)
             return True, list(dict.fromkeys(ds)), ""
-        content = ("句子：" + task["text"] + "\n可選方向（依你判斷的先後排序輸出）：" + "｜".join(
-            f"{k} {KIND_ZH[k]}" for k in KINDS) + '\n只輸出 JSON：{"directions":["..."]}')
-        ds = self._call(task, "stage1", content, parse)
+        content = ("句子：" + task["text"] + "\n方向代碼與意思：\n" + "\n".join(f"- {k}：{KIND_DEF[k]}" for k in KINDS) +
+                   "\n請選出這句話需要的方向，依先後排序，只填代碼（例如 color），不要加說明。" +
+                   '\n只輸出 JSON：{"directions":["代碼"]}')
+        schema = {"type": "object", "properties": {"directions": {"type": "array", "minItems": 1,
+                                                                  "items": {"type": "string", "enum": list(KINDS)}}},
+                  "required": ["directions"]}
+        ds = self._call(task, "stage1", content, parse, schema=schema)
+        task["stage1_source"] = "model" if ds is not None else "keyword"
         if ds is None:
             ds = [k for k in KINDS if any(w in task["text"] for w in KEYWORDS.get(k, []))] or ["chat"]
             task["notes"].append("第 1 段無效或未呼叫模型，改用關鍵字表")
@@ -199,22 +212,41 @@ class M4bController:
         return bool(rp and rp.get("verdict") == "pass")
 
     # ---------- 方向內逐步 ----------
+    def have(self, task):
+        return OC.have_from(task["artifacts"], task["proposals"])
+
     def _run_direction(self, task, d, qv):
-        allowed = ACTIONS[d] + ["FINISH", "HOLD"]
         steps = 0
         while steps < self.steps_max:
+            have = self.have(task)
+            if not OC.missing(d, have):                       # v3.6：必要成果已齊（或合法略過）→ 程式結束本方向
+                task["dir_status"][d] = "DONE" if self._dir_done(task, d) else "INCOMPLETE"
+                return
+            can = OC.executable(d, ACTIONS[d], have)
+            if not can:
+                task["notes"].append(f"{KIND_ZH[d]}：還缺 {'、'.join(OC.ZH[k] for k in OC.missing(d, have))}，但沒有可做的動作")
+                task["dir_status"][d] = "INCOMPLETE"
+                return
             steps += 1
-            done_actions = [s["action"] for s in task["steps"] if s["direction"] == d]
+            allowed = can + ["FINISH", "HOLD"]
+            cands = task["cands"].get(d, [])
             content = (f"句子：{task['text']}\n方向：{d}（{KIND_ZH[d]}）\n可用 ID：\n" +
                        ("\n".join(task["lines"].get(d, [])) or "（無）") +
-                       f"\n目前進度：{self._progress(task)}\n本方向已做：{'、'.join(done_actions) or '無'}\n"
-                       f"可選動作：{'｜'.join(allowed)}\n"
-                       '只輸出 JSON：{"action":"動作","ids":["ID"],"params":{}}')
-            step = self._call(task, f"step:{d}", content, lambda raw: self._parse_step(task, d, raw, allowed))
+                       "\n目前狀態：\n" + OC.summary([d], have) +
+                       "\n現在能做的動作：\n" + "\n".join(f"- {a}：{OC.ACTION_ZH[a]}" for a in can) +
+                       "\n- FINISH：本方向結束\n- HOLD：無法安全處理，停下\n"
+                       '只輸出 JSON：{"action":"動作代碼","ids":["ID"],"params":{}}')
+            schema = {"type": "object", "properties": {
+                "action": {"type": "string", "enum": allowed},
+                "ids": {"type": "array", "items": {"type": "string", "enum": cands or ["U100"]}},
+                "params": {"type": "object"}}, "required": ["action", "ids", "params"]}
+            step = self._call(task, f"step:{d}", content, lambda raw: self._parse_step(task, d, raw, allowed),
+                              schema=schema)
             source = "model" if step is not None else "rule"
             if step is None:
                 step = self._rule_step(task, d)
             task["steps"].append(dict(step, direction=d, source=source))
+            task["cur_by"] = source
             if step["action"] == "HOLD":
                 task["dir_status"][d] = "FAILED_SAFE"
                 return
@@ -236,7 +268,7 @@ class M4bController:
             return False, None, "格式錯誤"
         a = obj["action"]
         if not isinstance(a, str) or a not in allowed:
-            return False, None, f"動作 {a} 不在可選清單"
+            return False, None, f"動作 {a} 現在不能做；現在能做的動作只有：{'、'.join(allowed)}"
         ids = obj.get("ids", [])
         params = obj.get("params", {})
         ids = [] if ids is None else ids
@@ -409,7 +441,7 @@ class M4bController:
 
     def _propose(self, task, d, action, ids, params, ref, source=None):
         task["proposals"].append({"direction": d, "action": action, "ids": list(ids), "params": dict(params),
-                                  "state": "PROPOSED", "ref": ref, "source": source,
+                                  "state": "PROPOSED", "ref": ref, "source": source, "by": task.get("cur_by", "rule"),
                                   "t_ready_s": round(time.monotonic() - task["t0"], 3)})
 
     def _dir_done(self, task, d):
@@ -495,4 +527,5 @@ class M4bController:
                 "directions": task["directions"], "dir_status": task["dir_status"], "steps": task["steps"],
                 "notes": task["notes"], "calls_used": task["ledger"].used, "traces": task["traces"],
                 "retrieval": task.get("retrieval"), "packing": task.get("packing"), "artifacts": task["artifacts"],
-                "qv_ok": task.get("qv_ok"), "t_pre_summary_s": t_pre}
+                "qv_ok": task.get("qv_ok"), "t_pre_summary_s": t_pre, "stage1_source": task.get("stage1_source"),
+                "outcomes": OC.have_from(task["artifacts"], task["proposals"])}

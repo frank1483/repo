@@ -489,7 +489,8 @@ class Gateway:
             content, raw = self.upstream.chat(job.req, remaining, job.cancel)
             lat = time.time() - t_start
             rec.update(ok=True, error=None, latency_s=round(lat, 3), content=content,
-                       upstream_meta={k: raw.get(k) for k in ("eval_count", "prompt_eval_count",
+                       upstream_meta={k: raw.get(k) for k in ("eval_count", "prompt_eval_count", "prompt_eval_duration",
+                                                              "eval_duration", "load_duration",
                                                               "total_duration", "usage") if k in raw})
             self.stats["ok"] += 1
             result = (200, {
@@ -498,7 +499,8 @@ class Gateway:
                 "choices": [{"index": 0, "finish_reason": "stop",
                              "message": {"role": "assistant", "content": content}}],
                 "gcs_gateway": {"feature": job.feature, "queue_wait_s": rec["queue_wait_s"],
-                                "latency_s": rec["latency_s"]}})
+                                "latency_s": rec["latency_s"]},
+                "gcs_upstream_meta": rec.get("upstream_meta") or {}})
         except DeadlineExceeded as exc:
             lat = time.time() - t_start
             rec.update(ok=False, error=f"deadline: {exc} ({job.cancel_reason or 'deadline'})",
