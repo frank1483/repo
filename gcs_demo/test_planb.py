@@ -234,6 +234,57 @@ class PlanBTests(unittest.TestCase):
         self.assertTrue(rec["correct"])
         self.assertTrue(rec["rescored_by_step_source"])
 
+    # ---- v5（CODEX-APP-0409）----
+    def test_earlier_pass_later_fail_scored_by_bound_preview(self):
+        from . import planb_runner as PR
+        case = {"id": "X", "expect_proposals": [{"action": "PROPOSE_HOME_ROUTE", "ids": ["U100"], "values": []}],
+                "expect_artifacts": {"route_preview": "pass"}, "expect_status": "DONE", "gold_dirs": ["plan", "ui"],
+                "expect_dependency": {"PROPOSE_HOME_ROUTE": "pass_preview"}}
+        p = plan(st("s1", "plan", "QUERY_AREA", ["A001"]),
+                 st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                 st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+                 st("s4", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
+                    when="s3.route_preview.verdict==pass"),
+                 st("s5", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}, after=["s4"]))
+        m = scripted(['{"directions":["plan","ui"]}', p])
+        _, T = tools(["A001", "U100"])
+        n = {"v": 0}
+
+        def verify(ref):
+            n["v"] += 1
+            return {"result": "pass" if n["v"] == 1 else "fail", "preview_ref": f"PV{n['v']}", "est_end_pct": 50.0}
+        T["verify_preview"] = verify
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢放到首頁")
+        self.assertEqual(r["artifacts"]["route_preview"]["verdict"], "fail")    # 全域最新是不合格
+        self.assertEqual(r["status"], "DONE")                                   # 終態看實際綁定的合格預覽
+        orig_run, orig_rec = PR._run_case, PR.a_record
+        try:
+            PR._run_case = lambda *a: ({"correct": False}, {"reply": r})
+            PR.a_record = lambda c, k: ({"directions": r["directions"]},
+                                        {"directions": r["directions"], "stage1_calls": 1}, [])
+            rec, _ = PR.run_case(case, {"id": "A-s6-b30"}, None, None, None, None)
+        finally:
+            PR._run_case, PR.a_record = orig_run, orig_rec
+        self.assertTrue(rec["correct"])
+
+    def test_a_exception_row_isolated(self):
+        import os
+        import tempfile
+        from . import planb_runner as PR
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "cases", "A-s6-b30", "C01"))
+        open(os.path.join(d, "results.jsonl"), "w", encoding="utf-8").write(
+            json.dumps({"cond": "A-s6-b30", "case": "C01", "error": "RuntimeError('x')"}) + "\n")
+        json.dump({"reply": {}}, open(os.path.join(d, "cases", "A-s6-b30", "C01", "full.json"), "w", encoding="utf-8"))
+        old = PR._SHARED["dir"]
+        try:
+            PR._SHARED["dir"] = d
+            rep, preset, batches = PR.a_record("A-s6-b30", "C01")
+        finally:
+            PR._SHARED["dir"] = old
+        self.assertTrue(preset["invalid_a"])
+        self.assertIsNone(batches)
+
 
 if __name__ == "__main__":
     unittest.main()

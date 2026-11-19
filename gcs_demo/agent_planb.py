@@ -376,6 +376,13 @@ class PlanBController(M4bController):
         self._add_steps(task, new)
         return True
 
+    def _dir_done(self, task, d):
+        """v5（0409 第 2 點）：規劃方向看計畫裡實際完成的預覽步驟，不看全域最新一份。"""
+        if d == "plan" and task.get("plan") is not None:
+            return any(x["action"] == "VERIFY_PREVIEW" and x["state"] == "OK" and
+                       ((x.get("out") or {}).get("route_preview") or {}).get("verdict") == "pass" for x in task["plan"])
+        return super()._dir_done(task, d)
+
     def _finish(self, task, status, ask=None):
         r = super()._finish(task, status, ask)
         r["plan"] = task.get("plan", [])

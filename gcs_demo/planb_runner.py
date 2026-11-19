@@ -42,7 +42,27 @@ def gateway_model(gw, calls_log):
     return model
 
 
+def a_row(cond, case):
+    rows = [json.loads(l) for l in open(os.path.join(_SHARED["dir"], "results.jsonl"), encoding="utf-8") if l.strip()]
+    hit = [r for r in rows if r["cond"] == cond and r["case"] == case]
+    return hit[0] if len(hit) == 1 else None
+
+
+def a_valid(cond, case):
+    """A 這一列可以當共用輸入嗎：唯一一列、沒有案例例外、詳細檔存在且 reply 非空。"""
+    row = a_row(cond, case)
+    p = os.path.join(_SHARED["dir"], "cases", cond, case, "full.json")
+    if row is None or row.get("error") or not os.path.exists(p):
+        return False
+    try:
+        return bool(json.load(open(p, encoding="utf-8")).get("reply"))
+    except ValueError:
+        return False
+
+
 def a_record(cond, case):
+    if not a_valid(cond, case):                  # v5（0409 第 1 點）：A 例外／空 reply 不當共用輸入，B 這列隔離
+        return {}, {"invalid_a": True, "directions": None, "stage1_calls": 0}, None
     p = os.path.join(_SHARED["dir"], "cases", cond, case, "full.json")
     rep = json.load(open(p, encoding="utf-8"))["reply"] or {}
     n = sum(len(t.get("replies") or []) for t in rep.get("traces") or [] if t.get("purpose") == "stage1")
@@ -60,6 +80,8 @@ def a_record(cond, case):
 def controller(*a, **kw):
     cond, case = _SHARED["current"]
     _, preset, _ = a_record(cond, case)
+    if preset and preset.get("invalid_a"):     # 照常跑 B（保留原始結果），但這列不進主表
+        preset = None
     return PlanBController(*a, preset=preset, **kw)
 
 
@@ -75,18 +97,22 @@ def run_case(case, cond, model_factory, graph, counter, work):
     a_rep, preset, a_batches = a_record(cond["id"], case["id"])
     b_batches = [[b["directions"], {d: v["items"] for d, v in b["per_dir"].items()}]
                  for b in (r.get("packing") or {}).get("batches") or []]
-    rec["shared_from_a"] = preset and {k: preset[k] for k in ("directions", "stage1_calls")}
-    rec["shared_input_match"] = (r.get("directions") or []) == (a_rep.get("directions") or []) and b_batches == a_batches
+    rec["shared_from_a"] = preset and {k: preset.get(k) for k in ("directions", "stage1_calls", "invalid_a")}
+    rec["shared_input_match"] = not (preset or {}).get("invalid_a") and \
+        (r.get("directions") or []) == (a_rep.get("directions") or []) and b_batches == a_batches
     # v4（0408 第 2 點）：首頁相依改按實際步驟來源核對——提案引用的預覽必須是本計畫某個 VERIFY 步驟產生的合格預覽
     deps = case.get("expect_dependency") or {}
     if deps and r:
-        good = {((s.get("out") or {}).get("route_preview") or {}).get("ref") for s in r.get("plan") or []
-                if s["action"] == "VERIFY_PREVIEW" and ((s.get("out") or {}).get("route_preview") or {}).get("verdict") == "pass"}
+        good = {}
+        for s in r.get("plan") or []:
+            pv = (s.get("out") or {}).get("route_preview") or {}
+            if s["action"] == "VERIFY_PREVIEW" and s.get("state") == "OK" and pv.get("verdict") == "pass":
+                good[pv.get("ref")] = pv
         art = dict(r.get("artifacts") or {})
         for p in r.get("proposals") or []:
             src = p.get("source") or {}
             if p["action"] == "PROPOSE_HOME_ROUTE" and src.get("verdict") == "pass" and src.get("preview_ref") in good:
-                art["route_preview"] = dict(art.get("route_preview") or {}, ref=src["preview_ref"])
+                art["route_preview"] = good[src["preview_ref"]]       # v5：整份換成實際綁定的預覽（含判定）
         rescored = R4.score(case, dict(r, artifacts=art))
         if rescored["correct"] != rec["correct"]:
             rec["rescored_by_step_source"] = True
@@ -127,13 +153,26 @@ def check_a_dir(phase, fake):
         errs.append("A 不是用已同意的 M4b v3 來源包跑的")
     if not info.get("end"):
         errs.append("A 沒有正常結束")
+    case_ids = {c["id"] for c in json.load(open(R4.CASES, encoding="utf-8"))["cases"]}
+    pairs = [(r["cond"], r["case"]) for r in rows]
+    if len(pairs) != len(set(pairs)):
+        errs.append("A 有重複的條件×案例列")
+    if {r["cond"] for r in rows} != want:
+        errs.append(f"A 的條件 {sorted({r['cond'] for r in rows})} 與 B 的 {sorted(want)} 不同")
     for c in want:
-        k = sum(1 for r in rows if r["cond"] == c)
-        if k != n_cases:
-            errs.append(f"A 條件 {c} 只有 {k}/{n_cases} 列")
+        got = {r["case"] for r in rows if r["cond"] == c}
+        if got != case_ids:
+            errs.append(f"A 條件 {c} 的案例不完整（{len(got)}/{n_cases}）")
+        for k in got:
+            if not os.path.exists(os.path.join(_SHARED["dir"], "cases", c, k, "full.json")):
+                errs.append(f"A 缺 {c}/{k}/full.json")
+    if (info.get("summary") or None) is None:
+        errs.append("A 沒有寫出摘要（可能沒有正常結束）")
     if errs:
         raise SystemExit("--shared-from 核對不通過：" + "；".join(errs))
+    bad = sorted([r["cond"], r["case"]] for r in rows if not a_valid(r["cond"], r["case"]))
     return {"dir": os.path.abspath(_SHARED["dir"]), "phase": info.get("phase"), "fake": info.get("fake"),
+            "a_rows_isolated": bad,
             "a_bundle_sha256": (info.get("bundle_verification") or {}).get("sums_sha256"), "a_end": info.get("end")}
 
 
