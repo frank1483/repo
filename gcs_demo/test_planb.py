@@ -256,7 +256,8 @@ class PlanBTests(unittest.TestCase):
             return {"result": "pass" if n["v"] == 1 else "fail", "preview_ref": f"PV{n['v']}", "est_end_pct": 50.0}
         T["verify_preview"] = verify
         r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢放到首頁")
-        self.assertEqual(r["artifacts"]["route_preview"]["verdict"], "fail")    # 全域最新是不合格
+        self.assertEqual(next(x for x in r["plan"] if x["id"] == "s5")["out"]["route_preview"]["verdict"], "fail")
+        self.assertEqual(r["artifacts"]["route_preview"]["ref"], "PV1")          # v7：回覆／成果也用綁定的那份
         self.assertEqual(r["status"], "DONE")                                   # 終態看實際綁定的合格預覽
         orig_run, orig_rec = PR._run_case, PR.a_record
         try:
@@ -316,6 +317,48 @@ class PlanBTests(unittest.TestCase):
             PR._run_case, PR.a_record = orig_run, orig_rec
         self.assertFalse(rec["correct"])
         self.assertFalse(rec["claimed_done_wrong"])
+
+    # ---- v7（CODEX-APP-0411）----
+    def _two_previews(self):
+        n = {"v": 0}
+
+        def verify(ref):
+            n["v"] += 1
+            return {"result": "pass" if n["v"] == 1 else "fail", "preview_ref": f"PV{n['v']}",
+                    "est_end_pct": 60.0 if n["v"] == 1 else 5.0}
+        return verify
+
+    def test_result_preview_follows_execution_order(self):
+        p = plan(st("s1", "plan", "QUERY_AREA", ["A001"]),
+                 st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                 st("s4", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+                 st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}))
+        m = scripted(['{"directions":["plan"]}', p])
+        _, T = tools(["A001"])
+        T["verify_preview"] = self._two_previews()
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
+        seq = {x["id"]: x["exec_seq"] for x in r["plan"] if "exec_seq" in x}
+        self.assertLess(seq["s3"], seq["s4"])                    # 排程依數字：s3 先、s4 後
+        self.assertEqual(r["result_preview"]["ref"], "PV2")      # 結果＝實際最後完成的 s4，不是清單尾端的 s3
+        self.assertNotEqual(r["status"], "DONE")
+        self.assertIn("PV2", r["reply_zh"])
+
+    def test_reply_uses_bound_preview(self):
+        p = plan(st("s1", "plan", "QUERY_AREA", ["A001"]),
+                 st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                 st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+                 st("s4", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
+                    when="s3.route_preview.verdict==pass"),
+                 st("s5", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}, after=["s4"]))
+        m = scripted(['{"directions":["plan","ui"]}', p])
+        _, T = tools(["A001", "U100"])
+        T["verify_preview"] = self._two_previews()
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢放到首頁")
+        self.assertEqual(r["status"], "DONE")
+        self.assertIn("PV1", r["reply_zh"])
+        self.assertIn("60.0", r["reply_zh"])
+        self.assertNotIn("PV2", r["reply_zh"])
+        self.assertEqual(r["artifacts"]["route_preview"]["ref"], "PV1")
 
 
 if __name__ == "__main__":

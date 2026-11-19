@@ -329,6 +329,8 @@ class PlanBController(M4bController):
         finally:
             task["artifacts"] = glob
         s["out"] = {k: v for k, v in view.items() if before.get(k) != id(v)}
+        task["exec_seq"] = task.get("exec_seq", 0) + 1
+        s["exec_seq"] = task["exec_seq"]                     # 實際執行順序（v7：結果預覽依此選，不依清單位置）
         for k, v in s["out"].items():                         # 全域只留最新一份給回覆模板
             glob[k] = v
         return res
@@ -378,14 +380,16 @@ class PlanBController(M4bController):
 
     def result_preview(self, task):
         """v6（0410）：本任務的「結果預覽」只有一個定義，終態與計分共用——
-        有首頁提案時＝它實際綁定的那份預覽；沒有時＝計畫中最後一個完成的預覽步驟（與方案 A 的最新一份同義）。"""
+        有首頁提案時＝它實際綁定的那份預覽；沒有時＝**實際執行順序**最後完成的預覽步驟（與方案 A 的最新一份同義）。
+        回覆模板與數字出處也用它（v7，0411）。"""
         outs = {}
         last = None
-        for x in task.get("plan") or []:
-            pv = (x.get("out") or {}).get("route_preview")
-            if x["action"] == "VERIFY_PREVIEW" and x["state"] == "OK" and pv:
-                outs[pv.get("ref")] = pv
-                last = pv
+        done = [x for x in task.get("plan") or [] if x["action"] == "VERIFY_PREVIEW" and x["state"] == "OK"
+                and (x.get("out") or {}).get("route_preview")]
+        for x in sorted(done, key=lambda x: x.get("exec_seq", 0)):
+            pv = x["out"]["route_preview"]
+            outs[pv.get("ref")] = pv
+            last = pv
         for p in task.get("proposals") or []:
             src = p.get("source") or {}
             if p["action"] == "PROPOSE_HOME_ROUTE" and src.get("preview_ref") in outs:
@@ -398,6 +402,9 @@ class PlanBController(M4bController):
         return super()._dir_done(task, d)
 
     def _finish(self, task, status, ask=None):
+        rp = self.result_preview(task)
+        if rp is not None:                                    # v7：回覆模板與數字出處也用同一份結果預覽
+            task["artifacts"]["route_preview"] = rp
         r = super()._finish(task, status, ask)
         r["plan"] = task.get("plan", [])
         r["result_preview"] = self.result_preview(task)
