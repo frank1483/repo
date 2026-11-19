@@ -153,6 +153,21 @@ class M4bTests(unittest.TestCase):
         r = M4bController(T, None, GRAPH, COUNTER).request("隱藏指令區")
         self.assertEqual(r["proposals"], [])
 
+    def test_batches_run_pending_directions(self):
+        big = lambda text: 1100 if "｜" in text and "說明" not in text else 1   # 三份必要資料共 3,300 → 兩批
+        _, T = tools(["T001", "M003"])
+        r = M4bController(T, None, GRAPH, big).request("改成深色主題，改用規則模式，風速計放大")
+        self.assertEqual([b["directions"] for b in r["packing"]["batches"]], [["layout", "color"], ["model"]])
+        self.assertEqual(sorted(p["action"] for p in r["proposals"]),
+                         ["MODEL_SWITCH_PROPOSE", "UI_LAYOUT_PROPOSE", "UI_THEME_PROPOSE"])
+        self.assertEqual(r["status"], "DONE")
+
+    def test_over_dir_limit_needs_user(self):
+        _, T = tools(["T001"])
+        r = M4bController(T, None, GRAPH, lambda text: 1600 if "T00" in text else 0).request("改成深色主題")
+        self.assertEqual(r["status"], "PARKED")
+        self.assertEqual(r["packing"]["over_dir_limit"], ["color"])
+
 
 if __name__ == "__main__":
     unittest.main()

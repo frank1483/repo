@@ -110,16 +110,33 @@ class M4bController:
         qv = self.tools["embed_query"](raw) if "embed_query" in self.tools else None   # 第 1 段之後，1 次
         task["qv_ok"] = qv is not None
         retrieved = {d: self.graph.retrieve(d, qv) for d in dirs}
-        packed = pack(self.graph, dirs, retrieved, self.counter)
         task["retrieval"] = {d: retrieved[d]["log"] for d in dirs}
-        task["packing"] = {"log": packed["log"], "pending": packed["pending"], "total_tokens": packed["total_tokens"],
-                           "per_dir": {d: {"items": p["items"], "tokens": p["tokens"], "cap": p["cap"]}
-                                       for d, p in packed["plan"].items()}}
-        task["cands"] = {d: p["items"] for d, p in packed["plan"].items()}
-        task["lines"] = {d: p["lines"] for d, p in packed["plan"].items()}
-        for d in packed["pending"]:
+        task["packing"] = {"batches": []}
+        task["cands"], task["lines"] = {}, {}
+        for d in dirs:
             task["dir_status"][d] = "PENDING_BATCH"
-        self._schedule(task, qv)
+        remaining = list(dirs)
+        while remaining:                                   # v3.5：每批上限 3,000；每個方向只分配一次
+            packed = pack(self.graph, remaining, retrieved, self.counter)
+            task["packing"]["batches"].append(
+                {"directions": list(packed["plan"]), "pending": packed["pending"], "log": packed["log"],
+                 "total_tokens": packed["total_tokens"],
+                 "per_dir": {d: {"items": p["items"], "tokens": p["tokens"], "cap": p["cap"]}
+                             for d, p in packed["plan"].items()}})
+            if not packed["plan"]:                          # 空批：剩下的方向單獨也放不進 → 記原因並結束
+                for d in remaining:
+                    task["dir_status"][d] = "NEEDS_USER"
+                    task["notes"].append(f"{KIND_ZH[d]}：必要資料超過單方向上限，請把範圍講小")
+                task["packing"]["over_dir_limit"] = list(remaining)
+                break
+            for d, pl in packed["plan"].items():
+                task["cands"][d], task["lines"][d] = pl["items"], pl["lines"]
+                task["dir_status"][d] = "PENDING"
+            for d in task["directions"]:                    # 等前一批結果的方向重新判斷
+                if task["dir_status"][d] == "WAITING":
+                    task["dir_status"][d] = "PENDING"
+            self._schedule(task, qv)
+            remaining = packed["pending"]
         if any(w in raw for w in FLIGHT_WORDS) and not any(p.get("kind") == "flight_notice"
                                                              for p in task["artifacts"].values()):
             task["artifacts"]["flight_notice"] = {"kind": "flight_notice", "by": "program"}
@@ -159,8 +176,6 @@ class M4bController:
 
     # ---------- 共用排程 ----------
     def _schedule(self, task, qv):
-        for d in task["directions"]:
-            task["dir_status"].setdefault(d, "PENDING")
         progressed = True
         while progressed:
             progressed = False
@@ -168,7 +183,7 @@ class M4bController:
                 if task["dir_status"][d] not in ("PENDING", "WAITING"):
                     continue
                 if d == "ui" and not self._ui_ready(task):
-                    task["dir_status"][d] = "WAITING" if task["dir_status"].get("plan") in ("PENDING", "RUNNING", "WAITING") \
+                    task["dir_status"][d] = "WAITING" if task["dir_status"].get("plan") in ("PENDING", "RUNNING", "WAITING", "PENDING_BATCH") \
                         else "INCOMPLETE"
                     continue
                 task["dir_status"][d] = "RUNNING"
