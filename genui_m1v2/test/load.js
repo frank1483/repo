@@ -9,5 +9,6 @@ module.exports = {
   Hash: load('GenuiHash.js', ['sha256Hex']),
   Tools: load('GenuiTools.js', ['telemetryLatest', 'flightlogSeries', 'energyTrend', 'alertHistory', 'manualSearch', 'contentTerms', 'tokenize', 'TOOLS_VERSION', 'expandQuery', 'ENERGY', 'STATUS']),
   Claims: load('GenuiClaims.js', ['generate', 'selectRule', 'validateSelection', 'render', 'answer', 'quota', 'MAX_CLAIMS', 'CLAIMS_VERSION']),
+  Bind: load('GenuiBind.js', ['resolve', 'fitLines', 'fitCount', 'seriesPaths', 'axisRange', 'num', 'ETA_NA_REASON', 'BIND_VERSION', 'MAX_POINTS']),
   Layout: load('GenuiLayout.js', ['plan', 'needsConfirm', 'checkApply', 'validatePlan', 'layout', 'validateLayout', 'CATALOG', 'GAP', 'GRID_COLS', 'LAYOUT_VERSION'])
 }

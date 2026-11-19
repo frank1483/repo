@@ -1,0 +1,5 @@
+module QGroundControl.GCP
+singleton GcpTheme 1.0 GcpTheme.qml
+GcpCard 1.0 GcpCard.qml
+GcpPanel 1.0 GcpPanel.qml
+GcpTelemetryMetricCard 1.0 GcpTelemetryMetricCard.qml
