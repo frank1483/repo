@@ -1,0 +1,49 @@
+{
+  "version": "id-catalog-v1",
+  "note": "M4b 首版 ID 圖的補充來源（UI 頁、分區、模組由 ui_agent/qml/GcpAgentCore.js 直接讀取；區域由 areas_v1.json；辨識類別由 domains/*.json）。本檔列出主題、模型、狀態欄位、無人機、參數與動作。主題與色票是測試用白名單，實際清單待核對 UI 複本；模型只列本機已安裝且非紅者。AI 共同決定（使用者委任）草擬。",
+  "themes": [
+    {"id": "T001", "name": "深色主題", "aliases": ["深色", "夜間", "暗色", "dark"], "desc": "深色背景、淺色文字的整體主題"},
+    {"id": "T002", "name": "淺色主題", "aliases": ["淺色", "日間", "亮色", "light"], "desc": "淺色背景、深色文字的整體主題"},
+    {"id": "T003", "name": "高對比主題", "aliases": ["高對比", "high contrast"], "desc": "高對比度的整體主題，文字對比至少 7:1"}
+  ],
+  "palette": {"primary": ["藍", "綠", "橘", "紫", "灰", "青"], "text": ["白", "黑", "淺灰", "深灰"], "background": ["黑", "深灰", "白", "淺灰"]},
+  "models": [
+    {"id": "M001", "name": "Gemma 4 E2B 文字模式（LLM）", "aliases": ["llm", "文字模型", "gemma"], "desc": "決策用語言模型，只處理文字", "tag": "gemma4:e2b", "mode": "text"},
+    {"id": "M002", "name": "Gemma 4 E2B 影像模式（VLM）", "aliases": ["vlm", "影像模型", "視覺模型"], "desc": "同一模型的影像輸入模式，用於看圖", "tag": "gemma4:e2b", "mode": "vision"},
+    {"id": "M003", "name": "規則模式（不用模型）", "aliases": ["規則", "不用模型", "rule"], "desc": "全部改由規則決策，永遠可切換", "tag": null, "mode": "rule"}
+  ],
+  "states": [
+    {"id": "S001", "name": "電量百分比", "aliases": ["電量", "電池", "battery"], "desc": "目前電池剩餘百分比"},
+    {"id": "S002", "name": "高度", "aliases": ["高度", "altitude"], "desc": "相對起飛點高度"},
+    {"id": "S003", "name": "速度", "aliases": ["速度", "空速", "地速", "speed"], "desc": "目前飛行速度"},
+    {"id": "S004", "name": "航向", "aliases": ["航向", "heading"], "desc": "目前機頭方向"},
+    {"id": "S005", "name": "返航距離", "aliases": ["返航距離", "距離"], "desc": "與起飛點的距離"},
+    {"id": "S006", "name": "風速風向", "aliases": ["風速", "風向", "wind"], "desc": "目前風況"},
+    {"id": "S007", "name": "任務進度", "aliases": ["進度"], "desc": "目前任務完成比例"}
+  ],
+  "drones": [
+    {"id": "D001", "name": "UAV-01", "aliases": ["一號機", "無人機"], "desc": "清單中的第一架無人機", "provides": ["S001", "S002", "S003", "S004", "S005", "S006", "S007"]}
+  ],
+  "params": [
+    {"id": "P001", "name": "全域文字大小", "aliases": ["文字大小", "字體大小", "字級", "字型大小"], "desc": "整個介面的文字比例，與元件大小分開調整", "actions": ["text_scale"], "allowed": ["小", "中", "大", "特大"], "parent": "U009"},
+    {"id": "P002", "name": "元件大小", "aliases": ["放大", "縮小", "大小", "尺寸"], "desc": "單一元件的顯示大小（不改文字大小）", "actions": ["scale"], "allowed": ["縮小", "原始", "放大"]},
+    {"id": "P003", "name": "元件位置", "aliases": ["移到", "移動", "位置", "左上", "右下"], "desc": "元件在頁面上的位置", "actions": ["move"], "allowed": ["左上", "右上", "左下", "右下", "中央"]},
+    {"id": "P004", "name": "元件顯示", "aliases": ["顯示", "隱藏", "開啟", "關閉"], "desc": "元件顯示或隱藏；鎖定元件不可隱藏", "actions": ["show", "hide"], "allowed": ["顯示", "隱藏"]}
+  ],
+  "module_states": {"homeStatus": ["S001"], "speedReadout": ["S003"], "altReadout": ["S002"], "headingTape": ["S004"],
+                    "compass": ["S004"], "windGauge": ["S006"], "homeInfo": ["S005"], "missionProgress": ["S007"],
+                    "telemetryBar": ["S001", "S002", "S003"]},
+  "actions": [
+    {"id": "X001", "code": "QUERY_AREA", "direction": "plan", "name": "查詢巡檢區域", "inputs": {"area": "A"}, "outputs": {"area_record": "area_record"}},
+    {"id": "X002", "code": "GEN_COVERAGE", "direction": "plan", "name": "生成覆蓋航點", "inputs": {"area": "area_record"}, "outputs": {"route": "coverage_route"}},
+    {"id": "X003", "code": "VERIFY_PREVIEW", "direction": "plan", "name": "預覽驗算", "inputs": {"route": "coverage_route"}, "outputs": {"preview": "route_preview"}, "states": ["pass", "fail"]},
+    {"id": "X004", "code": "PROPOSE_HOME_ROUTE", "direction": "ui", "name": "把航線放到首頁（開確認視窗）", "inputs": {"preview": "route_preview"}, "outputs": {"proposal": "apply_proposal"}, "states": ["PROPOSED", "APPLIED"]},
+    {"id": "X005", "code": "UI_LAYOUT_PROPOSE", "direction": "layout", "name": "調整版面（開確認視窗）", "inputs": {"target": "C|P", "op": "enum"}, "outputs": {"proposal": "apply_proposal"}, "states": ["PROPOSED", "APPLIED"]},
+    {"id": "X006", "code": "UI_THEME_PROPOSE", "direction": "color", "name": "切換主題（開確認視窗）", "inputs": {"theme": "T"}, "outputs": {"proposal": "apply_proposal"}, "states": ["PROPOSED", "APPLIED"]},
+    {"id": "X007", "code": "MODEL_SWITCH_PROPOSE", "direction": "model", "name": "切換模型或辨識類別（開確認視窗）", "inputs": {"model": "M"}, "outputs": {"proposal": "apply_proposal"}, "states": ["PROPOSED", "APPLIED"]},
+    {"id": "X008", "code": "MANUAL_SEARCH", "direction": "manual", "name": "查手冊（附出處）", "inputs": {}, "outputs": {"claims": "manual_claims"}},
+    {"id": "X009", "code": "QA_LOOKUP", "direction": "qa", "name": "查詢資料回答", "inputs": {}, "outputs": {"claims": "qa_claims"}},
+    {"id": "X010", "code": "REPORT_DRAFT", "direction": "report", "name": "產生報告草稿", "inputs": {}, "outputs": {"draft": "report_draft"}},
+    {"id": "X011", "code": "DECLINE_FLIGHT", "direction": "flight_request", "name": "回覆：飛控需用指令區（固定說明）", "inputs": {}, "outputs": {"notice": "flight_notice"}}
+  ]
+}
