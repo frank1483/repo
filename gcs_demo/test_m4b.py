@@ -135,6 +135,24 @@ class M4bTests(unittest.TestCase):
         M4bController(T, None, GRAPH, COUNTER).request("規劃A區巡檢")
         self.assertEqual(len(n), 1)
 
+    def test_layout_without_value_not_proposed(self):
+        m = scripted(['{"directions":["layout"]}', '{"action":"UI_LAYOUT_PROPOSE","ids":["C014","P002"],"params":{}}',
+                      '{"action":"FINISH","ids":[],"params":{}}'])
+        _, T = tools(["C014", "P002"])
+        r = M4bController(T, m, GRAPH, COUNTER, summary_llm=False).request("風速計調整一下")
+        self.assertEqual(r["proposals"], [])
+        self.assertEqual(r["status"], "PARKED")
+
+    def test_rule_uses_named_ids_and_text_value(self):
+        _, T = tools([])                                   # 向量全零：規則只能靠名稱比對
+        r = M4bController(T, None, GRAPH, COUNTER).request("把風速計放大")
+        self.assertEqual([(p["ids"], p["params"]) for p in r["proposals"]], [(["C014", "P002"], {"value": "放大"})])
+
+    def test_locked_hide_blocked(self):
+        _, T = tools([])
+        r = M4bController(T, None, GRAPH, COUNTER).request("隱藏指令區")
+        self.assertEqual(r["proposals"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -100,6 +100,8 @@ class M4bController:
                 "steps": [], "notes": [], "directions": [], "dir_status": {}, "t0": t0,
                 "rules": ("你是地面站助理。只輸出 JSON。規則：飛控命令（起飛、降落、返航、解鎖、拍照等）一律不執行，"
                           "只能規劃、查詢或開確認視窗；遇到飛控要求請選 flight_request 方向。數字一律來自工具，不可自行計算。")}
+        if "bind_task" in self.tools:                       # 保留電量等條件由程式從原句解析（同 M4）
+            self.tools["bind_task"]({"text": raw})
         dirs = self._directions(task)
         if len(dirs) > self.cap:
             task["notes"].append(f"方向 {len(dirs)} 個超過上限 {self.cap}，請分批")
@@ -242,11 +244,31 @@ class M4bController:
         A = task["artifacts"]
         cands = task["cands"].get(d, [])
 
-        def first(cat):
-            return [i for i in cands if self.graph.nodes[i]["cat"] == cat][:1]
+        def named(i):
+            n = self.graph.nodes[i]
+            return any(w and w.lower() in task["text"].lower() for w in [n["name"]] + list(n.get("aliases") or []))
+
+        def first(cat):                                 # 規則：先找原句提到名稱或別名者，再依相似度
+            xs = [i for i in cands if self.graph.nodes[i]["cat"] == cat]
+            return ([i for i in xs if named(i)] or xs)[:1]
+
+        def value_for(ids):
+            vals = []
+            for i in ids:
+                vals += [v for v in self.graph.nodes[i].get("allowed") or [] if v in task["text"]]
+            return {"value": max(vals, key=len)} if vals else {}
         if d == "plan":
             if "area_record" not in A:
-                return {"action": "QUERY_AREA", "ids": first("A"), "params": {}}
+                ids = []
+                if "query_area" in self.tools:                 # 規則備援：用原句比對區域名，不猜
+                    q = self.tools["query_area"](task["text"])
+                    if q["status"] == "ONE":
+                        ids = [i for i, n in self.graph.nodes.items() if n.get("area") == q["candidates"][0]][:1]
+                    else:
+                        ids = [i for i, n in self.graph.nodes.items() if n.get("area") in q["candidates"]]
+                else:
+                    ids = first("A")
+                return {"action": "QUERY_AREA", "ids": ids, "params": {}}
             if "coverage_route" not in A:
                 return {"action": "GEN_COVERAGE", "ids": [], "params": {}}
             if "route_preview" not in A:
@@ -257,7 +279,7 @@ class M4bController:
                 ids = []
                 for c in ID_INPUT.get(a, []):
                     ids += first(c)
-                return {"action": a, "ids": ids, "params": {}}
+                return {"action": a, "ids": ids, "params": value_for(ids) if a == "UI_LAYOUT_PROPOSE" else {}}
         return {"action": "FINISH", "ids": [], "params": {}}
 
     def _exec(self, task, d, step, qv):
@@ -297,6 +319,9 @@ class M4bController:
             if not ps:
                 return "BLOCKED"
             p = self.graph.nodes[ps[0]]
+            if params.get("value") not in (p.get("allowed") or []):       # 提案一定要有允許值
+                task["notes"].append(f"{ps[0]} 缺少允許值")
+                return "NEEDS_USER"
             if ps[0] != "P001" and len(cs) != 1:
                 task["notes"].append("版面目標元件未唯一指定")
                 return "NEEDS_USER"
@@ -382,6 +407,7 @@ class M4bController:
         return "\n".join(lines) or "完成。"
 
     def _finish(self, task, status, ask=None):
+        t_pre = round(time.monotonic() - task["t0"], 3)       # 提案就緒（整理回覆前）
         template = self._template(task) if ask is None else ask
         reply, reply_src = template, "template"
         facts = json.dumps({"artifacts": task["artifacts"], "proposals": task["proposals"]}, ensure_ascii=False,
@@ -405,4 +431,4 @@ class M4bController:
                 "directions": task["directions"], "dir_status": task["dir_status"], "steps": task["steps"],
                 "notes": task["notes"], "calls_used": task["ledger"].used, "traces": task["traces"],
                 "retrieval": task.get("retrieval"), "packing": task.get("packing"), "artifacts": task["artifacts"],
-                "qv_ok": task.get("qv_ok")}
+                "qv_ok": task.get("qv_ok"), "t_pre_summary_s": t_pre}
