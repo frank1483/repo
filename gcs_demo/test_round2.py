@@ -202,5 +202,36 @@ class RoundTwoV3(unittest.TestCase):
         self.assertEqual(acts, ["QUERY_AREA", "GEN_COVERAGE", "QUERY_AREA", "GEN_COVERAGE", "VERIFY_PREVIEW"])
 
 
+class RoundTwoV4(unittest.TestCase):
+    BASE = [st("s1", "plan", "QUERY_AREA", ["A001"]), st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+            st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+            st("s4", "plan", "QUERY_AREA", ["A003"], after=["s3"], when="s3.route_preview.verdict==fail")]
+
+    def test_pure_after_does_not_propagate(self):
+        # 0415 反例 1：s5 只 after s4（s4 只在 s3 不合格才做），s5 自己在 s3 合格時做首頁 → 合法
+        s5 = st("s5", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"}, after=["s4"],
+                when="s3.route_preview.verdict==pass")
+        _, bad = OC.simulate_steps(self.BASE + [s5], {}, {})
+        self.assertEqual(bad, [])
+
+    def test_pure_after_end_to_end(self):
+        s5 = st("s5", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"}, after=["s4"],
+                when="s3.route_preview.verdict==pass")
+        m = scripted(['{"directions":["plan","ui"]}', plan(*(self.BASE + [s5]))])
+        _, T = tools(["A001", "A003", "U100"])
+        r = PlanBController(T, m, GRAPH, COUNTER).request("北側巡檢放到首頁")
+        states = {x["id"]: x["state"] for x in r["plan"]}
+        self.assertEqual((states["s4"], states["s5"]), ("SKIPPED", "PROPOSED"))
+        self.assertEqual(r["replans"], 0)
+
+    def test_require_propagates(self):
+        # 0415 反例 2：s4 只在 s3 不合格才開主題提案；s5 在 s3 合格時做、且 require s4 APPLIED → 沒有共同分支
+        s4 = st("s4", "color", "UI_THEME_PROPOSE", ["T001"], after=["s3"], when="s3.route_preview.verdict==fail")
+        s5 = st("s5", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
+                when="s3.route_preview.verdict==pass", require={"s4": "APPLIED"})
+        _, bad = OC.simulate_steps(self.BASE[:3] + [s4, s5], {}, {})
+        self.assertEqual([b[0] for b in bad], ["s5"])
+
+
 if __name__ == "__main__":
     unittest.main()
