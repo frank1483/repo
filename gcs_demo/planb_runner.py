@@ -100,19 +100,9 @@ def run_case(case, cond, model_factory, graph, counter, work):
     rec["shared_from_a"] = preset and {k: preset.get(k) for k in ("directions", "stage1_calls", "invalid_a")}
     rec["shared_input_match"] = not (preset or {}).get("invalid_a") and \
         (r.get("directions") or []) == (a_rep.get("directions") or []) and b_batches == a_batches
-    # v4（0408 第 2 點）：首頁相依改按實際步驟來源核對——提案引用的預覽必須是本計畫某個 VERIFY 步驟產生的合格預覽
-    deps = case.get("expect_dependency") or {}
-    if deps and r:
-        good = {}
-        for s in r.get("plan") or []:
-            pv = (s.get("out") or {}).get("route_preview") or {}
-            if s["action"] == "VERIFY_PREVIEW" and s.get("state") == "OK" and pv.get("verdict") == "pass":
-                good[pv.get("ref")] = pv
-        art = dict(r.get("artifacts") or {})
-        for p in r.get("proposals") or []:
-            src = p.get("source") or {}
-            if p["action"] == "PROPOSE_HOME_ROUTE" and src.get("verdict") == "pass" and src.get("preview_ref") in good:
-                art["route_preview"] = good[src["preview_ref"]]       # v5：整份換成實際綁定的預覽（含判定）
+    # v6（0410）：B 的成果計分一律用控制器的「結果預覽」（首頁綁定的那份，或最後完成的那份），與終態同一定義
+    if r and r.get("result_preview") is not None:
+        art = dict(r.get("artifacts") or {}, route_preview=r["result_preview"])
         rescored = R4.score(case, dict(r, artifacts=art))
         if rescored["correct"] != rec["correct"]:
             rec["rescored_by_step_source"] = True

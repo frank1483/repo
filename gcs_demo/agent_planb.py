@@ -376,16 +376,31 @@ class PlanBController(M4bController):
         self._add_steps(task, new)
         return True
 
+    def result_preview(self, task):
+        """v6（0410）：本任務的「結果預覽」只有一個定義，終態與計分共用——
+        有首頁提案時＝它實際綁定的那份預覽；沒有時＝計畫中最後一個完成的預覽步驟（與方案 A 的最新一份同義）。"""
+        outs = {}
+        last = None
+        for x in task.get("plan") or []:
+            pv = (x.get("out") or {}).get("route_preview")
+            if x["action"] == "VERIFY_PREVIEW" and x["state"] == "OK" and pv:
+                outs[pv.get("ref")] = pv
+                last = pv
+        for p in task.get("proposals") or []:
+            src = p.get("source") or {}
+            if p["action"] == "PROPOSE_HOME_ROUTE" and src.get("preview_ref") in outs:
+                return outs[src["preview_ref"]]
+        return last
+
     def _dir_done(self, task, d):
-        """v5（0409 第 2 點）：規劃方向看計畫裡實際完成的預覽步驟，不看全域最新一份。"""
         if d == "plan" and task.get("plan") is not None:
-            return any(x["action"] == "VERIFY_PREVIEW" and x["state"] == "OK" and
-                       ((x.get("out") or {}).get("route_preview") or {}).get("verdict") == "pass" for x in task["plan"])
+            return ((self.result_preview(task) or {}).get("verdict")) == "pass"
         return super()._dir_done(task, d)
 
     def _finish(self, task, status, ask=None):
         r = super()._finish(task, status, ask)
         r["plan"] = task.get("plan", [])
+        r["result_preview"] = self.result_preview(task)
         r["replans"] = task.get("replans", 0)
         r["plan_log"] = task.get("plan_log", [])
         return r

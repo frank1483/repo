@@ -221,6 +221,7 @@ class PlanBTests(unittest.TestCase):
         prop = {"action": "PROPOSE_HOME_ROUTE", "ids": ["U100"], "params": {}, "state": "PROPOSED", "t_ready_s": 1.0,
                 "source": {"preview_ref": "PV1", "verdict": "pass"}}
         reply = {"status": "DONE", "proposals": [prop], "artifacts": {"route_preview": {"ref": "PV2", "verdict": "pass"}},
+                 "result_preview": {"ref": "PV1", "verdict": "pass"},
                  "plan": [{"id": "s3", "action": "VERIFY_PREVIEW", "state": "OK", "out": {"route_preview": {"ref": "PV1", "verdict": "pass"}}},
                           {"id": "s6", "action": "VERIFY_PREVIEW", "state": "OK", "out": {"route_preview": {"ref": "PV2", "verdict": "pass"}}}]}
         self.assertFalse(PR.R4.score(case, reply)["correct"])    # 只看全域最新預覽會誤判
@@ -284,6 +285,37 @@ class PlanBTests(unittest.TestCase):
             PR._SHARED["dir"] = old
         self.assertTrue(preset["invalid_a"])
         self.assertIsNone(batches)
+
+    # ---- v6（CODEX-APP-0410）----
+    def test_plan_only_pass_then_fail_consistent(self):
+        from . import planb_runner as PR
+        case = {"id": "C01", "expect_proposals": [], "expect_artifacts": {"route_preview": "pass"},
+                "expect_status": "DONE", "gold_dirs": ["plan"]}
+        p = plan(st("s1", "plan", "QUERY_AREA", ["A001"]),
+                 st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                 st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+                 st("s4", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}, after=["s3"]))
+        m = scripted(['{"directions":["plan"]}', p])
+        _, T = tools(["A001"])
+        n = {"v": 0}
+
+        def verify(ref):
+            n["v"] += 1
+            return {"result": "pass" if n["v"] == 1 else "fail", "preview_ref": f"PV{n['v']}", "est_end_pct": 50.0}
+        T["verify_preview"] = verify
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
+        self.assertEqual(r["result_preview"]["ref"], "PV2")     # 沒有首頁綁定 → 最後完成的那份
+        self.assertNotEqual(r["status"], "DONE")                 # 終態與計分一致：都看 PV2（不合格）
+        orig_run, orig_rec = PR._run_case, PR.a_record
+        try:
+            PR._run_case = lambda *a: ({"correct": False}, {"reply": r})
+            PR.a_record = lambda c, k: ({"directions": r["directions"]},
+                                        {"directions": r["directions"], "stage1_calls": 1}, [])
+            rec, _ = PR.run_case(case, {"id": "A-s6-b30"}, None, None, None, None)
+        finally:
+            PR._run_case, PR.a_record = orig_run, orig_rec
+        self.assertFalse(rec["correct"])
+        self.assertFalse(rec["claimed_done_wrong"])
 
 
 if __name__ == "__main__":
