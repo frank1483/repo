@@ -1,7 +1,7 @@
 .pragma library
 // GenuiBind：預檢通過的節點 → 每個框的「畫面資料」（W1～W5 轉接元件說明 v1.2 §1、§2）。純函式，不讀即時狀態。
 // 版本 bind-m1-0.1。QML 元件只顯示這裡給的資料；找不到就回 {ok:false}，該框畫「資料無法顯示」，不畫半份。
-var BIND_VERSION = "bind-m1-0.2"   // 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
+var BIND_VERSION = "bind-m1-0.2.1"   // 0.2.1：橘色門檻改用顯示到小數一位後的值比較（0.2 run1 的 10 分鐘邊界顯示「10」卻是藍色）。0.2： 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
 var MAX_POINTS = 150
 var ETA_WARN_MIN = 10                         // R1：ETA ≤ 10 分鐘用橘色〔顯示用候選值〕
 var ETA_NA_LABEL = "電量下降，無法估計到保留電量的時間"
@@ -110,7 +110,7 @@ function bindDiag(toolResults, refs) {
         cards.push({ key: "slope", label: "電量變化", value: finite(tr.slope) ? num(tr.slope) : "—", unit: "%/min", accent: ACCENT.normal })
         var eta = finite(tr.eta_min) && !tr.eta_reason, why = ETA_NA_REASON[tr.eta_reason] || ""
         if (eta) cards.push({ key: "eta", label: "到保留電量", value: num(tr.eta_min), unit: "分鐘", note: "",
-                              accent: tr.eta_min <= ETA_WARN_MIN ? ACCENT.warn : ACCENT.normal })
+                              accent: Number(num(tr.eta_min)) <= ETA_WARN_MIN ? ACCENT.warn : ACCENT.normal })
         else if (tr.direction === "下降") cards.push({ key: "eta", label: ETA_NA_LABEL, value: "—", unit: "", note: why, accent: ACCENT.warn })
         else cards.push({ key: "eta", label: "到保留電量", value: "—", unit: "", note: why, accent: ACCENT.normal })
     }

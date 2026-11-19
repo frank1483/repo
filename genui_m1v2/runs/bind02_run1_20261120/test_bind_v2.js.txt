@@ -1,0 +1,3 @@
+FAIL R1 eta 10 orange (boundary) :: {"key":"eta","label":"到保留電量","value":"10","unit":"分鐘","note":"","accent":"telemetryMetricBlue"}
+test_bind_v1 (bind-m1-0.2): pass 61 fail 1
+rc=1

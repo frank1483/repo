@@ -1,0 +1,8 @@
+GenuiW1Fact.qml: checked
+GenuiW2Series.qml: checked
+GenuiW3Table.qml: checked
+GenuiW4Diag.qml: checked
+GenuiW5Doc.qml: checked
+GenuiWidget.qml: checked
+check_widgets: fails 0
+rc=0
