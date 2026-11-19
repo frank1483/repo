@@ -79,8 +79,9 @@ class M4bController:
                 trace["budget_exhausted"] = True
                 return None
             msg = content + (f"\n上次錯誤：{err}。請只輸出合法 JSON。" if err else "")
+            task["decision_seq"] = task.get("decision_seq", 0) + (1 if attempt == 0 else 0)
             call = {"messages": [{"role": "system", "content": task["rules"]}, {"role": "user", "content": msg}],
-                    "purpose": purpose}
+                    "purpose": purpose, "attempt": attempt, "decision": task["decision_seq"]}
             if schema is not None:                          # v3.6：Ollama JSON Schema 約束結構與候選值
                 call["schema"] = schema
             try:
@@ -223,17 +224,20 @@ class M4bController:
                 task["dir_status"][d] = "DONE" if self._dir_done(task, d) else "INCOMPLETE"
                 return
             can = OC.executable(d, ACTIONS[d], have)
+            redo = [a for a in ACTIONS[d] if a not in can and all(n in have for n in OC.NEEDS.get(a, []))
+                    and OC.PRODUCES.get(a) in have]               # 產物已有：只允許換目標、參數或輸入後重做
             if not can:
                 task["notes"].append(f"{KIND_ZH[d]}：還缺 {'、'.join(OC.ZH[k] for k in OC.missing(d, have))}，但沒有可做的動作")
                 task["dir_status"][d] = "INCOMPLETE"
                 return
             steps += 1
-            allowed = can + ["FINISH", "HOLD"]
+            allowed = can + redo + ["FINISH", "HOLD"]
             cands = task["cands"].get(d, [])
             content = (f"句子：{task['text']}\n方向：{d}（{KIND_ZH[d]}）\n可用 ID：\n" +
                        ("\n".join(task["lines"].get(d, [])) or "（無）") +
                        "\n目前狀態：\n" + OC.summary([d], have) +
                        "\n現在能做的動作：\n" + "\n".join(f"- {a}：{OC.ACTION_ZH[a]}" for a in can) +
+                       ("".join(f"\n- {a}：已完成；只有換目標或參數時才可再做" for a in redo)) +
                        "\n- FINISH：本方向結束\n- HOLD：無法安全處理，停下\n"
                        '只輸出 JSON：{"action":"動作代碼","ids":["ID"],"params":{}}')
             schema = {"type": "object", "properties": {
@@ -253,6 +257,8 @@ class M4bController:
             if step["action"] == "FINISH":
                 task["dir_status"][d] = "DONE" if self._dir_done(task, d) else "INCOMPLETE"
                 return
+            if step["action"] not in ("FINISH", "HOLD"):
+                task.setdefault("sigs", set()).add(self._sig(step, have))
             res = self._exec(task, d, step, qv)
             if res == "NEEDS_USER":
                 task["dir_status"][d] = "NEEDS_USER"
@@ -284,7 +290,15 @@ class M4bController:
         err = self.check_schema(a, ids, params)
         if err:
             return False, None, err
-        return True, {"action": a, "ids": ids, "params": params}, ""
+        step = {"action": a, "ids": ids, "params": params}
+        if a not in ("FINISH", "HOLD") and self._sig(step, self.have(task)) in task.get("sigs", set()):
+            return False, None, f"{a}（同一目標、參數與輸入）已經做過；請選下一個還缺的成果的動作"
+        return True, step, ""
+
+    def _sig(self, step, have):
+        """去重鍵（v2，CODEX-APP-0413 第 2 點）：同一動作、同一目標與參數、同一輸入狀態。"""
+        return (step["action"], tuple(sorted(step["ids"])), tuple(sorted(step["params"].items())),
+                OC.input_sig(step["action"], have))
 
     def check_schema(self, a, ids, params):
         """依動作逐槽驗證 ID 角色、數量與參數鍵值（CODEX-APP-0405 第 3 點）。回傳錯誤字串或空字串。"""

@@ -54,7 +54,9 @@ def have_from(artifacts, proposals):
             h[key] = f"{p['action']} {'、'.join(p['ids'])} {''.join(p['params'].values())}".strip()
     for k in ("manual_claims", "qa_claims", "report_draft", "flight_notice"):
         if k in A:
-            h[k] = A[k].get("verdict") or "已產生"
+            v = A[k].get("verdict")
+            h[k] = ("工具未接，沒有取得證據" if (k == "qa_claims" and v != "ok") else
+                    "沒有找到相關片段" if (k == "manual_claims" and v != "ok") else v or "已產生")
     return h
 
 
@@ -98,19 +100,69 @@ def summary(directions, have, statuses=None):
     return "\n".join(lines)
 
 
-def simulate(steps, have):
-    """B 的執行前完整性：依步驟順序模擬產物（when 只要在成立的分支上可達）。回傳模擬後的 have 與缺輸入的步驟。"""
-    h = dict(have)
+def input_sig(action, have):
+    """動作的輸入狀態（A 去重用）：該動作需要的輸入目前的值。"""
+    return tuple((n, have.get(n)) for n in NEEDS.get(action, []))
+
+
+def simulate_steps(steps, outs, have):
+    """B 的執行前可達性（v2，CODEX-APP-0413 第 1 點）：逐步依 bind 指定的來源步驟與 when 分支判定。
+    steps＝依序的計畫步驟；outs＝已執行步驟的實際輸出 {step_id: {欄位: 值}}；have＝目前全域成果。
+    回傳 (可達步驟的模擬產物 {step_id: set(成果)}, 不可達步驟 [(id, 原因)])。
+    規則：步驟的每個 bind 來源必須可達且產出該欄位；需要「合格預覽」的步驟，其預覽來源的 when 分支不可以是 fail；
+    when 指向的預覽步驟必須可達。VERIFY 的模擬產物在 pass 與 fail 兩個分支都可能，故「合格預覽」只在條件不排除 pass 時成立。"""
+    prod = {sid: set(o) for sid, o in (outs or {}).items()}
+    for sid, o in (outs or {}).items():
+        rp = (o or {}).get("route_preview") or {}
+        if rp.get("verdict") == "pass":
+            prod[sid].add("route_preview_pass")
     bad = []
-    for s in steps:
-        a = s["action"]
-        need = NEEDS.get(a, [])
-        if any(n not in h for n in need):
-            bad.append((s["id"], [n for n in need if n not in h]))
+    for st in steps:
+        sid, a = st["id"], st["action"]
+        if sid in prod:
             continue
-        prod = PRODUCES.get(a)
-        if prod:
-            h[prod] = "（計畫中）"
+        why = None
+        for slot, ref in (st.get("bind") or {}).items():
+            src, field = ref.split(".", 1)
+            if src not in prod or field not in prod[src]:
+                why = f"bind {slot} 指的 {src}.{field} 不會產生"
+                break
+        when = st.get("when")
+        branch = None
+        if why is None and when:
+            src = when.split(".", 1)[0]
+            branch = when.rsplit("==", 1)[1]
+            if src not in prod or "route_preview" not in prod[src]:
+                why = f"when 指的 {src} 不會產生預覽"
+        if why is None and "route_preview_pass" in NEEDS.get(a, []):
+            src = ((st.get("bind") or {}).get("preview") or "").split(".", 1)[0]
+            if not src or src not in prod:
+                why = "需要合格預覽，但沒有 bind 到預覽步驟"
+            elif when and when.split(".", 1)[0] == src and branch == "fail":
+                why = f"只在 {src} 不合格時才做，但這個動作需要 {src} 合格，永遠不會成立"
+            elif "route_preview_pass" not in prod[src]:
+                why = f"{src} 的實際預覽不合格"
+        if why is None:
+            for n in NEEDS.get(a, []):
+                if n == "route_preview_pass":
+                    continue
+                if not any(n in v for v in prod.values()) and n not in have:
+                    why = f"缺輸入 {ZH[n]}"
+        if why:
+            bad.append((sid, why))
+            continue
+        p = {PRODUCES[a]} if a in PRODUCES else set()
         if a == "VERIFY_PREVIEW":
-            h["route_preview_pass"] = "（計畫中：假設合格分支）"
-    return h, bad
+            p.add("route_preview_pass")                 # 合格分支可能
+        prod[sid] = p
+    return prod, bad
+
+
+def simulate(steps, have):
+    """（保留舊介面給既有測試）"""
+    prod, bad = simulate_steps(steps, {}, have)
+    h = dict(have)
+    for v in prod.values():
+        for k in v:
+            h[k] = "（計畫中）"
+    return h, [(i, [w]) for i, w in bad]

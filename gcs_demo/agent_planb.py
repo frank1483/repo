@@ -78,7 +78,7 @@ class PlanBController(M4bController):
         if batch:                                           # 空批不呼叫模型
             self._add_steps(task, self._plan(task, batch, initial=True))
         self._execute(task, qv)                             # 先前批次在等的步驟也一起推進
-        self._accept(task, qv, batch or [])                 # v3.6：用實際成果驗收，缺什麼就補
+        self._accept(task, qv, [d for d in task["directions"] if d in (batch or []) or d in planned])  # 含先前批次
         for d in [d for d in task["directions"] if d in batch or d in planned]:
             ss = [s for s in task["plan"] if s["direction"] == d and s["state"] != "REPLACED"]
             st = [s["state"] for s in ss]
@@ -231,11 +231,16 @@ class PlanBController(M4bController):
             out.append({"id": sid, "direction": d, "action": a, "ids": ids, "params": params, "after": after,
                         "bind": bind, "when": when, "require": req})
         # v3.6 執行前完整性：從目前成果與尚未完成的既有步驟出發，模擬整份計畫，每個方向的必要成果都要可達
-        pend = [x for x in task["plan"] if x["state"] in ("PENDING", "WAITING")]
-        sim, bad = OC.simulate(pend + out, self.have(task))
+        live = [x for x in task["plan"] if x["state"] != "REPLACED"]
+        outs = {x["id"]: x.get("out") or {} for x in live if x["state"] in ("OK", "PROPOSED")}
+        pend = [x for x in live if x["state"] in ("PENDING", "WAITING")]
+        prod, bad = OC.simulate_steps(pend + out, outs, self.have(task))
         if bad:
-            return False, None, "；".join(f"{i} 缺輸入 {'、'.join(OC.ZH[n] for n in ns)}（先加產生它的步驟並用 bind 指過去）"
-                                         for i, ns in bad)
+            return False, None, "；".join(f"{i} 不可達：{w}" for i, w in bad)
+        sim = dict(self.have(task))
+        for x in pend + out:                                  # 方向的必要成果要由該方向自己的可達步驟產生
+            for k in prod.get(x["id"], set()):
+                sim[k] = "（計畫中）"
         gaps = {d: OC.missing(d, sim) for d in dirs if OC.missing(d, sim)}
         if gaps:
             return False, None, "計畫不完整：" + "；".join(f"{d} 還缺 {'→'.join(OC.ZH[k] for k in m)}" for d, m in gaps.items())
@@ -261,8 +266,10 @@ class PlanBController(M4bController):
                 trace["budget_exhausted"] = True
                 break
             msg = content + (f"\n上次錯誤：{err}。請只輸出合法 JSON。" if err else "")
+            task["decision_seq"] = task.get("decision_seq", 0) + (1 if first else 0)
             call = {"messages": [{"role": "system", "content": task["rules"]}, {"role": "user", "content": msg}],
-                    "purpose": trace["purpose"], "schema": self._plan_schema(task, dirs)}
+                    "purpose": trace["purpose"], "schema": self._plan_schema(task, dirs),
+                    "attempt": 0 if first else 1, "decision": task["decision_seq"]}
             try:
                 raw = self.model(call)
             except Exception as e:  # noqa: BLE001
@@ -453,6 +460,15 @@ class PlanBController(M4bController):
             return False
         self._add_steps(task, new)
         return True
+
+    def have(self, task):
+        """B 的成果狀態：除全域最新成果外，只要有任一完成且合格的預覽步驟，就算「有合格預覽」可供首頁提案引用。"""
+        h = super().have(task)
+        for x in task.get("plan") or []:
+            pv = (x.get("out") or {}).get("route_preview") or {}
+            if x["action"] == "VERIFY_PREVIEW" and x["state"] == "OK" and pv.get("verdict") == "pass":
+                h["route_preview_pass"] = f"合格（預覽 {pv.get('ref')}，步驟 {x['id']}）"
+        return h
 
     def result_preview(self, task):
         """v6（0410）：本任務的「結果預覽」只有一個定義，終態與計分共用——

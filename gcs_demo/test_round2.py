@@ -94,21 +94,75 @@ class RoundTwoB(unittest.TestCase):
         self.assertEqual(r["replans"], 1)                      # 第一份缺 model → 執行前就退回
         self.assertEqual(sorted(p["action"] for p in r["proposals"]), ["MODEL_SWITCH_PROPOSE", "UI_THEME_PROPOSE"])
 
-    def test_accept_fills_gap_after_execution(self):
-        # 預覽合格才放首頁；模擬時假設合格分支可達 → 計畫通過；實際執行後首頁已開 → 不需補
-        # 這裡造一個「計畫內步驟被 NEEDS_USER 以外原因略過」的缺口：when 指向 fail 分支
+    def test_contradictory_when_rejected_before_execution(self):
+        # v2（CODEX-APP-0413 第 1 點）：首頁要 s3 合格，卻限定 s3 不合格才做 → 永遠不成立 → 執行前退回
+        bad = plan(st("s1", "plan", "QUERY_AREA", ["A001"]),
+                   st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                   st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+                   st("s4", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
+                      when="s3.route_preview.verdict==fail"))
+        good = bad.replace("verdict==fail", "verdict==pass")
+        m = scripted(['{"directions":["plan","ui"]}', bad, good])
+        _, T = tools(["A001", "U100"])
+        r = PlanBController(T, m, GRAPH, COUNTER).request("北側巡檢放到首頁")
+        self.assertTrue(any("永遠不會成立" in e.get("reason", "") for e in r["plan_log"]))
+        self.assertFalse(any(e["event"] == "continue" for e in r["plan_log"]))
+        self.assertEqual(r["replans"], 1)
+        self.assertEqual(r["status"], "DONE")
+
+    def test_accept_fills_gap_only_known_at_runtime(self):
+        # 模擬時兩份預覽都可能合格 → 計畫通過；實際 s6 不合格 → s7 依條件略過 → 首頁仍缺（s3 合格，不是合法略過）→ 補計畫
         p1 = plan(st("s1", "plan", "QUERY_AREA", ["A001"]),
                   st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
                   st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
-                  st("s4", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
-                     when="s3.route_preview.verdict==fail"))
-        p2 = plan(st("s5", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"}))
+                  st("s6", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}, after=["s3"]),
+                  st("s7", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
+                     when="s6.route_preview.verdict==pass"))
+        p2 = plan(st("s8", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"}))
         m = scripted(['{"directions":["plan","ui"]}', p1, p2])
         _, T = tools(["A001", "U100"])
+        n = {"v": 0}
+
+        def verify(ref):
+            n["v"] += 1
+            return {"result": "pass" if n["v"] == 1 else "fail", "preview_ref": f"PV{n['v']}", "est_end_pct": 50.0}
+        T["verify_preview"] = verify
         r = PlanBController(T, m, GRAPH, COUNTER).request("北側巡檢放到首頁")
         self.assertTrue(any(e["event"] == "continue" for e in r["plan_log"]))
         self.assertEqual([p["action"] for p in r["proposals"]], ["PROPOSE_HOME_ROUTE"])
+        self.assertEqual(r["proposals"][0]["source"]["preview_ref"], "PV1")
         self.assertEqual(r["status"], "DONE")
+
+
+class RoundTwoDedupe(unittest.TestCase):
+    def test_same_signature_rejected_new_target_allowed(self):
+        a = M4bController({}, None, GRAPH, COUNTER)
+        task = {"artifacts": {"area_record": {"id": "A001", "ref": "AREA-N1"}}, "proposals": [], "cands": {"plan": ["A001", "A003"]},
+                "sigs": set()}
+        have = a.have(task)
+        task["sigs"].add(a._sig({"action": "QUERY_AREA", "ids": ["A001"], "params": {}}, have))
+        ok, _, err = a._parse_step(task, "plan", '{"action":"QUERY_AREA","ids":["A001"],"params":{}}', ["QUERY_AREA", "FINISH"])
+        self.assertFalse(ok)
+        self.assertIn("已經做過", err)
+        ok, _, _ = a._parse_step(task, "plan", '{"action":"QUERY_AREA","ids":["A003"],"params":{}}', ["QUERY_AREA", "FINISH"])
+        self.assertTrue(ok)                                   # 換目標可以重做
+
+    def test_input_change_allows_redo(self):
+        a = M4bController({}, None, GRAPH, COUNTER)
+        t1 = {"artifacts": {"area_record": {"id": "A001", "ref": "AREA-N1"}}, "proposals": []}
+        t2 = {"artifacts": {"area_record": {"id": "A003", "ref": "AREA-S1"}}, "proposals": []}
+        st_ = {"action": "GEN_COVERAGE", "ids": [], "params": {}}
+        self.assertNotEqual(a._sig(st_, a.have(t1)), a._sig(st_, a.have(t2)))
+
+
+class RetryCount(unittest.TestCase):
+    def test_new_actions_are_not_retries(self):
+        from .m4b_runner import _sum_timing
+        calls = [{"purpose": "step:plan", "attempt": 0, "decision": 1, "status": 200, "latency_s": 1},
+                 {"purpose": "step:plan", "attempt": 0, "decision": 2, "status": 200, "latency_s": 1},
+                 {"purpose": "step:plan", "attempt": 1, "decision": 2, "status": 200, "latency_s": 2}]
+        t = _sum_timing(calls)
+        self.assertEqual((t["retries"], t["retry_wall_s"], t["decisions"]), (1, 2.0, 2))
 
 
 if __name__ == "__main__":

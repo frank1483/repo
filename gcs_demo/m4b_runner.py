@@ -70,6 +70,7 @@ def gateway_model(gw, calls_log):
         meta = (body.get("gcs_upstream_meta") or {}) if isinstance(body, dict) else {}
         calls_log.append({"purpose": purpose, "feature": feature, "status": st, "latency_s": round(time.monotonic() - t0, 3),
                           "raw": text, "schema": call.get("schema") is not None,
+                          "attempt": call.get("attempt"), "decision": call.get("decision"),
                           "timing": {k: meta.get(k) for k in TIMING_KEYS if k in meta},
                           "error": (body.get("error") or {}).get("message") if isinstance(body, dict) and st != 200 else None})
         if st != 200:
@@ -195,16 +196,16 @@ def run_case(case, cond, model_factory, graph, counter, work):
 
 
 def _sum_timing(calls):
-    """每案例：提示處理、生成、載入時間（秒，Ollama 回報）與重試（同一用途的第 2 次以後）次數與耗時。"""
-    t = {"prompt_eval_s": 0.0, "eval_s": 0.0, "load_s": 0.0, "retries": 0, "retry_wall_s": 0.0, "failed_calls": 0}
-    seen = {}
+    """每案例：提示處理、生成、載入時間（秒，Ollama 回報）與重試次數、重試耗時。
+    重試＝同一個決策的修正嘗試（attempt>0）；新動作、新批次、續做與重規劃的第一次呼叫都不算（CODEX-APP-0413 第 3 點）。"""
+    t = {"prompt_eval_s": 0.0, "eval_s": 0.0, "load_s": 0.0, "retries": 0, "retry_wall_s": 0.0, "failed_calls": 0,
+         "decisions": len({c.get("decision") for c in calls if c.get("decision") is not None})}
     for c in calls:
         tm = c.get("timing") or {}
         t["prompt_eval_s"] += (tm.get("prompt_eval_duration") or 0) / 1e9
         t["eval_s"] += (tm.get("eval_duration") or 0) / 1e9
         t["load_s"] += (tm.get("load_duration") or 0) / 1e9
-        seen[c["purpose"]] = seen.get(c["purpose"], 0) + 1
-        if seen[c["purpose"]] > 1:
+        if (c.get("attempt") or 0) > 0:
             t["retries"] += 1
             t["retry_wall_s"] += c.get("latency_s") or 0
         if c.get("status") != 200:
