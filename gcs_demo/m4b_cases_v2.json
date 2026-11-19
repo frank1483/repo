@@ -1,0 +1,640 @@
+{
+ "version": "m4b-cases-v2",
+ "annotation": "AI 共同決定（使用者委任）：Claude 草擬，不是人工標註。C01～C24 沿用 m4_cases_v3 的句子；C19、C20 依 D-1 新版改期望（不再整句 HOLD）；C25～C36 為新增四方向（版面、顏色、模型、飛控要求）。 v2（2026-11-19）：為真正有結果相依的案例凍結 expect_dependency（首頁提案必須引用本案例合格預覽）；單純「然後」不列（CODEX-APP-0406 第 3 點）。",
+ "fields": "gold_dirs＝應選方向；expect_proposals＝應開的提案（動作＋ID 集合＋允許值），多開或少開都算錯；expect_artifacts＝必要成果（值＝應有判定，null＝只要存在）；expect_status＝預期任務終態；expect_dependency＝必要相依（動作→規則；pass_preview＝該提案要引用本案例合格的預覽）",
+ "cases": [
+  {
+   "id": "C01",
+   "text": "北側巡檢",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "單一具名區域"
+  },
+  {
+   "id": "C02",
+   "text": "南側巡檢，留 30%",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "明講保留電量"
+  },
+  {
+   "id": "C03",
+   "text": "北側二巡檢",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "名稱前綴不可誤判成北側"
+  },
+  {
+   "id": "C04",
+   "text": "北側巡檢，保留 25%",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "保留的另一種說法"
+  },
+  {
+   "id": "C05",
+   "text": "規劃南側覆蓋航線",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "不同動詞"
+  },
+  {
+   "id": "C06",
+   "text": "北區巡檢航線",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "別名"
+  },
+  {
+   "id": "C10",
+   "text": "南邊航線規劃",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "別名＋語序"
+  },
+  {
+   "id": "C07",
+   "text": "東邊巡檢",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "PARKED",
+   "note": "查不到區域→請框選"
+  },
+  {
+   "id": "C08",
+   "text": "北側和南側巡檢",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "PARKED",
+   "note": "兩個候選→請選"
+  },
+  {
+   "id": "C09",
+   "text": "規劃北側巡檢，留 90%",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "fail"
+   },
+   "expect_status": "INCOMPLETE",
+   "note": "保留值過高→預覽不合格，不可宣稱完成"
+  },
+  {
+   "id": "C11",
+   "text": "北側巡檢，留 25%，放到首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "AC-1 主案例",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "C12",
+   "text": "南側巡檢航線放到首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "兩方向",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "C13",
+   "text": "規劃北側二航線並顯示在首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "「並」連接",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "C14",
+   "text": "北側巡檢放到首頁，保留 20%",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "條件在句尾",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "C15",
+   "text": "東邊巡檢放到首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "PARKED",
+   "note": "上游追問時下游不可被誤觸發"
+  },
+  {
+   "id": "C16",
+   "text": "電池容量是什麼",
+   "gold_dirs": [
+    "qa"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "INCOMPLETE",
+   "note": "問答工具未接上→回查不到，不可宣稱完成"
+  },
+  {
+   "id": "C17",
+   "text": "禁航區如何設定",
+   "gold_dirs": [
+    "qa"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "INCOMPLETE",
+   "note": "同上"
+  },
+  {
+   "id": "C18",
+   "text": "巡檢速度多少",
+   "gold_dirs": [
+    "qa"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "INCOMPLETE",
+   "note": "含「巡檢」但其實是問答；關鍵字表會誤判成規劃"
+  },
+  {
+   "id": "C19",
+   "text": "顯示返航點，然後立即返航",
+   "gold_dirs": [
+    "layout",
+    "flight_request"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C015",
+      "P004"
+     ],
+     "values": [
+      "顯示"
+     ]
+    }
+   ],
+   "expect_artifacts": {
+    "flight_notice": null
+   },
+   "expect_status": "DONE",
+   "note": "D-1 新版：顯示部分照版面流程，返航只回固定說明（v3 為 HOLD）"
+  },
+  {
+   "id": "C20",
+   "text": "北側巡檢然後起飛",
+   "gold_dirs": [
+    "plan",
+    "flight_request"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass",
+    "flight_notice": null
+   },
+   "expect_status": "DONE",
+   "note": "D-1 新版：規劃照做，起飛只回固定說明（v3 為 HOLD）"
+  },
+  {
+   "id": "C21",
+   "text": "PX4 手冊裡返航高度的參數是什麼",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "手冊檢索，應附出處",
+   "manual_gold_any": [
+    "rtl_return_alt",
+    "return altitude"
+   ]
+  },
+  {
+   "id": "C22",
+   "text": "QGC 怎麼設定地理圍欄，查一下手冊",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "中英對照擴充（地理圍欄→geofence）",
+   "manual_gold_any": [
+    "geofence"
+   ]
+  },
+  {
+   "id": "C23",
+   "text": "查手冊：電池低電量時 PX4 會怎麼處理",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "失效保護",
+   "manual_gold_any": [
+    "low battery",
+    "battery failsafe",
+    "bat_low",
+    "com_low_bat",
+    "low_bat"
+   ]
+  },
+  {
+   "id": "C24",
+   "text": "PX4 文件中任務模式的航點接受半徑",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "參數類問題",
+   "manual_gold_any": [
+    "nav_acc_rad",
+    "acceptance radius"
+   ]
+  },
+  {
+   "id": "C25",
+   "text": "把文字調大",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "全域文字大小（與元件大小分開）"
+  },
+  {
+   "id": "C26",
+   "text": "字體改成特大",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "特大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "全域文字大小另一種說法"
+  },
+  {
+   "id": "C27",
+   "text": "把風速計放大",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C014",
+      "P002"
+     ],
+     "values": [
+      "放大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "單一元件大小"
+  },
+  {
+   "id": "C28",
+   "text": "隱藏小地圖",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C016",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "元件顯示"
+  },
+  {
+   "id": "C29",
+   "text": "隱藏指令區",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "INCOMPLETE",
+   "note": "鎖定元件不可隱藏，不可開提案"
+  },
+  {
+   "id": "C30",
+   "text": "把羅盤移到右上",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C013",
+      "P003"
+     ],
+     "values": [
+      "右上"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "元件位置"
+  },
+  {
+   "id": "C31",
+   "text": "換成深色主題",
+   "gold_dirs": [
+    "color"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_THEME_PROPOSE",
+     "ids": [
+      "T001"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "主題白名單"
+  },
+  {
+   "id": "C32",
+   "text": "切成高對比",
+   "gold_dirs": [
+    "color"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_THEME_PROPOSE",
+     "ids": [
+      "T003"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "主題別名"
+  },
+  {
+   "id": "C33",
+   "text": "改用規則模式",
+   "gold_dirs": [
+    "model"
+   ],
+   "expect_proposals": [
+    {
+     "action": "MODEL_SWITCH_PROPOSE",
+     "ids": [
+      "M003"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "模型切換"
+  },
+  {
+   "id": "C34",
+   "text": "辨識類別改成農業",
+   "gold_dirs": [
+    "model"
+   ],
+   "expect_proposals": [
+    {
+     "action": "MODEL_SWITCH_PROPOSE",
+     "ids": [
+      "M011"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "辨識類別切換"
+  },
+  {
+   "id": "C35",
+   "text": "北側巡檢放到首頁，然後切深色",
+   "gold_dirs": [
+    "plan",
+    "ui",
+    "color"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    },
+    {
+     "action": "UI_THEME_PROPOSE",
+     "ids": [
+      "T001"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "三方向，依序",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "C36",
+   "text": "文字放大然後起飛",
+   "gold_dirs": [
+    "layout",
+    "flight_request"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "大"
+     ]
+    }
+   ],
+   "expect_artifacts": {
+    "flight_notice": null
+   },
+   "expect_status": "DONE",
+   "note": "版面＋飛控要求"
+  }
+ ]
+}

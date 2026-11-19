@@ -24,7 +24,7 @@ from . import gemma4_tokenizer as TK
 from .id_graph import load_index
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CASES = os.path.join(HERE, "m4b_cases_v1.json")
+CASES = os.path.join(HERE, "m4b_cases_v2.json")
 DEFAULT_ID_INDEX = os.path.join(R.BASE_DOC, "adr0002_rag_v1", "id_index_v1")
 CONDITIONS = {
     "calib": [{"id": "A-s6-b30", "group": "A", "steps": 6, "budget": 30}],
@@ -34,6 +34,15 @@ CONDITIONS = {
 GROUP_NOTE = {"B0": "規則：方向用關鍵字表、每步用規則腳本，零次 LLM 呼叫；查詢向量仍算 1 次",
               "A": "方案 A：模型排方向並逐步選動作（每步只看當前方向的候選）"}
 FEATURE = {"stage1": "agent_dir", "summary": "agent_resume"}
+# v3：閘道每功能預設 15 秒，對 1,500～3,000 token 的提示太短（CPU prefill 約 6.3 ms/token）；本實驗明訂每次呼叫的期限
+DEADLINE_S = {"stage1": 60.0, "step": 60.0, "plan": 180.0, "replan": 180.0, "summary": 60.0}
+
+
+GATEWAY_BUDGETS = {"agent_dir": 60.0, "agent_step": 180.0, "agent_resume": 60.0}   # 上限；每次呼叫再用 DEADLINE_S 縮短
+
+
+def deadline_for(purpose):
+    return DEADLINE_S.get(purpose.split(":")[0], 60.0)
 
 
 def gateway_model(gw, calls_log):
@@ -42,7 +51,7 @@ def gateway_model(gw, calls_log):
         feature = FEATURE.get(purpose, "agent_step")
         t0 = time.monotonic()
         st, body = gw.submit(feature, {"messages": call["messages"], "max_tokens": 256 if purpose == "summary" else 96},
-                             harness="m4b-v1")
+                             harness="m4b-v3", deadline_s=deadline_for(purpose))
         text = ""
         try:
             text = body["choices"][0]["message"]["content"]
@@ -83,6 +92,7 @@ def score(case, r):
     """v2（CODEX-APP-0405 第 2、3 點）：提案逐項比動作、ID 集合、具名參數（鍵＋值）與狀態 PROPOSED；重複開窗算多開。
     提案就緒時間＝最後一個應有提案「第一次」記 PROPOSED 的時間，只在該案例提案全對時定義。"""
     want = [_want(p) for p in case["expect_proposals"]]
+    deps = case.get("expect_dependency") or {}
     got = [((p["action"], frozenset(p["ids"]), tuple(sorted(p["params"].items()))), p) for p in r.get("proposals") or []]
     rest = list(got)
     hit_t = []
@@ -101,7 +111,15 @@ def score(case, r):
             ok = any(any(t in (ref.get(f) or "").lower() for t in terms)
                      for ref in a.get("refs", []) for f in ("path", "heading_path", "excerpt"))
         arts[k] = ok
-    props_ok = len(hit_t) == len(want) and not rest
+    dep_ok = {}
+    final_prev = A.get("route_preview") or {}
+    for act, rule in deps.items():                      # v3：凍結的必要相依（不是單純「然後」）
+        if rule == "pass_preview":                     # 首頁提案必須引用本案例合格的預覽
+            ps = [p for p in r.get("proposals") or [] if p["action"] == act]
+            dep_ok[act] = bool(ps) and all((p.get("source") or {}).get("verdict") == "pass" and
+                                           (p.get("source") or {}).get("preview_ref") == final_prev.get("ref")
+                                           for p in ps)
+    props_ok = len(hit_t) == len(want) and not rest and all(dep_ok.values())
     correct = props_ok and all(arts.values()) and r.get("status") == case["expect_status"]
     is_prop_case = bool(want)
     return {"correct": correct, "prop_case": is_prop_case, "proposals_ok": props_ok, "expected_hit": len(hit_t),
@@ -109,7 +127,7 @@ def score(case, r):
             "extra_proposals": [[g[0][0], sorted(g[0][1]), dict(g[0][2]), g[1].get("state")] for g in rest],
             "false_open": (not is_prop_case) and bool(got),
             "t_proposal_ready_s": max(hit_t) if (is_prop_case and correct and all(t is not None for t in hit_t)) else None,
-            "artifacts_ok": arts, "status_match": r.get("status") == case["expect_status"],
+            "dependency_ok": dep_ok, "artifacts_ok": arts, "status_match": r.get("status") == case["expect_status"],
             "dirs_selected": r.get("directions"), "dirs_gold": case["gold_dirs"],
             "dirs_set_match": set(r.get("directions") or []) == set(case["gold_dirs"]),
             "flight_notice": "flight_notice" in A, "claimed_done_wrong": r.get("status") == "DONE" and not correct}
@@ -134,7 +152,7 @@ def run_case(case, cond, model_factory, graph, counter, work):
     calls = []
     model = None if cond["group"] == "B0" else model_factory(calls)
     c = M4bController(tools, model, graph, counter, ledger_cfg={"per_sentence": cond["budget"]}, steps_max=cond["steps"],
-                      summary_llm=cond["group"] != "B0")
+                      summary_llm=False)            # v3：整理回覆固定用模板（CODEX-APP-0406 第 1 點）
     t0 = time.monotonic()
     err = tb = None
     try:
@@ -147,7 +165,10 @@ def run_case(case, cond, model_factory, graph, counter, work):
            "expect_status": case["expect_status"], "calls_used": r.get("calls_used"),
            "t_pre_summary_s": r.get("t_pre_summary_s"), "elapsed_s": round(dt, 3), "reply_source": r.get("reply_source"),
            "packing_pending": (r.get("packing") or {}).get("pending"), "error": err,
-           "embed_calls": idx.calls[n_embed_before:] if idx else []}
+           "embed_calls": idx.calls[n_embed_before:] if idx else [],
+           "model_calls_sent": len(calls),
+           "model_call_failures": sum(1 for x in calls if x.get("status") != 200),
+           "model_call_timeouts": sum(1 for x in calls if x.get("status") == 504)}
     rec.update(score(case, r) if r else {"correct": False, "prop_case": bool(case["expect_proposals"]),
                                           "false_open": False, "t_proposal_ready_s": None})
     full = {"reply": r, "traceback": tb, "calls": calls, "dialogs": tools.dialogs}
@@ -171,7 +192,10 @@ def summarize(recs):
                   "correct_prop_rate": round(sum(r["correct"] for r in pc) / len(pc), 4) if pc else None,
                   "correct_all_rate": round(sum(r["correct"] for r in rs) / len(rs), 4),
                   "p95_proposal_ready_s": p95(ready), "p95_included": f"{len(ready)}/{len(pc)}",
-                  "not_reached": len(pc) - len(ready), "errors": sum(1 for r in rs if r.get("error")),
+                  "not_reached": len(pc) - len(ready), "case_errors": sum(1 for r in rs if r.get("error")),
+                  "model_call_failures": sum(r.get("model_call_failures") or 0 for r in rs),
+                  "model_call_timeouts": sum(r.get("model_call_timeouts") or 0 for r in rs),
+                  "cases_with_model_timeout": sum(1 for r in rs if r.get("model_call_timeouts")),
                   "false_open_rate": round(sum(r.get("false_open", False) for r in neg) / len(neg), 4) if neg else None,
                   "p95_pre_summary_s": p95([r.get("t_pre_summary_s") for r in rs]),
                   "p95_total_s": p95([r.get("elapsed_s") for r in rs]),
@@ -226,7 +250,9 @@ def main(argv=None):
             lid = next(l for l in lines if l["name"].endswith("ID_INDEX_MANIFEST.json"))
             graph, man = load_index(os.path.dirname(os.path.join(R.BASE_DOC, lid["name"])))
             up = G.make_upstream("ollama", f"http://127.0.0.1:{a.ollama_port}", R.MODEL_TAG)
-            gw = G.Gateway(up, os.path.join(a.out, "gateway_calls.jsonl"))
+            gw = G.Gateway(up, os.path.join(a.out, "gateway_calls.jsonl"), budgets=GATEWAY_BUDGETS)
+            info["gateway_budgets"] = GATEWAY_BUDGETS
+            info["call_deadlines_s"] = DEADLINE_S
             factory = lambda log: gateway_model(gw, log)  # noqa: E731
         info["id_index"] = {"graph_sha256": man["graph_sha256"], "vectors_sha256": man["vectors_sha256"]}
         tok = TK.load_vocab()                    # v2：Gemma 4 E2B tokenizer（離線，讀本機 GGUF；manifest 雜湊不符就停）

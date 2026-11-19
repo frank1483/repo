@@ -51,7 +51,7 @@ class Ledger:
 
 class M4bController:
     def __init__(self, tools, model, graph, counter, ledger_cfg=None, steps_max=None, direction_cap=None,
-                 summary_llm=True):
+                 summary_llm=False):
         self.tools = tools
         self.model = model
         self.graph = graph
@@ -82,7 +82,10 @@ class M4bController:
                 err = "沒有回覆"
                 continue
             trace["replies"].append({"raw": (raw or "")[:300]})
-            ok, val, err = parse(raw)
+            try:
+                ok, val, err = parse(raw)
+            except Exception as e:  # noqa: BLE001 - 合法 JSON 但型別怪異：當作格式錯誤，走修正／規則備援
+                ok, val, err = False, None, f"格式錯誤（{type(e).__name__}）"
             if ok:
                 trace["source"] = "model"
                 return val
@@ -232,12 +235,16 @@ class M4bController:
         if not isinstance(obj, dict) or not set(obj) <= {"action", "ids", "params"} or "action" not in obj:
             return False, None, "格式錯誤"
         a = obj["action"]
-        if a not in allowed:
+        if not isinstance(a, str) or a not in allowed:
             return False, None, f"動作 {a} 不在可選清單"
-        ids = obj.get("ids") or []
-        params = obj.get("params") or {}
-        if not isinstance(ids, list) or not isinstance(params, dict):
-            return False, None, "ids／params 型別錯誤"
+        ids = obj.get("ids", [])
+        params = obj.get("params", {})
+        ids = [] if ids is None else ids
+        params = {} if params is None else params
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            return False, None, "ids 必須是字串清單"
+        if not isinstance(params, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in params.items()):
+            return False, None, "params 必須是字串對字串"
         cands = set(task["cands"].get(d, []))
         for i in ids:
             if i not in cands:
@@ -364,7 +371,8 @@ class M4bController:
             if r.get("decision") == "BLOCK" or not r.get("shown_hash"):
                 task["notes"].append(f"首頁確認視窗被擋下（decision={r.get('decision')}）")
                 return "BLOCKED"
-            self._propose(task, d, a, ["U100"], {}, r.get("shown_hash"))
+            self._propose(task, d, a, ["U100"], {}, r.get("shown_hash"),
+                          source={"preview_ref": A["route_preview"]["ref"], "verdict": A["route_preview"]["verdict"]})
             return "OK"
         if a == "UI_LAYOUT_PROPOSE":
             cs = [i for i in ids if self.graph.nodes[i]["cat"] == "C"]
@@ -399,9 +407,9 @@ class M4bController:
             return "OK"
         return "BLOCKED"
 
-    def _propose(self, task, d, action, ids, params, ref):
+    def _propose(self, task, d, action, ids, params, ref, source=None):
         task["proposals"].append({"direction": d, "action": action, "ids": list(ids), "params": dict(params),
-                                  "state": "PROPOSED", "ref": ref,
+                                  "state": "PROPOSED", "ref": ref, "source": source,
                                   "t_ready_s": round(time.monotonic() - task["t0"], 3)})
 
     def _dir_done(self, task, d):

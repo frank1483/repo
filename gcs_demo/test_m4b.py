@@ -124,7 +124,7 @@ class M4bTests(unittest.TestCase):
                       '{"action":"FINISH","ids":[],"params":{}}',
                       '{"reply":"預估電量 70%"}', '{"reply":"預估落地電量 61.5%"}'])
         _, T = tools(["A001"])
-        r = M4bController(T, m, GRAPH, COUNTER).request("規劃A區巡檢")
+        r = M4bController(T, m, GRAPH, COUNTER, summary_llm=True).request("規劃A區巡檢")
         self.assertEqual(r["reply_source"], "model")
         self.assertIn("61.5", r["reply_zh"])
 
@@ -190,7 +190,7 @@ class M4bTests(unittest.TestCase):
                       '{"action":"GEN_COVERAGE","ids":[],"params":{}}', '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}',
                       '{"action":"FINISH","ids":[],"params":{}}', '{"reply":"預估落地電量 1.5%"}', '{"reply":"電量 61%"}'])
         _, T = tools(["A001"])
-        r = M4bController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
+        r = M4bController(T, m, GRAPH, COUNTER, summary_llm=True).request("規劃北側巡檢")
         self.assertEqual(r["reply_source"], "template")      # 1.5 與 61 都只是 61.5 的子字串
 
     def test_runner_score_params_and_duplicates(self):
@@ -211,6 +211,36 @@ class M4bTests(unittest.TestCase):
         from . import gemma4_tokenizer as TK
         tok = TK.load_vocab()
         self.assertGreater(len(TK.encode("北側巡檢 hello", tok)), 0)
+
+    # ---- v3（CODEX-APP-0406）----
+    def test_weird_types_do_not_crash(self):
+        for bad in ['{"action":"UI_THEME_PROPOSE","ids":[[]],"params":{}}', '{"action":"UI_THEME_PROPOSE","ids":{},"params":{}}',
+                    '{"action":"UI_THEME_PROPOSE","ids":["T001"],"params":[]}', '{"action":["x"],"ids":[],"params":{}}',
+                    '{"action":"UI_THEME_PROPOSE","ids":["T001"],"params":{"a":1}}']:
+            m = scripted(['{"directions":["color"]}', bad, bad])
+            _, T = tools(["T001"])
+            r = M4bController(T, m, GRAPH, COUNTER).request("改成深色主題")
+            self.assertEqual(r["steps"][0]["source"], "rule", bad)
+            self.assertEqual(r["proposals"][0]["ids"], ["T001"], bad)
+
+    def test_default_reply_is_template_and_home_records_source(self):
+        _, T = tools(["A001", "U100"])
+        r = M4bController(T, None, GRAPH, COUNTER).request("規劃北側巡檢放到首頁")
+        self.assertEqual(r["reply_source"], "template")
+        self.assertNotIn("summary", [t["purpose"] for t in r["traces"]])
+        self.assertEqual(r["proposals"][0]["source"], {"preview_ref": "PV1", "verdict": "pass"})
+
+    def test_runner_dependency_scoring(self):
+        from .m4b_runner import score
+        case = {"expect_proposals": [{"action": "PROPOSE_HOME_ROUTE", "ids": ["U100"], "values": []}],
+                "expect_artifacts": {}, "expect_status": "DONE", "gold_dirs": ["plan", "ui"],
+                "expect_dependency": {"PROPOSE_HOME_ROUTE": "pass_preview"}}
+        p = {"action": "PROPOSE_HOME_ROUTE", "ids": ["U100"], "params": {}, "state": "PROPOSED", "t_ready_s": 1.0,
+             "source": {"preview_ref": "PV1", "verdict": "pass"}}
+        art = {"route_preview": {"ref": "PV1", "verdict": "pass"}}
+        self.assertTrue(score(case, {"status": "DONE", "proposals": [p], "artifacts": art})["correct"])
+        bad = dict(p, source={"preview_ref": "PV0", "verdict": "pass"})
+        self.assertFalse(score(case, {"status": "DONE", "proposals": [bad], "artifacts": art})["correct"])
 
 
 if __name__ == "__main__":
