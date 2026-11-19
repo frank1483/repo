@@ -237,7 +237,8 @@ class M4bController:
                        ("\n".join(task["lines"].get(d, [])) or "（無）") +
                        "\n目前狀態：\n" + OC.summary([d], have) +
                        "\n現在能做的動作：\n" + "\n".join(f"- {a}：{OC.ACTION_ZH[a]}" for a in can) +
-                       ("".join(f"\n- {a}：已完成；只有換目標或參數時才可再做" for a in redo)) +
+                       ("".join(f"\n- {a}：已完成（目前：{have.get(OC.PRODUCES[a])}）；只有換目標或參數才可再做，"
+                                f"重做後依賴它的後續成果會作廢、要重算" for a in redo)) +
                        "\n- FINISH：本方向結束\n- HOLD：無法安全處理，停下\n"
                        '只輸出 JSON：{"action":"動作代碼","ids":["ID"],"params":{}}')
             schema = {"type": "object", "properties": {
@@ -389,6 +390,10 @@ class M4bController:
             if len(areas) != 1:
                 task["notes"].append("區域未唯一指定")
                 return "NEEDS_USER"
+            if (A.get("area_record") or {}).get("id") not in (None, areas[0]):   # v3：換區 → 舊航點與舊預覽失效
+                for k in ("coverage_route", "route_preview"):
+                    if k in A:
+                        task.setdefault("invalidated", []).append({k: A.pop(k), "reason": "區域改變"})
             A["area_record"] = {"kind": "area_record", "ref": self.graph.nodes[areas[0]]["area"], "id": areas[0]}
             return "OK"
         if a == "GEN_COVERAGE":
@@ -397,14 +402,16 @@ class M4bController:
             r = T["gen_coverage"](A["area_record"]["ref"])
             if r["status"] != "OK":
                 return "BLOCKED"
-            A["coverage_route"] = {"kind": "coverage_route", "ref": r["route_ref"]}
+            if "route_preview" in A:                         # v3：航點重算 → 舊預覽失效
+                task.setdefault("invalidated", []).append({"route_preview": A.pop("route_preview"), "reason": "航點改變"})
+            A["coverage_route"] = {"kind": "coverage_route", "ref": r["route_ref"], "area_id": A["area_record"]["id"]}
             return "OK"
         if a == "VERIFY_PREVIEW":
             if "coverage_route" not in A:
                 return "BLOCKED"
             r = T["verify_preview"](A["coverage_route"]["ref"])
             A["route_preview"] = {"kind": "route_preview", "ref": r["preview_ref"], "verdict": r["result"],
-                                  "est_end_pct": r.get("est_end_pct")}
+                                  "est_end_pct": r.get("est_end_pct"), "route_ref": A["coverage_route"]["ref"]}
             return "OK"
         if a == "PROPOSE_HOME_ROUTE":
             if not self._ui_ready(task):

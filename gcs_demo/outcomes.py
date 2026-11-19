@@ -106,42 +106,70 @@ def input_sig(action, have):
 
 
 def simulate_steps(steps, outs, have):
-    """B 的執行前可達性（v2，CODEX-APP-0413 第 1 點）：逐步依 bind 指定的來源步驟與 when 分支判定。
+    """B 的執行前可達性（v3，CODEX-APP-0414 第 1 點）：分支條件沿相依傳遞。
+    每個可達步驟帶一組「條件」{預覽步驟: pass／fail}＝自己的 when、需要合格預覽時對該預覽的 pass，
+    再加上所有 bind／after／when 來源步驟的條件。同一個預覽同時要求 pass 與 fail → 沒有共同可達分支 → 不可達。
+    已執行的預覽步驟用實際判定：條件和實際判定相反 → 不可達。
     steps＝依序的計畫步驟；outs＝已執行步驟的實際輸出 {step_id: {欄位: 值}}；have＝目前全域成果。
-    回傳 (可達步驟的模擬產物 {step_id: set(成果)}, 不可達步驟 [(id, 原因)])。
-    規則：步驟的每個 bind 來源必須可達且產出該欄位；需要「合格預覽」的步驟，其預覽來源的 when 分支不可以是 fail；
-    when 指向的預覽步驟必須可達。VERIFY 的模擬產物在 pass 與 fail 兩個分支都可能，故「合格預覽」只在條件不排除 pass 時成立。"""
+    回傳 (可達步驟的模擬產物 {step_id: set(成果)}, 不可達步驟 [(id, 原因)])。"""
     prod = {sid: set(o) for sid, o in (outs or {}).items()}
+    cond = {sid: {} for sid in prod}
+    actual = {}
     for sid, o in (outs or {}).items():
         rp = (o or {}).get("route_preview") or {}
-        if rp.get("verdict") == "pass":
-            prod[sid].add("route_preview_pass")
+        if rp.get("verdict") in ("pass", "fail"):
+            actual[sid] = rp["verdict"]
+            if rp["verdict"] == "pass":
+                prod[sid].add("route_preview_pass")
     bad = []
+
+    def merge(c, k, v):
+        if c.get(k, v) != v:
+            return f"同時要求 {k} 合格與不合格，沒有共同可達的分支"
+        if actual.get(k, v) != v:
+            return f"{k} 的實際預覽是{'合格' if actual[k] == 'pass' else '不合格'}，這個條件不會成立"
+        c[k] = v
+        return None
+
     for st in steps:
         sid, a = st["id"], st["action"]
         if sid in prod:
             continue
-        why = None
+        why, c = None, {}
+        srcs = set(st.get("after") or [])
         for slot, ref in (st.get("bind") or {}).items():
             src, field = ref.split(".", 1)
+            srcs.add(src)
             if src not in prod or field not in prod[src]:
                 why = f"bind {slot} 指的 {src}.{field} 不會產生"
                 break
         when = st.get("when")
-        branch = None
         if why is None and when:
-            src = when.split(".", 1)[0]
-            branch = when.rsplit("==", 1)[1]
+            src, branch = when.split(".", 1)[0], when.rsplit("==", 1)[1]
+            srcs.add(src)
             if src not in prod or "route_preview" not in prod[src]:
                 why = f"when 指的 {src} 不會產生預覽"
+            else:
+                why = merge(c, src, branch)
         if why is None and "route_preview_pass" in NEEDS.get(a, []):
             src = ((st.get("bind") or {}).get("preview") or "").split(".", 1)[0]
             if not src or src not in prod:
                 why = "需要合格預覽，但沒有 bind 到預覽步驟"
-            elif when and when.split(".", 1)[0] == src and branch == "fail":
-                why = f"只在 {src} 不合格時才做，但這個動作需要 {src} 合格，永遠不會成立"
-            elif "route_preview_pass" not in prod[src]:
-                why = f"{src} 的實際預覽不合格"
+            else:
+                why = merge(c, src, "pass")
+                if why and "沒有共同" in why:
+                    why = f"只在 {src} 不合格時才做，但這個動作需要 {src} 合格，永遠不會成立"
+        if why is None:
+            for x in srcs:                               # 來源步驟的條件一路傳下來
+                if x not in prod:
+                    why = f"引用的 {x} 不可達"
+                    break
+                for k, v in cond.get(x, {}).items():
+                    why = merge(c, k, v)
+                    if why:
+                        break
+                if why:
+                    break
         if why is None:
             for n in NEEDS.get(a, []):
                 if n == "route_preview_pass":
@@ -153,8 +181,9 @@ def simulate_steps(steps, outs, have):
             continue
         p = {PRODUCES[a]} if a in PRODUCES else set()
         if a == "VERIFY_PREVIEW":
-            p.add("route_preview_pass")                 # 合格分支可能
+            p.add("route_preview_pass")                 # 合格分支可能（實際判定未知）
         prod[sid] = p
+        cond[sid] = c
     return prod, bad
 
 

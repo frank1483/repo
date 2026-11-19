@@ -165,5 +165,42 @@ class RetryCount(unittest.TestCase):
         self.assertEqual((t["retries"], t["retry_wall_s"], t["decisions"]), (1, 2.0, 2))
 
 
+class RoundTwoV3(unittest.TestCase):
+    def test_branch_conditions_propagate(self):
+        # CODEX-APP-0414 第 1 點的反例：s4 只在 s3 不合格時查區，s5 只在 s3 合格時用 s4 → 沒有共同分支
+        steps = [st("s1", "plan", "QUERY_AREA", ["A001"]), st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                 st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+                 st("s4", "plan", "QUERY_AREA", ["A003"], after=["s3"], when="s3.route_preview.verdict==fail"),
+                 st("s5", "plan", "GEN_COVERAGE", bind={"area": "s4.area_record"}, when="s3.route_preview.verdict==pass"),
+                 st("s6", "plan", "VERIFY_PREVIEW", bind={"route": "s5.coverage_route"}),
+                 st("s7", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s6.route_preview"})]
+        prod, bad = OC.simulate_steps(steps, {}, {})
+        self.assertEqual([b[0] for b in bad], ["s5", "s6", "s7"])
+
+    def test_known_verdict_used(self):
+        steps = [st("s4", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"})]
+        outs = {"s3": {"route_preview": {"ref": "PV1", "verdict": "fail"}}}
+        _, bad = OC.simulate_steps(steps, outs, {})
+        self.assertEqual(len(bad), 1)
+        steps = [st("s4", "plan", "QUERY_AREA", ["A003"], when="s3.route_preview.verdict==pass")]
+        _, bad = OC.simulate_steps(steps, outs, {})
+        self.assertIn("不會成立", bad[0][1])
+
+    def test_area_change_invalidates_downstream(self):
+        # A 正常入口：查 A001 → 生成 → 換查 A003 → 預覽：不可驗到 A001 的舊航線
+        m = scripted(['{"directions":["plan"]}', '{"action":"QUERY_AREA","ids":["A001"],"params":{}}',
+                      '{"action":"GEN_COVERAGE","ids":[],"params":{}}', '{"action":"QUERY_AREA","ids":["A003"],"params":{}}',
+                      '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}', '{"action":"GEN_COVERAGE","ids":[],"params":{}}',
+                      '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}'])
+        log, T = tools(["A001", "A003"])
+        r = M4bController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
+        gens = [x for x in log if x[0] == "gen"]
+        self.assertEqual([g[1] for g in gens], ["AREA-N1", "AREA-S1"])
+        self.assertEqual(r["artifacts"]["coverage_route"]["area_id"], "A003")
+        self.assertTrue(any("coverage_route" in x for x in r.get("artifacts", {}) and [r["artifacts"]]))
+        acts = [s["action"] for s in r["steps"]]
+        self.assertEqual(acts, ["QUERY_AREA", "GEN_COVERAGE", "QUERY_AREA", "GEN_COVERAGE", "VERIFY_PREVIEW"])
+
+
 if __name__ == "__main__":
     unittest.main()
