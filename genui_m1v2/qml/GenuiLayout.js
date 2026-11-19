@@ -4,7 +4,7 @@
 // 依據：M1 演算法說明 v2 §5～7、候選 ADR §4（H-24 逐列貪婪）、G-02（新增元件要按「套用」）。
 // 模型永遠不產生座標；LayoutSchema 只由 layout() 產生。尺寸數值都是候選值〔待凍結〕。
 
-var LAYOUT_VERSION = "layout-m1-0.3"
+var LAYOUT_VERSION = "layout-m1-0.4"   // 0.4：電量下降但無法估 ETA（T-ETA-NA）也放 W4（使用者 11/20 07:17 R1）；K1 驗算照 plan 重建自動涵蓋
 var CATALOG_ID = "catalog-m1-0.2"
 var GRID_COLS = 12, GAP = 16, UNIT = 8
 var MAX_INSTANCES = 5
@@ -57,7 +57,7 @@ function plan(requestId, answer, toolResults) {
         if (tpl === "T-TREND" || (tpl === "T-VALUE" && r.tool === "T_FLIGHTLOG")) {
             var sf = seriesOf(ti)                                    // W2 綁可畫的序列（C-09）
             if (sf) add("W2_SERIES", "series", qid(ti, sf.fact_id), CATALOG.W2_SERIES.priority, false)
-        } else if ((tpl === "T-THRESH" || tpl === "T-ETA") && r.tool === "T_ENERGY") {   // v3.1c K1：W4 只綁電量工具
+        } else if ((tpl === "T-THRESH" || tpl === "T-ETA" || tpl === "T-ETA-NA") && r.tool === "T_ENERGY") {   // v3.1c K1：W4 只綁電量工具；0.4 加 T-ETA-NA（只在電量下降時產生）
             var n4 = byComp.W4_DIAG
             if (!n4) add("W4_DIAG", "facts", [qid(ti, e.fact_id)], CATALOG.W4_DIAG.priority, false)
             else if (n4.binding_ref.ref.length < 2 && n4.binding_ref.ref[0].split(":")[0] === String(ti) && n4.binding_ref.ref.indexOf(qid(ti, e.fact_id)) < 0)

@@ -11,7 +11,7 @@ QtObject {
     }
     readonly property QtObject font: QtObject {
         readonly property real body: 16; readonly property real caption: 13; readonly property real cardTitle: 15
-        readonly property real alertRowTitle: 15; readonly property real alertRowMeta: 13; readonly property real telemetryPanelTitle: 15
+        readonly property real alertRowTitle: 15; readonly property real alertRowMeta: 13; readonly property real telemetryPanelTitle: 15; readonly property real telemetryPanelCaption: 12
         readonly property real telemetryMetricValue: 28; readonly property real telemetryMetricLabel: 13; readonly property real telemetryMetricUnit: 13
         readonly property string chineseFamily: "Noto Sans CJK TC"
     }

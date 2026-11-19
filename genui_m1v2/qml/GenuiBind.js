@@ -1,8 +1,10 @@
 .pragma library
 // GenuiBind：預檢通過的節點 → 每個框的「畫面資料」（W1～W5 轉接元件說明 v1.2 §1、§2）。純函式，不讀即時狀態。
 // 版本 bind-m1-0.1。QML 元件只顯示這裡給的資料；找不到就回 {ok:false}，該框畫「資料無法顯示」，不畫半份。
-var BIND_VERSION = "bind-m1-0.1.1"   // 0.1.1：只改 GenuiWidget.qml 的路徑解析，本檔邏輯不變
+var BIND_VERSION = "bind-m1-0.2"   // 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
 var MAX_POINTS = 150
+var ETA_WARN_MIN = 10                         // R1：ETA ≤ 10 分鐘用橘色〔顯示用候選值〕
+var ETA_NA_LABEL = "電量下降，無法估計到保留電量的時間"
 var ACCENT = { normal_soc: "telemetryMetricGreen", normal: "telemetryMetricBlue", warn: "telemetryMetricOrange" }
 // 與 GenuiClaims 相同的數字格式與 ETA 原因句（說明 §1：答案和卡片顯示同一個數字）
 function num(x) { var r = Math.round(x * 10) / 10; return String(r === 0 ? 0 : r) }
@@ -32,12 +34,34 @@ function axisRange(values, extra) {
     return { min: lo - pad, max: hi + pad }
 }
 
+// T-DOC 行「「引文」（文件 › 章節，版本）」拆成引文與出處（R3）
+function splitDocLine(t) {
+    if (typeof t !== "string" || t.charAt(0) !== "「" || t.charAt(t.length - 1) !== "）") return null
+    var k = t.lastIndexOf("」（")                      // 引文結尾＋出處開頭；章節名稱本身可以含括號
+    return k > 0 ? { quote: t.slice(1, k), source: t.slice(k + 2, t.length - 1) } : null
+}
+// 依句子邊界切句（。！？；.!?），保留標點
+function sentences(t) {
+    var out = [], cur = "", cps = Array.from(t), i
+    for (i = 0; i < cps.length; ++i) { cur += cps[i]; if ("。！？；.!?".indexOf(cps[i]) >= 0) { out.push(cur); cur = "" } }
+    if (cur) out.push(cur)
+    return out
+}
+// 在完整句邊界縮短：取最多能放進 maxChars 的前幾句；一句都放不下時回 {text:"", whole:false}（R2、R3）
+function shortenAtSentence(t, maxChars) {
+    var ss = sentences(t), acc = "", n = 0
+    for (var i = 0; i < ss.length; ++i) { if (Array.from(acc + ss[i]).length > maxChars) break; acc += ss[i]; ++n }
+    return { text: acc, whole: n === ss.length, sentences: n }
+}
+
 function bindAnswer(answer) {
     if (!answer || !Array.isArray(answer.lines)) return bad("NO_ANSWER")
     var m = [], o = [], i
     for (i = 0; i < answer.lines.length; ++i) {
         var l = answer.lines[i]; if (typeof l.text !== "string") return bad("LINE_TYPE")
-        ;(l.mandatory ? m : o).push({ text: l.text, mandatory: !!l.mandatory })
+        var row = { text: l.text, mandatory: !!l.mandatory, kind: "text" }
+        if (l.template_id === "T-DOC") { var d = splitDocLine(l.text); if (d) { row.kind = "doc"; row.quote = d.quote; row.source = d.source } }
+        ;(l.mandatory ? m : o).push(row)
     }
     return { ok: true, error: "", data: { lines: m.concat(o) } }
 }
@@ -85,9 +109,10 @@ function bindDiag(toolResults, refs) {
     if (tr) {
         cards.push({ key: "slope", label: "電量變化", value: finite(tr.slope) ? num(tr.slope) : "—", unit: "%/min", accent: ACCENT.normal })
         var eta = finite(tr.eta_min) && !tr.eta_reason, why = ETA_NA_REASON[tr.eta_reason] || ""
-        var warn = tr.direction === "下降" && !eta
-        cards.push({ key: "eta", label: "到保留電量", value: eta ? num(tr.eta_min) : "無法估計", unit: eta ? "分鐘" : (why ? "（" + why + "）" : ""),
-                     accent: warn ? ACCENT.warn : ACCENT.normal })
+        if (eta) cards.push({ key: "eta", label: "到保留電量", value: num(tr.eta_min), unit: "分鐘", note: "",
+                              accent: tr.eta_min <= ETA_WARN_MIN ? ACCENT.warn : ACCENT.normal })
+        else if (tr.direction === "下降") cards.push({ key: "eta", label: ETA_NA_LABEL, value: "—", unit: "", note: why, accent: ACCENT.warn })
+        else cards.push({ key: "eta", label: "到保留電量", value: "—", unit: "", note: why, accent: ACCENT.normal })
     }
     return { ok: true, error: "", data: { cards: cards } }
 }
@@ -129,6 +154,35 @@ function fitLines(lines, availH, lineH) {
     var room = Math.max(m, cap - 1)          // 留一行給「還有 N 行」
     var shown = Math.min(lines.length, room)
     return { shown: shown, hidden: lines.length - shown }
+}
+// W1（R3）：每行高度不同（引用行最多 3 行）。mandatory 一定顯示；其餘依序放，放不下留一行給「還有 N 行」
+function fitLinesH(heights, mandatory, availH, moreH) {
+    var used = 0, shown = 0, i, n = heights.length
+    for (i = 0; i < n; ++i) if (mandatory[i]) used += heights[i]
+    var total = 0; for (i = 0; i < n; ++i) total += heights[i]
+    if (total <= availH) return { shown: n, hidden: 0 }
+    var budget = availH - moreH, acc = 0
+    for (i = 0; i < n; ++i) {
+        var need = mandatory[i] ? 0 : heights[i]
+        if (!mandatory[i] && used + acc + need > budget) break
+        acc += need; ++shown
+    }
+    for (var k = shown; k < n; ++k) if (mandatory[k]) ++shown  // mandatory 已排在最前，實務上不會走到
+    return { shown: shown, hidden: n - shown }
+}
+// W2（R4）：縱軸最小、最大標籤；右側「目前／保留」標籤，兩者太近就改兩行並排在同一位置
+function seriesLabels(d, h, labelH) {
+    if (!d || !d.y || !d.points.length) return null
+    var unit = d.unit === "%" ? "%" : (d.unit ? " " + d.unit : ""), last = d.points[d.points.length - 1].v
+    var yOf = function (v) { return h - (v - d.y.min) / ((d.y.max - d.y.min) || 1) * h }
+    var out = { min: num(d.y.min) + unit, max: num(d.y.max) + unit, current: { text: "目前 " + num(last) + unit, y: yOf(last) }, reserve: null, diff: "", stacked: false }
+    if (d.reserve_pct !== null && d.reserve_pct !== undefined) {
+        out.reserve = { text: "保留 " + num(d.reserve_pct) + unit, y: yOf(d.reserve_pct) }
+        var gap = Math.round((last - d.reserve_pct) * 10) / 10
+        out.diff = gap >= 0 ? "高於保留值 " + num(gap) + " 個百分點" : "低於保留值 " + num(-gap) + " 個百分點"
+        if (Math.abs(out.current.y - out.reserve.y) < labelH) { out.stacked = true; out.reserve.y = out.current.y + labelH }
+    }
+    return out
 }
 // W3／W5：依序顯示能放的個數，放不下的顯示「還有 N 筆／段」（Q1：不捲動）
 function fitCount(n, availH, itemH) {
