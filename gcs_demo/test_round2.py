@@ -233,5 +233,68 @@ class RoundTwoV4(unittest.TestCase):
         self.assertEqual([b[0] for b in bad], ["s5"])
 
 
+class RoundTwoV5(unittest.TestCase):
+    BASE = RoundTwoV4.BASE
+
+    def test_after_skipped_step_in_continuation(self):
+        # 0416 第 1 點（續做入口）：s4 已 SKIPPED；執行後補計畫加一步只 after s4 → 驗證要接受並執行
+        s6 = st("s6", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}, after=["s4"])
+        s7 = st("s7", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
+                when="s6.route_preview.verdict==pass")
+        cont = plan(st("s8", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"}, after=["s4"]))
+        m = scripted(['{"directions":["plan","ui"]}', plan(*(self.BASE + [s6, s7])), cont])
+        _, T = tools(["A001", "A003", "U100"])
+        n = {"v": 0}
+
+        def verify(ref):
+            n["v"] += 1
+            return {"result": "pass" if n["v"] == 1 else "fail", "preview_ref": f"PV{n['v']}", "est_end_pct": 50.0}
+        T["verify_preview"] = verify
+        r = PlanBController(T, m, GRAPH, COUNTER).request("北側巡檢放到首頁")
+        states = {x["id"]: x["state"] for x in r["plan"]}
+        self.assertEqual((states["s4"], states["s7"], states["s8"]), ("SKIPPED", "SKIPPED", "PROPOSED"))
+        self.assertTrue(any(e["event"] == "continue" for e in r["plan_log"]))
+        self.assertEqual(r["status"], "DONE")
+
+    def test_after_skipped_known_accepted_by_validator(self):
+        outs = {"s3": {"route_preview": {"ref": "PV1", "verdict": "pass"}}}
+        s6 = st("s6", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"}, after=["s4"])
+        _, bad = OC.simulate_steps([s6], outs, {}, known=["s1", "s2", "s3", "s4"])
+        self.assertEqual(bad, [])
+
+    def test_continuation_end_to_end_after_skipped(self):
+        # 初次計畫：plan 4 步（s4 只在 s3 不合格）＋ s5 首頁但條件寫成 s3 不合格 → 執行前不可達 → 退回；
+        # 修正後的計畫在續做時用 after=[s4]（s4 已略過）
+        first = plan(*(self.BASE + [st("s5", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
+                                       after=["s4"])]))
+        m = scripted(['{"directions":["plan","ui"]}', first])
+        _, T = tools(["A001", "A003", "U100"])
+        r = PlanBController(T, m, GRAPH, COUNTER).request("北側巡檢放到首頁")
+        states = {x["id"]: x["state"] for x in r["plan"]}
+        self.assertEqual((states["s4"], states["s5"]), ("SKIPPED", "PROPOSED"))
+        self.assertEqual(r["replans"], 0)
+
+    def test_when_false_skips_before_waiting_require(self):
+        # 0416 第 2 點：s4 主題提案只在 s3 不合格；s5 報告也只在 s3 不合格且 require s4 APPLIED；實際 s3 合格 → s5 應略過，不卡等待
+        s4 = st("s4", "color", "UI_THEME_PROPOSE", ["T001"], after=["s3"], when="s3.route_preview.verdict==fail")
+        s5 = st("s5", "report", "REPORT_DRAFT", [], after=["s3"], when="s3.route_preview.verdict==fail",
+                require={"s4": "APPLIED"})
+        s6 = st("s6", "color", "UI_THEME_PROPOSE", ["T001"], after=["s4"], when="s3.route_preview.verdict==pass")
+        s7 = st("s7", "report", "REPORT_DRAFT", [], after=["s5"], when="s3.route_preview.verdict==pass")
+        m = scripted(['{"directions":["plan","color","report"]}', plan(*(self.BASE[:3] + [s4, s5, s6, s7]))])
+        _, T = tools(["A001", "T001"])
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢，改深色，產生報告")
+        states = {x["id"]: x["state"] for x in r["plan"]}
+        self.assertEqual(states["s5"], "SKIPPED")
+        self.assertNotIn("WAITING", states.values())
+
+    def test_require_on_skipped_source_ends_wait(self):
+        s4 = st("s4", "color", "UI_THEME_PROPOSE", ["T001"], after=["s3"], when="s3.route_preview.verdict==fail")
+        s5 = st("s5", "report", "REPORT_DRAFT", [], after=["s4"], require={"s4": "APPLIED"})
+        task = {"plan": [dict(s4, state="SKIPPED"), dict(s5, state="PENDING")]}
+        c = PlanBController({}, None, GRAPH, COUNTER)
+        self.assertEqual(c._ready(task, task["plan"][1]), "fail_dep")
+
+
 if __name__ == "__main__":
     unittest.main()

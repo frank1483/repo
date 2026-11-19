@@ -105,7 +105,7 @@ def input_sig(action, have):
     return tuple((n, have.get(n)) for n in NEEDS.get(action, []))
 
 
-def simulate_steps(steps, outs, have):
+def simulate_steps(steps, outs, have, known=()):
     """B 的執行前可達性（v4，CODEX-APP-0415）：分支條件沿「取得結果、條件、等待套用」三種相依傳遞；純順序（after）不傳。
     每個可達步驟帶一組「條件」{預覽步驟: pass／fail}＝自己的 when、需要合格預覽時對該預覽的 pass，
     再加上所有 bind／after／when 來源步驟的條件。同一個預覽同時要求 pass 與 fail → 沒有共同可達分支 → 不可達。
@@ -138,7 +138,7 @@ def simulate_steps(steps, outs, have):
         why, c = None, {}
         srcs = set()                                      # v4：只有取得結果（bind）、條件（when）、等待套用（require）傳遞條件
         for x in st.get("after") or []:                   # after＝純順序：來源略過也算結束（同執行器 TERMINAL_OK），不傳條件
-            if x not in prod and not any(y["id"] == x for y in steps):
+            if x not in prod and x not in known and not any(y["id"] == x for y in steps):
                 why = f"after 指的 {x} 不存在"
         for x in (st.get("require") or {}):               # require：來源必須真的會產生提案，條件一路傳下來
             srcs.add(x)

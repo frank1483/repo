@@ -234,7 +234,8 @@ class PlanBController(M4bController):
         live = [x for x in task["plan"] if x["state"] != "REPLACED"]
         outs = {x["id"]: x.get("out") or {} for x in live if x["state"] in ("OK", "PROPOSED")}
         pend = [x for x in live if x["state"] in ("PENDING", "WAITING")]
-        prod, bad = OC.simulate_steps(pend + out, outs, self.have(task))
+        prod, bad = OC.simulate_steps(pend + out, outs, self.have(task),
+                                      known=[x["id"] for x in live])   # 已略過的步驟也能滿足純順序 after
         if bad:
             return False, None, "；".join(f"{i} 不可達：{w}" for i, w in bad)
         sim = dict(self.have(task))
@@ -341,14 +342,7 @@ class PlanBController(M4bController):
                 return "wait"
             if st not in TERMINAL_OK:
                 return "fail_dep"
-        for x in s["require"]:
-            if P[x].get("applied") is not True:
-                return "wait"
-        for slot, ref in s["bind"].items():                 # 取值一律來自來源步驟自己的輸出
-            sid, field = ref.split(".", 1)
-            if field not in (P[sid].get("out") or {}):
-                return "missing"
-        if s["when"]:
+        if s["when"]:                                       # v5（0416 第 2 點）：先判條件；已知不成立就略過，不再等套用
             m = WHEN_RE.match(s["when"])
             src = P[m.group(1)]
             verdict = ((src.get("out") or {}).get("route_preview") or {}).get("verdict")
@@ -356,6 +350,16 @@ class PlanBController(M4bController):
                 return "missing"
             if verdict != m.group(2):
                 return "skip"
+        for slot, ref in s["bind"].items():                 # 取值一律來自來源步驟自己的輸出
+            sid, field = ref.split(".", 1)
+            if field not in (P[sid].get("out") or {}):
+                return "missing"
+        for x in s["require"]:
+            if P[x]["state"] != "PROPOSED":                 # 來源不會有提案（例如已略過）→ 永遠等不到套用，明確結束
+                s["reason"] = f"等待套用的 {x} 沒有開提案（{P[x]['state']}），不會套用"
+                return "fail_dep"
+            if P[x].get("applied") is not True:
+                return "wait"
         return "run"
 
     def _execute(self, task, qv):
