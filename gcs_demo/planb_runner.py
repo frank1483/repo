@@ -48,14 +48,18 @@ def a_record(cond, case):
     n = sum(len(t.get("replies") or []) for t in rep.get("traces") or [] if t.get("purpose") == "stage1")
     batches = [[b["directions"], {d: v["items"] for d, v in b["per_dir"].items()}]
                for b in (rep.get("packing") or {}).get("batches") or []]
-    return rep, {"directions": rep.get("directions"), "stage1_calls": n}, batches
+    preset = {"directions": rep.get("directions"), "stage1_calls": n}
+    if rep.get("status") in ("INVALID_INPUT", "TOO_LONG"):
+        preset = None                            # Gate 擋下：第 1 段沒跑，B 自己的 Gate 會得到同樣結果
+    elif not rep.get("directions"):              # 第 1 段跑了但在規劃前結束（例如方向超過上限）→ B 照 A 的結果結束
+        preset["terminal"] = {"status": rep.get("status"), "reply_zh": rep.get("reply_zh"),
+                              "reason": "；".join(rep.get("notes") or [])}
+    return rep, preset, batches
 
 
 def controller(*a, **kw):
     cond, case = _SHARED["current"]
-    rep, preset, _ = a_record(cond, case)
-    if not preset["directions"]:                 # A 在第 1 段前就結束（Gate）→ B 照常走自己的第 1 段（一樣會被 Gate 擋）
-        preset = None
+    _, preset, _ = a_record(cond, case)
     return PlanBController(*a, preset=preset, **kw)
 
 
@@ -68,17 +72,72 @@ def run_case(case, cond, model_factory, graph, counter, work):
     _SHARED["current"] = (cond["id"], case["id"])
     rec, full = _run_case(case, cond, model_factory, graph, counter, work)
     r = full.get("reply") or {}
-    _, preset, a_batches = a_record(cond["id"], case["id"])
+    a_rep, preset, a_batches = a_record(cond["id"], case["id"])
     b_batches = [[b["directions"], {d: v["items"] for d, v in b["per_dir"].items()}]
                  for b in (r.get("packing") or {}).get("batches") or []]
-    rec["shared_from_a"] = {"directions": preset["directions"], "stage1_calls": preset["stage1_calls"]}
-    rec["shared_input_match"] = (r.get("directions") == preset["directions"]) and b_batches == a_batches
+    rec["shared_from_a"] = preset and {k: preset[k] for k in ("directions", "stage1_calls")}
+    rec["shared_input_match"] = (r.get("directions") or []) == (a_rep.get("directions") or []) and b_batches == a_batches
+    # v4（0408 第 2 點）：首頁相依改按實際步驟來源核對——提案引用的預覽必須是本計畫某個 VERIFY 步驟產生的合格預覽
+    deps = case.get("expect_dependency") or {}
+    if deps and r:
+        good = {((s.get("out") or {}).get("route_preview") or {}).get("ref") for s in r.get("plan") or []
+                if s["action"] == "VERIFY_PREVIEW" and ((s.get("out") or {}).get("route_preview") or {}).get("verdict") == "pass"}
+        art = dict(r.get("artifacts") or {})
+        for p in r.get("proposals") or []:
+            src = p.get("source") or {}
+            if p["action"] == "PROPOSE_HOME_ROUTE" and src.get("verdict") == "pass" and src.get("preview_ref") in good:
+                art["route_preview"] = dict(art.get("route_preview") or {}, ref=src["preview_ref"])
+        rescored = R4.score(case, dict(r, artifacts=art))
+        if rescored["correct"] != rec["correct"]:
+            rec["rescored_by_step_source"] = True
+        rec.update(rescored)
     rec["replans"] = r.get("replans")
     rec["plan_states"] = [[s["id"], s["action"], s["state"]] for s in r.get("plan") or []]
     return rec, full
 
 
 R4.run_case = run_case
+_summarize = R4.summarize
+
+
+def summarize(recs):
+    """v4（0408 第 1 點）：共用輸入不一致的列隔離，不進主表；另報不一致數與列。"""
+    ok = [r for r in recs if r.get("shared_input_match")]
+    bad = [r for r in recs if not r.get("shared_input_match")]
+    out = _summarize(ok) if ok else {}
+    out["_shared_input_mismatch"] = {"n": len(bad), "rows": [[r["cond"], r["case"]] for r in bad]}
+    return out
+
+
+R4.summarize = summarize
+
+
+def check_a_dir(phase, fake):
+    """鎖定 A 同 phase 的完整輸出：phase、fake／live、來源包（live 須為 M4b v3 已同意的包）、結束時間與案例數。"""
+    info = json.load(open(os.path.join(_SHARED["dir"], "RUN_INFO.json"), encoding="utf-8"))
+    rows = [json.loads(l) for l in open(os.path.join(_SHARED["dir"], "results.jsonl"), encoding="utf-8") if l.strip()]
+    n_cases = len(json.load(open(R4.CASES, encoding="utf-8"))["cases"])
+    want = {c["id"] for c in R4.CONDITIONS[phase]}
+    errs = []
+    if info.get("phase") != phase:
+        errs.append(f"A phase={info.get('phase')}，B phase={phase}")
+    if bool(info.get("fake")) != bool(fake):
+        errs.append("A 與 B 的 fake／live 不一致")
+    if not fake and (info.get("bundle_verification") or {}).get("sums_sha256") != A_BUNDLE_SHA:
+        errs.append("A 不是用已同意的 M4b v3 來源包跑的")
+    if not info.get("end"):
+        errs.append("A 沒有正常結束")
+    for c in want:
+        k = sum(1 for r in rows if r["cond"] == c)
+        if k != n_cases:
+            errs.append(f"A 條件 {c} 只有 {k}/{n_cases} 列")
+    if errs:
+        raise SystemExit("--shared-from 核對不通過：" + "；".join(errs))
+    return {"dir": os.path.abspath(_SHARED["dir"]), "phase": info.get("phase"), "fake": info.get("fake"),
+            "a_bundle_sha256": (info.get("bundle_verification") or {}).get("sums_sha256"), "a_end": info.get("end")}
+
+
+A_BUNDLE_SHA = "81b575ac6dd9ce157b25a9278a5115258801b9e701cb69bd3b2bd6c76809b0bb"
 
 
 def main(argv=None):
@@ -90,7 +149,15 @@ def main(argv=None):
     del argv[k:k + 2]
     if not os.path.exists(os.path.join(_SHARED["dir"], "results.jsonl")):
         raise SystemExit("--shared-from 目錄沒有 results.jsonl")
-    return R4.main(argv)
+    phase = argv[argv.index("--phase") + 1]
+    shared = check_a_dir(phase, "--fake" in argv)
+    out = argv[argv.index("--out") + 1]
+    rc = R4.main(argv)
+    p = os.path.join(out, "RUN_INFO.json")                 # 把共用來源記進 B 的 RUN_INFO（主程式結束後補一欄）
+    info = json.load(open(p, encoding="utf-8"))
+    info["shared_from_a"] = shared
+    json.dump(info, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
+    return rc
 
 
 if __name__ == "__main__":

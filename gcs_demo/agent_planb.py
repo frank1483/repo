@@ -44,6 +44,17 @@ class PlanBController(M4bController):
         super().__init__(*a, **kw)
         self.preset = preset
 
+    def request(self, text):
+        if self.preset is not None and self.preset.get("terminal"):
+            t = self.preset["terminal"]
+            n = int(self.preset.get("stage1_calls") or 0)
+            return {"status": t["status"], "reply_zh": t["reply_zh"], "reply_source": "shared_from_A", "proposals": [],
+                    "directions": [], "dir_status": {}, "steps": [], "notes": ["第 1 段結果沿用方案 A：" + t["reason"]],
+                    "calls_used": n, "traces": [{"purpose": "stage1_shared", "replies": [], "calls": n}],
+                    "retrieval": None, "packing": None, "artifacts": {}, "qv_ok": None, "t_pre_summary_s": 0.0,
+                    "plan": [], "replans": 0, "plan_log": []}
+        return super().request(text)
+
     def _directions(self, task):
         if self.preset is None:
             return super()._directions(task)
@@ -123,8 +134,8 @@ class PlanBController(M4bController):
             if not (_strs(ids) and _strs(after) and _str_map(params) and _str_map(bind) and _str_map(req)) or \
                     not (when is None or isinstance(when, str)):
                 return False, None, f"{sid}：欄位型別錯誤"
-            if (d, a) in forbid:
-                return False, None, f"{sid}：不可重做已完成的 {d}／{a}"
+            if (d, a, json.dumps([ids, params, bind], sort_keys=True)) in forbid:
+                return False, None, f"{sid}：和已完成的步驟完全相同（{d}／{a}），不可重做"
             missing = set(INPUTS.get(a, {})) - set(bind)
             if missing:
                 return False, None, f"{sid}：{a} 必須用 bind 指定 {'、'.join(sorted(missing))} 的來源步驟"
@@ -237,7 +248,7 @@ class PlanBController(M4bController):
 
     # ---------- 執行 ----------
     def _ready(self, task, s):
-        """回傳 run／skip／wait／fail_dep。"""
+        """回傳 run／skip／wait／fail_dep（來源失敗）／missing（來源正常結束或略過，但沒有所需結果 → 重新判斷）。"""
         P = {x["id"]: x for x in task["plan"]}
         deps = set(s["after"]) | {r.split(".")[0] for r in s["bind"].values()} | set(s["require"])
         if s["when"]:
@@ -254,13 +265,13 @@ class PlanBController(M4bController):
         for slot, ref in s["bind"].items():                 # 取值一律來自來源步驟自己的輸出
             sid, field = ref.split(".", 1)
             if field not in (P[sid].get("out") or {}):
-                return "fail_dep"
+                return "missing"
         if s["when"]:
             m = WHEN_RE.match(s["when"])
             src = P[m.group(1)]
             verdict = ((src.get("out") or {}).get("route_preview") or {}).get("verdict")
             if src["state"] == "SKIPPED" or verdict is None:
-                return "fail_dep"
+                return "missing"
             if verdict != m.group(2):
                 return "skip"
         return "run"
@@ -280,6 +291,13 @@ class PlanBController(M4bController):
                     s["state"] = "SKIPPED"
                 elif r == "fail_dep":
                     s["state"] = "FAILED_DEP"
+                    s["reason"] = "前置步驟失敗"
+                elif r == "missing":                        # v4（CODEX-APP-0408 第 3 點）：缺結果相依 → 重新判斷
+                    s["state"] = "FAILED_DEP"
+                    s["reason"] = "前置步驟沒有產生所需結果"
+                    if self._replan(task, s):
+                        progressed = True
+                        break
                 else:
                     step = {"action": s["action"], "ids": s["ids"], "params": s["params"]}
                     task["steps"].append(dict(step, direction=s["direction"], source="plan", step_id=s["id"]))
@@ -335,7 +353,7 @@ class PlanBController(M4bController):
             failed["reason"] = "重規劃額度已用完" if self.model is not None else "規則計畫不重規劃"
             return False
         affected = [s for s in task["plan"] if s["id"] in self._downstream(task, failed["id"]) and
-                    s["state"] in ("PENDING", "WAITING", "BLOCKED")]
+                    s["state"] in ("PENDING", "WAITING", "BLOCKED", "FAILED_DEP")]
         task["replans"] += 1
         task["plan_log"].append({"event": "replan", "failed": failed["id"], "affected": [s["id"] for s in affected],
                                  "replans": task["replans"]})
@@ -346,10 +364,11 @@ class PlanBController(M4bController):
         dirs = list(dict.fromkeys(s["direction"] for s in affected))
         redo = (f"步驟 {failed['id']}（{failed['action']}）失敗；請只重寫這些步驟：" +
                 "、".join(f"{s['id']} {s['action']}" for s in affected) + f"；新步驟從 s{self._next_id(task)} 起編號")
-        forbid = frozenset((s["direction"], s["action"]) for s in keep if s["state"] in ("OK", "PROPOSED"))
+        forbid = frozenset((s["direction"], s["action"], json.dumps([s["ids"], s["params"], s["bind"]], sort_keys=True))
+                           for s in keep if s["state"] in ("OK", "PROPOSED"))
         new = self._plan(task, dirs, initial=False, fixed=keep, redo=redo, forbid=forbid,
                          max_steps=len(affected) + 2)
-        if not new:
+        if new is None:                                    # 空清單＝合法地放棄這些步驟
             for s in affected:
                 s["state"] = prev[s["id"]]
             failed["reason"] = "重規劃無有效計畫"

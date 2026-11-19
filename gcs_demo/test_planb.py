@@ -185,6 +185,55 @@ class PlanBTests(unittest.TestCase):
         self.assertEqual([p["action"] for p in r["proposals"]], ["PROPOSE_HOME_ROUTE"])
         self.assertEqual(r["status"], "DONE")
 
+    # ---- v4（CODEX-APP-0408）----
+    def test_missing_bound_result_triggers_replan(self):
+        p1 = plan(st("s1", "plan", "QUERY_AREA", ["A001"]),
+                  st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                  st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+                  st("s4", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}, when="s3.route_preview.verdict==fail"),
+                  st("s5", "plan", "VERIFY_PREVIEW", bind={"route": "s4.coverage_route"}))
+        dup = plan(st("s6", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}))   # 和 s3 完全相同 → 不合格
+        m = scripted(['{"directions":["plan"]}', p1, dup, '{"steps":[]}'])
+        _, T = tools(["A001"])
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
+        states = {x["id"]: x["state"] for x in r["plan"]}
+        self.assertEqual(states["s4"], "SKIPPED")               # 合法略過的來源保留
+        self.assertEqual(states["s5"], "REPLACED")               # 重規劃決定不再需要 s5
+        self.assertNotIn("s6", states)
+        self.assertEqual(r["replans"], 2)
+        self.assertEqual(r["status"], "DONE")
+
+    def test_terminal_preset_does_not_reask_stage1(self):
+        m = scripted([])
+        _, T = tools([])
+        pre = {"directions": [], "stage1_calls": 1,
+               "terminal": {"status": "PARKED", "reply_zh": "請先選最多 3 件", "reason": "方向 4 個超過上限 3"}}
+        r = PlanBController(T, m, GRAPH, COUNTER, preset=pre).request("文字放大改深色切規則模式查手冊")
+        self.assertEqual(r["status"], "PARKED")
+        self.assertEqual(m.calls, [])
+        self.assertEqual(r["calls_used"], 1)
+
+    def test_runner_rescores_by_step_source(self):
+        from . import planb_runner as PR
+        case = {"id": "X", "expect_proposals": [{"action": "PROPOSE_HOME_ROUTE", "ids": ["U100"], "values": []}],
+                "expect_artifacts": {"route_preview": "pass"}, "expect_status": "DONE", "gold_dirs": ["plan", "ui"],
+                "expect_dependency": {"PROPOSE_HOME_ROUTE": "pass_preview"}}
+        prop = {"action": "PROPOSE_HOME_ROUTE", "ids": ["U100"], "params": {}, "state": "PROPOSED", "t_ready_s": 1.0,
+                "source": {"preview_ref": "PV1", "verdict": "pass"}}
+        reply = {"status": "DONE", "proposals": [prop], "artifacts": {"route_preview": {"ref": "PV2", "verdict": "pass"}},
+                 "plan": [{"id": "s3", "action": "VERIFY_PREVIEW", "state": "OK", "out": {"route_preview": {"ref": "PV1", "verdict": "pass"}}},
+                          {"id": "s6", "action": "VERIFY_PREVIEW", "state": "OK", "out": {"route_preview": {"ref": "PV2", "verdict": "pass"}}}]}
+        self.assertFalse(PR.R4.score(case, reply)["correct"])    # 只看全域最新預覽會誤判
+        orig_run, orig_rec = PR._run_case, PR.a_record
+        try:
+            PR._run_case = lambda *a: ({"correct": False}, {"reply": reply})
+            PR.a_record = lambda c, k: ({"directions": ["plan", "ui"]}, {"directions": ["plan", "ui"], "stage1_calls": 1}, [])
+            rec, _ = PR.run_case(case, {"id": "A-s6-b30"}, None, None, None, None)
+        finally:
+            PR._run_case, PR.a_record = orig_run, orig_rec
+        self.assertTrue(rec["correct"])
+        self.assertTrue(rec["rescored_by_step_source"])
+
 
 if __name__ == "__main__":
     unittest.main()
