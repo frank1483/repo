@@ -1,0 +1,302 @@
+"""ADR-0002 新架構（方案 B）：每批一次結構化規劃，程式驗證後執行（演算法說明 v3.5）。
+
+與方案 A（agent_m4b.M4bController）共用：Gate、第 1 段方向排序、查詢向量 1 次、ID 檢索與分批（每批 3,000）、
+動作白名單、ID／參數驗證、工具執行（_exec）、提案狀態與整理回覆。差別只在決策方式：
+- A：每一步問模型選一個動作；
+- B：每批問模型一次，輸出整份計畫 steps=[{id, direction, action, ids, params, after, bind, when, require}]，
+  程式驗證整份計畫（白名單、候選、輸入槽、相依無循環、跨批引用）後依共用排程執行。
+重規劃（Z-3，使用者 2026-11-19 12:58）：每任務最多 2 次，初始規劃（每批第一次）另計；計畫不合格的修正也從這 2 次扣（第 18 題）。
+只重規劃受影響且未完成的步驟與其下游；用完後回覆各步驟完成／未完成及原因。
+"""
+from __future__ import annotations
+
+import json
+import re
+
+from .agent_loop import default_extract
+from .agent_m4b import ACTIONS, ID_INPUT, KIND_ZH, PROPOSE, M4bController
+
+REPLAN_MAX = 2
+# 動作的輸出欄位（id_catalog_v1.json actions.outputs）；when 只能比對列舉欄位 verdict
+OUTPUTS = {"QUERY_AREA": {"area_record"}, "GEN_COVERAGE": {"coverage_route"}, "VERIFY_PREVIEW": {"route_preview"},
+           "MANUAL_SEARCH": {"manual_claims"}, "QA_LOOKUP": {"qa_claims"}, "REPORT_DRAFT": {"report_draft"},
+           "DECLINE_FLIGHT": {"flight_notice"}}
+INPUTS = {"GEN_COVERAGE": {"area": "area_record"}, "VERIFY_PREVIEW": {"route": "coverage_route"},
+          "PROPOSE_HOME_ROUTE": {"preview": "route_preview"}}
+WHEN_RE = re.compile(r"^(s\d+)\.route_preview\.verdict==(pass|fail)$")
+TERMINAL_OK = ("OK", "PROPOSED", "SKIPPED")
+
+
+class PlanBController(M4bController):
+    # ---------- 共用排程（每批） ----------
+    def _schedule(self, task, qv):
+        task.setdefault("plan", [])
+        task.setdefault("replans", 0)
+        task.setdefault("plan_log", [])
+        planned = {s["direction"] for s in task["plan"]}
+        batch = [d for d in task["directions"] if task["dir_status"][d] == "PENDING" and d not in planned]
+        if batch:                                           # 空批不呼叫模型
+            self._add_steps(task, self._plan(task, batch, initial=True))
+        self._execute(task, qv)                             # 先前批次在等的步驟也一起推進
+        for d in [d for d in task["directions"] if d in batch or d in planned]:
+            ss = [s for s in task["plan"] if s["direction"] == d and s["state"] != "REPLACED"]
+            st = [s["state"] for s in ss]
+            if any(x == "NEEDS_USER" for x in st):
+                task["dir_status"][d] = "NEEDS_USER"
+            elif any(x == "WAITING" for x in st):
+                task["dir_status"][d] = "WAITING"
+            elif ss and all(x in TERMINAL_OK for x in st) and self._dir_done(task, d):
+                task["dir_status"][d] = "DONE"
+            else:
+                task["dir_status"][d] = "INCOMPLETE"
+
+    # ---------- 規劃 ----------
+    def _plan_prompt(self, task, dirs, fixed, redo=None):
+        parts = [f"句子：{task['text']}", "方向（依序）：" + "、".join(f"{d}（{KIND_ZH[d]}）" for d in dirs)]
+        for d in dirs:
+            parts.append(f"[{d}] 可選動作：{'｜'.join(ACTIONS[d]) or '（無）'}\n可用 ID：\n" +
+                         ("\n".join(task["lines"].get(d, [])) or "（無）"))
+        if fixed:
+            parts.append("已存在的步驟（可在 after／bind／when／require 引用，不可重寫）：" +
+                         json.dumps([{k: s[k] for k in ("id", "direction", "action", "state")} for s in fixed],
+                                    ensure_ascii=False))
+        if redo:
+            parts.append("需要重新規劃的部分：" + redo)
+        parts.append("規則：bind 寫 {\"輸入槽\":\"sN.輸出欄位\"}；when 只能寫 \"sN.route_preview.verdict==pass\"；"
+                     "require 寫 {\"sN\":\"APPLIED\"}；params 只能填允許值。")
+        parts.append('只輸出 JSON：{"steps":[{"id":"s1","direction":"plan","action":"QUERY_AREA","ids":["A001"],'
+                     '"params":{},"after":[],"bind":{},"when":null,"require":{}}]}')
+        return "\n".join(parts)
+
+    def _next_id(self, task):
+        return 1 + max([int(s["id"][1:]) for s in task["plan"]] or [0])
+
+    def _validate(self, task, dirs, raw, fixed_ids):
+        obj = default_extract(raw)
+        if not isinstance(obj, dict) or list(obj) != ["steps"] or not isinstance(obj["steps"], list):
+            return False, None, "只能有 steps 一個欄位，且為清單"
+        known = {s["id"]: s for s in task["plan"] if s["state"] != "REPLACED"}
+        out, seen = [], set()
+        for st in obj["steps"]:
+            if not isinstance(st, dict) or not {"id", "direction", "action"} <= set(st) or \
+                    not set(st) <= {"id", "direction", "action", "ids", "params", "after", "bind", "when", "require"}:
+                return False, None, "步驟欄位錯誤"
+            sid, d, a = st["id"], st["direction"], st["action"]
+            if not isinstance(sid, str) or not re.fullmatch(r"s\d+", sid) or sid in seen or sid in fixed_ids:
+                return False, None, f"步驟編號 {sid} 不合法或重複"
+            if d not in dirs or a not in ACTIONS.get(d, []):
+                return False, None, f"{sid}：方向或動作不在白名單"
+            ids, params = st.get("ids") or [], st.get("params") or {}
+            after, bind, req = st.get("after") or [], st.get("bind") or {}, st.get("require") or {}
+            when = st.get("when")
+            if not all(isinstance(x, list) for x in (ids, after)) or not all(isinstance(x, dict) for x in (params, bind, req)):
+                return False, None, f"{sid}：欄位型別錯誤"
+            ok, _, err = self._parse_step(task, d, json.dumps({"action": a, "ids": ids, "params": params}), ACTIONS[d])
+            if not ok:
+                return False, None, f"{sid}：{err}"
+            prior = set(known) | seen
+            for x in after:
+                if x not in prior:
+                    return False, None, f"{sid}：after 引用不存在或在後面的步驟 {x}"
+            for slot, ref in bind.items():
+                m = re.fullmatch(r"(s\d+)\.(\w+)", ref) if isinstance(ref, str) else None
+                if slot not in INPUTS.get(a, {}) or not m or m.group(1) not in prior:
+                    return False, None, f"{sid}：bind {slot} 不合法"
+                src = (known.get(m.group(1)) or next(s for s in out if s["id"] == m.group(1)))
+                if m.group(2) != INPUTS[a][slot] or m.group(2) not in OUTPUTS.get(src["action"], set()):
+                    return False, None, f"{sid}：bind 欄位型別不符"
+                if m.group(1) not in after:
+                    after = after + [m.group(1)]                  # 來源步驟自動列入 after
+            if when is not None:
+                m = WHEN_RE.match(when) if isinstance(when, str) else None
+                if not m or m.group(1) not in prior:
+                    return False, None, f"{sid}：when 只能比對先前步驟的預覽判定"
+                src = known.get(m.group(1)) or next(s for s in out if s["id"] == m.group(1))
+                if src["action"] != "VERIFY_PREVIEW":
+                    return False, None, f"{sid}：when 引用的步驟沒有預覽判定"
+            for x, state in req.items():
+                if x not in prior or state != "APPLIED":
+                    return False, None, f"{sid}：require 只能要求先前步驟 APPLIED"
+                src = known.get(x) or next(s for s in out if s["id"] == x)
+                if src["action"] not in PROPOSE:
+                    return False, None, f"{sid}：require 的步驟不會有 APPLIED 狀態"
+            seen.add(sid)
+            out.append({"id": sid, "direction": d, "action": a, "ids": ids, "params": params, "after": after,
+                        "bind": bind, "when": when, "require": req})
+        return True, out, ""
+
+    def _plan(self, task, dirs, initial, fixed=None, redo=None):
+        """initial＝每批第一次規劃（另計）；不合格的修正與重規劃都扣每任務 2 次額度。"""
+        fixed = fixed if fixed is not None else [s for s in task["plan"] if s["state"] != "REPLACED"]
+        fixed_ids = {s["id"] for s in task["plan"]}        # 新編號不可和任何舊步驟（含已取代）重複
+        content = self._plan_prompt(task, dirs, fixed, redo)
+        trace = {"purpose": "plan" if initial else "replan", "replies": [], "source": "rule"}
+        task["traces"].append(trace)
+        err = ""
+        first = True
+        while self.model is not None:
+            if not first:                                       # 修正＝扣重規劃額度
+                if task["replans"] >= REPLAN_MAX:
+                    task["plan_log"].append({"event": "replan_quota_exhausted", "reason": err})
+                    break
+                task["replans"] += 1
+                task["plan_log"].append({"event": "correction", "reason": err, "replans": task["replans"]})
+            if not task["ledger"].reserve():
+                trace["budget_exhausted"] = True
+                break
+            msg = content + (f"\n上次錯誤：{err}。請只輸出合法 JSON。" if err else "")
+            call = {"messages": [{"role": "system", "content": task["rules"]}, {"role": "user", "content": msg}],
+                    "purpose": trace["purpose"]}
+            try:
+                raw = self.model(call)
+            except Exception as e:  # noqa: BLE001
+                trace["replies"].append({"error": repr(e)})
+                err, first = "沒有回覆", False
+                continue
+            trace["replies"].append({"raw": (raw or "")[:600]})
+            ok, steps, err = self._validate(task, dirs, raw, fixed_ids)
+            if ok:
+                trace["source"] = "model"
+                return steps
+            first = False
+        if initial:
+            task["notes"].append("計畫無效或未呼叫模型，改用規則計畫")
+            return self._rule_plan(task, dirs)
+        return None
+
+    def _rule_plan(self, task, dirs):
+        """規則計畫：與方案 A 的規則腳本同一套選擇（名稱比對＋相似度），一次寫成計畫。"""
+        n = self._next_id(task)
+        steps, last_verify = [], None
+        for d in dirs:
+            done_before = len(task["steps"])
+            for a in ACTIONS[d]:
+                sid = f"s{n}"
+                n += 1
+                st = {"id": sid, "direction": d, "action": a, "ids": [], "params": {}, "after": [], "bind": {},
+                      "when": None, "require": {}}
+                if a == "QUERY_AREA" or a in ID_INPUT:          # 方向內第一個動作：規則腳本選 ID 與允許值
+                    rs = self._rule_step(task, d)
+                    st["ids"], st["params"] = rs["ids"], rs["params"]
+                if a == "GEN_COVERAGE":
+                    st["bind"], st["after"] = {"area": f"{steps[-1]['id']}.area_record"}, [steps[-1]["id"]]
+                if a == "VERIFY_PREVIEW":
+                    st["bind"], st["after"] = {"route": f"{steps[-1]['id']}.coverage_route"}, [steps[-1]["id"]]
+                    last_verify = sid
+                if a == "PROPOSE_HOME_ROUTE" and last_verify:
+                    st["bind"], st["after"] = {"preview": f"{last_verify}.route_preview"}, [last_verify]
+                    st["when"] = f"{last_verify}.route_preview.verdict==pass"
+                steps.append(st)
+            del task["steps"][done_before:]
+        return steps
+
+    def _add_steps(self, task, steps):
+        for s in steps or []:
+            s = dict(s, state="PENDING")
+            task["plan"].append(s)
+
+    # ---------- 執行 ----------
+    def _ready(self, task, s):
+        """回傳 run／skip／wait／fail_dep。"""
+        P = {x["id"]: x for x in task["plan"]}
+        deps = set(s["after"]) | {r.split(".")[0] for r in s["bind"].values()} | set(s["require"])
+        if s["when"]:
+            deps.add(WHEN_RE.match(s["when"]).group(1))
+        for x in deps:
+            st = P[x]["state"] if x in P else "MISSING"
+            if st in ("PENDING", "WAITING"):
+                return "wait"
+            if st not in TERMINAL_OK:
+                return "fail_dep"
+        for x in s["require"]:
+            if P[x].get("applied") is not True:
+                return "wait"
+        if s["when"]:
+            m = WHEN_RE.match(s["when"])
+            src = P[m.group(1)]
+            if src["state"] == "SKIPPED":
+                return "fail_dep"
+            verdict = (task["artifacts"].get("route_preview") or {}).get("verdict")
+            if verdict is None:
+                return "fail_dep"
+            if verdict != m.group(2):
+                return "skip"
+        return "run"
+
+    def _execute(self, task, qv):
+        order = {d: k for k, d in enumerate(task["directions"])}
+        while True:
+            progressed = False
+            pend = sorted((s for s in task["plan"] if s["state"] in ("PENDING", "WAITING")),
+                          key=lambda s: (order[s["direction"]], int(s["id"][1:])))
+            for s in pend:
+                r = self._ready(task, s)
+                if r == "wait":
+                    s["state"] = "WAITING"
+                    continue
+                if r == "skip":
+                    s["state"] = "SKIPPED"
+                elif r == "fail_dep":
+                    s["state"] = "FAILED_DEP"
+                else:
+                    step = {"action": s["action"], "ids": s["ids"], "params": s["params"]}
+                    task["steps"].append(dict(step, direction=s["direction"], source="plan", step_id=s["id"]))
+                    res = self._exec(task, s["direction"], step, qv)
+                    s["state"] = {"OK": "PROPOSED" if s["action"] in PROPOSE else "OK"}.get(res, res)
+                    if res == "BLOCKED" and self._replan(task, s):
+                        progressed = True
+                        break
+                progressed = True
+                break
+            if not progressed:
+                break
+        for s in task["plan"]:
+            if s["state"] == "WAITING":
+                s["reason"] = "等待前一步（未就緒或尚未 APPLIED）"
+
+    def _downstream(self, task, sid):
+        out, frontier = {sid}, {sid}
+        while frontier:
+            nxt = set()
+            for s in task["plan"]:
+                refs = set(s["after"]) | {r.split(".")[0] for r in s["bind"].values()} | set(s["require"])
+                if s["when"]:
+                    refs.add(WHEN_RE.match(s["when"]).group(1))
+                if refs & frontier and s["id"] not in out:
+                    nxt.add(s["id"])
+            out |= nxt
+            frontier = nxt
+        return out
+
+    def _replan(self, task, failed):
+        """只重規劃失敗步驟與其未完成下游；成功時以新步驟取代。"""
+        if task["replans"] >= REPLAN_MAX or self.model is None:
+            failed["reason"] = "重規劃額度已用完" if self.model is not None else "規則計畫不重規劃"
+            return False
+        affected = [s for s in task["plan"] if s["id"] in self._downstream(task, failed["id"]) and
+                    s["state"] in ("PENDING", "WAITING", "BLOCKED")]
+        task["replans"] += 1
+        task["plan_log"].append({"event": "replan", "failed": failed["id"], "affected": [s["id"] for s in affected],
+                                 "replans": task["replans"]})
+        keep = [s for s in task["plan"] if s not in affected and s["state"] != "REPLACED"]
+        prev = {s["id"]: s["state"] for s in affected}
+        for s in affected:
+            s["state"] = "REPLACED"
+        dirs = list(dict.fromkeys(s["direction"] for s in affected))
+        redo = (f"步驟 {failed['id']}（{failed['action']}）失敗；請只重寫這些步驟：" +
+                "、".join(f"{s['id']} {s['action']}" for s in affected) + f"；新步驟從 s{self._next_id(task)} 起編號")
+        new = self._plan(task, dirs, initial=False, fixed=keep, redo=redo)
+        if not new:
+            for s in affected:
+                s["state"] = prev[s["id"]]
+            failed["reason"] = "重規劃無有效計畫"
+            return False
+        self._add_steps(task, new)
+        return True
+
+    def _finish(self, task, status, ask=None):
+        r = super()._finish(task, status, ask)
+        r["plan"] = task.get("plan", [])
+        r["replans"] = task.get("replans", 0)
+        r["plan_log"] = task.get("plan_log", [])
+        return r
