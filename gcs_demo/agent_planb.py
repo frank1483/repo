@@ -333,6 +333,16 @@ class PlanBController(M4bController):
     def _ready(self, task, s):
         """回傳 run／skip／wait／fail_dep（來源失敗）／missing（來源正常結束或略過，但沒有所需結果 → 重新判斷）。"""
         P = {x["id"]: x for x in task["plan"]}
+        if s["when"]:                                       # 已知不成立的條件優先：直接略過
+            m = WHEN_RE.match(s["when"])
+            src = P.get(m.group(1)) or {}
+            verdict = ((src.get("out") or {}).get("route_preview") or {}).get("verdict")
+            if src.get("state") == "OK" and verdict is not None and verdict != m.group(2):
+                return "skip"
+        dead = [x for x in s["require"] if x in P and P[x]["state"] not in ("PENDING", "WAITING", "PROPOSED")]
+        if dead:                                            # v7（0418）：已知不可能有提案的 require 先判，不受其他來源仍在等待影響
+            s["_why"] = "；".join(f"等待套用的 {x} 沒有開提案（{P[x]['state']}），不會套用" for x in dead)
+            return "fail_dep"
         deps = set(s["after"]) | {r.split(".")[0] for r in s["bind"].values()} | set(s["require"])
         if s["when"]:
             deps.add(WHEN_RE.match(s["when"]).group(1))

@@ -344,5 +344,30 @@ class RoundTwoV6(unittest.TestCase):
         self.assertTrue(ok, err)
 
 
+class RoundTwoV7(unittest.TestCase):
+    def _run(self, order):
+        base = RoundTwoV4.BASE[:3]
+        s4 = st("s4", "color", "UI_THEME_PROPOSE", ["T001"], after=["s3"], when="s3.route_preview.verdict==fail")
+        s7 = st("s5", "color", "UI_THEME_PROPOSE", ["T002"], after=["s3"])
+        s5 = st("s6", "model", "MODEL_SWITCH_PROPOSE", ["M003"], require={"s5": "APPLIED"})       # 永遠 WAITING
+        req = {k: "APPLIED" for k in order}
+        s6 = st("s7", "report", "REPORT_DRAFT", [], require=req)
+        m = scripted(['{"directions":["plan","color","model","report"]}', plan(*(base + [s4, s7, s5, s6]))])
+        _, T = tools(["A001", "T001", "T002", "M003"])
+        c = PlanBController(T, m, GRAPH, COUNTER)
+        c.cap = 4
+        return c.request("規劃北側巡檢，改主題，切規則模式，產生報告")
+
+    def test_mixed_skipped_and_waiting_require(self):
+        for order in (["s4", "s6"], ["s6", "s4"]):
+            r = self._run(order)
+            s7 = next(x for x in r["plan"] if x["id"] == "s7")
+            self.assertEqual(s7["state"], "FAILED_DEP", order)
+            self.assertIn("s4", s7["reason"], order)
+            self.assertIn("沒有開提案", s7["reason"], order)
+            self.assertTrue(any(e["event"] in ("continue", "accept_gap_unfilled") and "report" in e.get("dirs", [])
+                                for e in r["plan_log"]), order)
+
+
 if __name__ == "__main__":
     unittest.main()
