@@ -1,10 +1,10 @@
 // 骨架工作區（轉場說明 v1，使用者 11/19 23:02「轉場照建議」）：放 W1～W5，換排版時整個工作區模糊再恢復。
 // 只模糊這個工作區；告警列、狀態列、套用按鈕列在工作區外，不受影響（T2）。轉場只是外觀，交易照 txn-m1-0.2（T1：120／180 ms；T3：超支停用）。
 // 時間來源：live＝true 時用 FrameAnimation 每格 advance(Date.now())；驗證時 live＝false，由外部用固定時間呼叫 advance()。
-// 骨架版本 skel-m1-0.1。
+// 骨架版本 skel-m1-0.2。0.2：host06 run1 在 software 繪圖後端時，模糊層整塊空白約 300 ms → 自動偵測：繪圖後端是 Software 或未知時 effectOk＝false，
+//   轉場照說明 §3-1 略過、直接換（log「skip:effect_unavailable」），不留空白。
 import QtQuick
 import QtQuick.Effects
-import QGroundControl.GCP
 import "../GenuiTransition.js" as Trans
 import "../GenuiBind.js" as Bind
 import "../widgets"
@@ -16,7 +16,8 @@ Item {
     property var pending: null            // 交易 SWITCHED 後等著換上的 {sd, rects}
     property int blurMax: 32              // 模糊最大值；之後改取正式主題的對應值（名稱待 PC 原檔確認）
     property bool reducedMotion: false
-    property bool effectOk: true
+    property bool effectOk: root.GraphicsInfo.api !== GraphicsInfo.Software && root.GraphicsInfo.api !== GraphicsInfo.Unknown
+    readonly property int graphicsApi: root.GraphicsInfo.api
     property string overrunState: "NORMAL"
     property bool live: true
     property var tst: Trans.init()
