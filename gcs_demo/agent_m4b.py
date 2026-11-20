@@ -207,10 +207,13 @@ class M4bController:
     def _ids_of(self, task, d, cat):
         return [i for i in task["cands"].get(d, []) if self.graph.nodes[i]["cat"] == cat]
 
-    def action_shape(self, task, d, a):
+    strict_params = False      # v3.8：第四輪 A 專用；True 時不收參數的動作 params 必須是空物件（B 不受影響）
+
+    def action_shape(self, task, d, a, strict_params=False):
         """v3.7：動作的 ids／params JSON Schema（A 的逐步與 B 的計畫共用）。"""
         ids = {"type": "array", "maxItems": 0}
-        params = {"type": "object"}
+        params = ({"type": "object", "properties": {}, "additionalProperties": False} if strict_params
+                  else {"type": "object"})
         if a == "QUERY_AREA":                                  # 恰好一個；原句唯一時只剩那一個
             ids = {"type": "array", "items": {"type": "string", "enum": self._ids_of(task, d, "A") or ["A001"]},
                    "minItems": 1, "maxItems": 1}
@@ -300,7 +303,7 @@ class M4bController:
                        "\n- FINISH：本方向結束\n- HOLD：無法安全處理，停下\n"
                        '只輸出 JSON：{"action":"動作代碼","ids":["ID"],"params":{}}')
             schema = {"anyOf": [{"type": "object", "properties": dict(
-                zip(("ids", "params"), self.action_shape(task, d, a)), action={"type": "string", "enum": [a]}),
+                zip(("ids", "params"), self.action_shape(task, d, a, strict_params=self.strict_params)), action={"type": "string", "enum": [a]}),
                 "required": ["action", "ids", "params"]} for a in allowed]}      # v3.7：每個動作一種形狀
             step = self._call(task, f"step:{d}", content, lambda raw: self._parse_step(task, d, raw, allowed),
                               schema=schema)
