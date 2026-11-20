@@ -9,6 +9,13 @@ for f in sorted(os.listdir(d)):
     if not f.endswith(".qml"): continue
     src = open(os.path.join(d, f), encoding="utf-8").read()
     code = re.sub(r"//[^\n]*", "", src)
+    # 0.4.4：行內註解前有未配對的三元「?」（「?」比「:」多），註解會吃掉後半段（host03 run1 語法錯誤）
+    for ln, line in enumerate(src.splitlines(), 1):
+        k = line.find("//")
+        if k <= 0 or "://" in line[max(0, k - 5):k + 2]: continue
+        head = re.sub(r'"[^"]*"', '""', line[:k])
+        if head.count("?") > head.count(":") - (1 if re.match(r"\s*(readonly\s+)?(property\s+\S+\s+)?[\w.]+\s*:", head) else 0):
+            fails.append(f"{f}:{ln}: inline comment inside ternary")
     for m in re.finditer(r"^\s*import\s+(\S+)", code, re.M):
         mod = m.group(1)
         if mod.startswith('"'):

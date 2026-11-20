@@ -22,7 +22,8 @@ GcpPanel {
     readonly property real leftW: Bind.W2M.leftW
     readonly property real rightW: Bind.W2M.rightW
     readonly property var box0: ok ? Bind.w2LabelBox(Bind.seriesLabels(bound.data, 100, 0)) : null
-    readonly property var labels: ok ? Bind.seriesLabels(bound.data, cv.height, 0)   // 0.4.3：不用舊 stacked 規則，順序交給 labelTops : null
+    // 0.4.3：不用舊 stacked 規則（傳 0），上下順序交給 labelTops；0.4.4：註解移出三元運算式（host03 語法錯誤）
+    readonly property var labels: ok ? Bind.seriesLabels(bound.data, cv.height, 0) : null
     Text { visible: !!root.labels; x: 16; y: cv.y - 2; width: root.leftW - 6; horizontalAlignment: Text.AlignRight; text: root.labels ? root.labels.max : ""
            font.pixelSize: GcpTheme.font.scale13; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textSecondary }
     Text { visible: !!root.labels; x: 16; y: cv.y + cv.height - height + 2; width: root.leftW - 6; horizontalAlignment: Text.AlignRight; text: root.labels ? root.labels.min : ""
