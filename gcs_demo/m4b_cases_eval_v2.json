@@ -1,6 +1,6 @@
 {
  "version": "m4b-cases-eval-v2",
- "annotation": "AI 共同決定（使用者委任）：Claude 2026-11-20 17:20 草擬的第三輪評估集 v2，不是人工標註；句子沒有用來調提示，首跑 36 題與第二輪評估集 24 題都已看過，合併為開發集 m4b_cases_dev_v3。請使用者抽看。",
+ "annotation": "AI 共同決定（使用者委任）：Claude 2026-11-20 17:20 草擬的第三輪評估集 v2，不是人工標註；句子沒有用來調提示，首跑 36 題與第二輪評估集 24 題都已看過，合併為開發集 m4b_cases_dev_v3。請使用者抽看。 v3.7.1（2026-11-20 21:20）：F20 改為指定來源章節計分；F23 標 scope=both_not_supported（使用者抽查意見）。",
  "fields": "同 m4b_cases_v2",
  "cases": [
   {
@@ -350,11 +350,21 @@
     "manual_claims": "ok"
    },
    "expect_status": "DONE",
-   "note": "手冊",
+   "note": "手冊；v3.7.1：須命中 QGC 感測器設定頁的 Compass 章節（使用者 2026-11-20 21:08 意見）",
    "manual_gold_any": [
     "compass",
     "calibrat"
-   ]
+   ],
+   "manual_gold_ref": {
+    "manual": "qgc",
+    "path_any": [
+     "setup_view/sensors_px4.md",
+     "setup_view/sensors_ardupilot.md"
+    ],
+    "heading_any": [
+     "compass"
+    ]
+   }
   },
   {
    "id": "F21",
@@ -413,7 +423,8 @@
    ],
    "expect_artifacts": {},
    "expect_status": "DONE",
-   "note": "同方向兩個提案"
+   "note": "同方向兩個提案；v3.7.1：同方向雙提案，A 目前第一張提案後即結束版面方向；主表保留在分母並註明，另列排除後的比例",
+   "scope": "both_not_supported"
   },
   {
    "id": "F24",

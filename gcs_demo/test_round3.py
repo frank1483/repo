@@ -225,5 +225,42 @@ class RoundThreeV3(unittest.TestCase):
         self.assertEqual(preset["stage1_raw"], a_rep["stage1_raw"])
 
 
+class RoundThreeV371(unittest.TestCase):
+    def test_f20_requires_qgc_compass_section(self):
+        from .m4b_runner import score
+        case = {"expect_proposals": [], "expect_artifacts": {"manual_claims": "ok"}, "expect_status": "DONE",
+                "gold_dirs": ["manual"], "manual_gold_any": ["compass", "calibrat"],
+                "manual_gold_ref": {"manual": "qgc", "path_any": ["setup_view/sensors_px4.md"], "heading_any": ["compass"]}}
+        px4 = {"manual": "px4", "path": "docs/en/config/compass.md", "heading_path": "Compass Calibration", "excerpt": "compass"}
+        qgc = {"manual": "qgc", "path": "docs/en/qgc-user-guide/setup_view/sensors_px4.md", "heading_path": "Sensors > Compass",
+               "excerpt": "..."}
+        bad = {"status": "DONE", "artifacts": {"manual_claims": {"verdict": "ok", "refs": [px4]}}}
+        good = {"status": "DONE", "artifacts": {"manual_claims": {"verdict": "ok", "refs": [px4, qgc]}}}
+        self.assertFalse(score(case, bad)["correct"])            # 只有 PX4 的 compass 片段不算
+        self.assertTrue(score(case, good)["correct"])
+
+    def test_scope_common_rate(self):
+        from .m4b_runner import summarize
+        recs = [{"cond": "A", "case": "F23", "prop_case": True, "correct": False, "scope": "both_not_supported", "shared_input_match": True},
+                {"cond": "A", "case": "F09", "prop_case": True, "correct": True, "shared_input_match": True}]
+        out = summarize(recs)["A"]
+        self.assertEqual(out["correct_prop_rate"], 0.5)
+        self.assertEqual(out["correct_prop_rate_common_scope"], "1/1")
+
+    def test_shared_field_difference_marks_mismatch(self):
+        from . import planb_runner as PR
+        a_rep = {"directions": ["plan", "ui"], "stage1_raw": ["ui"], "stage1_augmented": ["plan"], "packing": {"batches": []}}
+        b_rep = dict(a_rep, stage1_raw=["plan", "ui"], stage1_augmented=None)
+        orig_run, orig_rec = PR._run_case, PR.a_record
+        try:
+            PR._run_case = lambda *a: ({"correct": True}, {"reply": b_rep})
+            PR.a_record = lambda c, k: (a_rep, {"directions": a_rep["directions"], "stage1_calls": 1}, [])
+            rec, _ = PR.run_case({"id": "X", "expect_proposals": [], "expect_artifacts": {}, "expect_status": "DONE",
+                                  "gold_dirs": []}, {"id": "A-s6-b30"}, None, None, None, None)
+        finally:
+            PR._run_case, PR.a_record = orig_run, orig_rec
+        self.assertFalse(rec["shared_input_match"])
+
+
 if __name__ == "__main__":
     unittest.main()

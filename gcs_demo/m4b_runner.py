@@ -125,8 +125,15 @@ def score(case, r):
         ok = a is not None and (v is None or a.get("verdict") == v)
         if k == "manual_claims" and ok:
             terms = [t.lower() for t in case.get("manual_gold_any", [])]
-            ok = any(any(t in (ref.get(f) or "").lower() for t in terms)
-                     for ref in a.get("refs", []) for f in ("path", "heading_path", "excerpt"))
+            gref = case.get("manual_gold_ref")              # v3.7.1（F20）：指定手冊與章節時，要命中該來源的章節
+            if gref:
+                ok = any(ref.get("manual") == gref["manual"] and
+                         any(x in (ref.get("path") or "") for x in gref["path_any"]) and
+                         any(h.lower() in (ref.get("heading_path") or "").lower() for h in gref["heading_any"])
+                         for ref in a.get("refs", []))
+            else:
+                ok = any(any(t in (ref.get(f) or "").lower() for t in terms)
+                         for ref in a.get("refs", []) for f in ("path", "heading_path", "excerpt"))
         arts[k] = ok
     dep_ok = {}
     final_prev = A.get("route_preview") or {}
@@ -187,7 +194,7 @@ def run_case(case, cond, model_factory, graph, counter, work):
            "t_pre_summary_s": r.get("t_pre_summary_s"), "elapsed_s": round(dt, 3), "reply_source": r.get("reply_source"),
            "packing_pending": (r.get("packing") or {}).get("pending"), "error": err,
            "embed_calls": idx.calls[n_embed_before:] if idx else [],
-           "model_calls_sent": len(calls),
+           "model_calls_sent": len(calls), "scope": case.get("scope"),
            "stage1_augmented": (r or {}).get("stage1_augmented"), "stage1_raw": (r or {}).get("stage1_raw"),
            "area_status": (r or {}).get("area_status"),
            "timing": _sum_timing(calls),
@@ -239,6 +246,9 @@ def summarize(recs):
         out[c] = {"n_cases": len(rs), "n_prop_cases": len(pc),
                   "correct_prop_rate": round(sum(r["correct"] for r in pc) / len(pc), 4) if pc else None,
                   "correct_all_rate": round(sum(r["correct"] for r in rs) / len(rs), 4),
+                  # v3.7.1（F23）：主表含全部應提案題；另列「兩組都支援的流程」（排除 scope＝both_not_supported 的題）
+                  "correct_prop_rate_common_scope": (lambda q: f"{sum(r['correct'] for r in q)}/{len(q)}")(
+                      [r for r in pc if r.get("scope") != "both_not_supported"]),
                   "model_decided_rate": round(sum(bool(r.get("model_decided")) for r in pc) / len(pc), 4) if pc else None,
                   "rule_assisted_rate": round(sum(bool(r.get("rule_assisted")) for r in pc) / len(pc), 4) if pc else None,
                   "stage1_model_share": f"{sum(1 for r in rs if r.get('stage1_source') == 'model')}/{len(rs)}",
