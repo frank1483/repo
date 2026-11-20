@@ -13,6 +13,7 @@ QtObject {
         readonly property real body: 16; readonly property real caption: 13; readonly property real cardTitle: 15
         readonly property real alertRowTitle: 15; readonly property real alertRowMeta: 13; readonly property real telemetryPanelTitle: 15; readonly property real telemetryPanelCaption: 12
         readonly property real telemetryMetricValue: 28; readonly property real telemetryMetricLabel: 13; readonly property real telemetryMetricUnit: 13
+        readonly property real scale13: 18; readonly property real scale16: 22; readonly property real scale20: 28; readonly property real sectionTitle: 18
         readonly property string chineseFamily: "Noto Sans CJK TC"
     }
     readonly property QtObject radius: QtObject { readonly property real small: 4; readonly property real medium: 8; readonly property real large: 12 }
