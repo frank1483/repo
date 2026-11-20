@@ -3,6 +3,7 @@
 // viewer-m1-0.2：host10 run1 正式主題的 panelFill 半透明，底下 W5 透出來 → 背景與標題列一律不透明（取主題色、alpha 設 1）；內容區從標題列下緣再留 8 px 開始。
 // viewer-m1-0.3：host11 run1 截圖卡片全白、文字看不見、背景全黑：panelFill／bgCard 是低 alpha 疊色，只把 alpha 改 1 會變純黑／純白。
 //   改用主題本來就有的不透明色票 opaqueBgPanel（背景、標題列）、opaqueBgCard（卡片）、opaqueBorderDefault（框線）。
+// viewer-m1-0.4：host12 run1「關閉」白字壓在 primary 上對比 1.81 → 字色改 textOnPrimary（主題給 primary 底用的字色）。
 // 關閉：按鈕、返回鍵（Escape／Back）、新回答、critical（由工作區呼叫）。開關不觸發轉場。viewer-m1-0.1
 import QtQuick
 import QGroundControl.GCP
@@ -32,7 +33,7 @@ Rectangle {
             id: closeBtn
             width: 96; height: 40; radius: GcpTheme.radius.small; anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
             color: GcpTheme.color.primary
-            Text { anchors.centerIn: parent; text: "關閉"; font.pixelSize: GcpTheme.font.scale16; font.family: GcpTheme.font.chineseFamily; color: "#ffffff" }
+            Text { anchors.centerIn: parent; text: "關閉"; font.pixelSize: GcpTheme.font.scale16; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textOnPrimary }
             MouseArea { anchors.fill: parent; onClicked: root.closeRequested("button") }
         }
     }
