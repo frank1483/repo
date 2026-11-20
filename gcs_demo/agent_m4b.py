@@ -116,6 +116,7 @@ class M4bController:
             self.tools["bind_task"]({"text": raw})
         dirs = self._directions(task)
         if len(dirs) > self.cap:
+            task["directions"] = dirs                          # v3.7：超限時也保存補後方向，供計分與 B 共用
             task["notes"].append(f"方向 {len(dirs)} 個超過上限 {self.cap}，請分批")
             return self._finish(task, "PARKED", ask=f"這句話包含 {len(dirs)} 件事，請先選最多 {self.cap} 件")
         task["directions"] = dirs

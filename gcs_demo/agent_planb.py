@@ -50,7 +50,9 @@ class PlanBController(M4bController):
             t = self.preset["terminal"]
             n = int(self.preset.get("stage1_calls") or 0)
             return {"status": t["status"], "reply_zh": t["reply_zh"], "reply_source": "shared_from_A", "proposals": [],
-                    "directions": [], "dir_status": {}, "steps": [], "notes": ["第 1 段結果沿用方案 A：" + t["reason"]],
+                    "directions": list(self.preset.get("directions") or []), "stage1_raw": self.preset.get("stage1_raw"),
+                    "stage1_augmented": self.preset.get("stage1_augmented"), "stage1_source": self.preset.get("stage1_source"),
+                    "dir_status": {}, "steps": [], "notes": ["第 1 段結果沿用方案 A：" + t["reason"]],
                     "calls_used": n, "traces": [{"purpose": "stage1_shared", "replies": [], "calls": n}],
                     "retrieval": None, "packing": None, "artifacts": {}, "qv_ok": None, "t_pre_summary_s": 0.0,
                     "plan": [], "replans": 0, "plan_log": []}

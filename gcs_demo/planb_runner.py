@@ -52,7 +52,7 @@ def a_record(cond, case):
               "stage1_raw": rep.get("stage1_raw"), "stage1_augmented": rep.get("stage1_augmented")}
     if rep.get("status") in ("INVALID_INPUT", "TOO_LONG"):
         preset = None                            # Gate 擋下：第 1 段沒跑，B 自己的 Gate 會得到同樣結果
-    elif not rep.get("directions"):              # 第 1 段跑了但在規劃前結束（例如方向超過上限）→ B 照 A 的結果結束
+    elif rep.get("packing") is None:             # 第 1 段跑了但在檢索前結束（例如方向超過上限）→ B 照 A 的結果結束
         preset["terminal"] = {"status": rep.get("status"), "reply_zh": rep.get("reply_zh"),
                               "reason": "；".join(rep.get("notes") or [])}
     return rep, preset, batches
@@ -80,7 +80,8 @@ def run_case(case, cond, model_factory, graph, counter, work):
                  for b in (r.get("packing") or {}).get("batches") or []]
     rec["shared_from_a"] = preset and {k: preset.get(k) for k in ("directions", "stage1_calls", "invalid_a")}
     rec["shared_input_match"] = not (preset or {}).get("invalid_a") and \
-        (r.get("directions") or []) == (a_rep.get("directions") or []) and b_batches == a_batches
+        (r.get("directions") or []) == (a_rep.get("directions") or []) and b_batches == a_batches and \
+        r.get("stage1_raw") == a_rep.get("stage1_raw") and r.get("stage1_augmented") == a_rep.get("stage1_augmented")
     # v6（0410）：B 的成果計分一律用控制器的「結果預覽」（首頁綁定的那份，或最後完成的那份），與終態同一定義
     if r and r.get("result_preview") is not None:
         art = dict(r.get("artifacts") or {}, route_preview=r["result_preview"])

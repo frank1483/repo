@@ -180,5 +180,50 @@ class RoundThreeV2(unittest.TestCase):
         self.assertEqual((rb["stage1_raw"], rb["stage1_augmented"]), (["ui"], ["plan"]))
 
 
+class RoundThreeV3(unittest.TestCase):
+    def test_over_cap_keeps_directions_and_b_terminal_carries_them(self):
+        from .m4b_runner import score
+        m = scripted(['{"directions":["layout","color","model","ui"]}'])
+        _, T = tools3(["A001"])
+        r = M4bController(T, m, GRAPH, COUNTER).request("北側巡檢放首頁，文字放大，改深色，改規則模式")
+        self.assertEqual(r["status"], "PARKED")
+        self.assertEqual(r["stage1_raw"], ["layout", "color", "model", "ui"])
+        self.assertEqual(r["stage1_augmented"], ["plan"])
+        self.assertEqual(r["directions"], ["layout", "color", "model", "plan", "ui"])
+        self.assertIsNone(r["packing"])
+        case = {"expect_proposals": [], "expect_artifacts": {}, "expect_status": "PARKED",
+                "gold_dirs": ["plan", "ui", "layout", "color", "model"]}
+        sc = score(case, r)
+        self.assertEqual((sc["dirs_raw_match"], sc["dirs_set_match"]), (False, True))
+        pre = {"directions": r["directions"], "stage1_calls": 1, "stage1_source": "model", "stage1_raw": r["stage1_raw"],
+               "stage1_augmented": r["stage1_augmented"],
+               "terminal": {"status": "PARKED", "reply_zh": r["reply_zh"], "reason": "方向超過上限"}}
+        rb = PlanBController({}, scripted([]), GRAPH, COUNTER, preset=pre).request("x")
+        for k in ("directions", "stage1_raw", "stage1_augmented"):
+            self.assertEqual(rb[k], r[k], k)
+
+    def test_runner_terminal_detection_and_match(self):
+        from . import planb_runner as PR
+        a_rep = {"status": "PARKED", "directions": ["layout", "color", "model", "plan", "ui"], "packing": None,
+                 "stage1_raw": ["layout", "color", "model", "ui"], "stage1_augmented": ["plan"], "traces": [
+                     {"purpose": "stage1", "replies": [{"raw": "x"}]}], "notes": ["超限"], "reply_zh": "請分批"}
+        import os
+        import tempfile
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "cases", "A-s6-b30", "C99"))
+        with open(os.path.join(d, "results.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"cond": "A-s6-b30", "case": "C99", "error": None}) + "\n")
+        with open(os.path.join(d, "cases", "A-s6-b30", "C99", "full.json"), "w", encoding="utf-8") as f:
+            json.dump({"reply": a_rep}, f, ensure_ascii=False)
+        old = PR._SHARED["dir"]
+        try:
+            PR._SHARED["dir"] = d
+            _, preset, _ = PR.a_record("A-s6-b30", "C99")
+        finally:
+            PR._SHARED["dir"] = old
+        self.assertIn("terminal", preset)
+        self.assertEqual(preset["stage1_raw"], a_rep["stage1_raw"])
+
+
 if __name__ == "__main__":
     unittest.main()
