@@ -136,8 +136,9 @@ def probe(model_factory, out_dir):
                 raw = repr(e)
             fmt, params = _full_ok(raw)
             row[tag] = {"raw": (raw or "")[:200], "format_ok": fmt, "params": params}
-        row["discriminates"] = (row["loose"]["params"] not in ({}, None)) and row["strict"]["format_ok"] and \
-            row["strict"]["params"] == {}
+        lp = row["loose"]["params"]                     # v3（0427）：寬鬆組也要完整輸出合格，且 params 是非空物件
+        row["discriminates"] = row["loose"]["format_ok"] and isinstance(lp, dict) and bool(lp) and \
+            row["strict"]["format_ok"] and row["strict"]["params"] == {}
         res.append(row)
     out = {"enforced": all(r["discriminates"] for r in res), "probes": res, "calls": calls,
            "rule": "寬鬆 schema 回非空 params、嚴格 schema 完整輸出合格且 params＝{}，3 組都成立才通過"}
@@ -240,17 +241,10 @@ def main(argv=None):
     shared = check_r3_dir("--fake" in argv)
     out = argv[argv.index("--out") + 1]
     _S["out"] = out
-    existed = os.path.exists(out)                               # v2（0426）：既有輸出目錄一律不碰
-    try:
-        rc = R4.main(argv)
-    finally:
-        p = os.path.join(out, "RUN_INFO.json")
-        if not existed and os.path.exists(p):
-            info = json.load(open(p, encoding="utf-8"))
-            info["shared_from_r3A"] = shared
-            info["backend_probe_enforced"] = (_S["probe"] or {}).get("enforced")
-            json.dump(info, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
-    return rc
+    # v3（0427）：附加資訊交給「取得輸出目錄」的那個程序（m4b_runner.main 用 os.makedirs 建目錄，競爭失敗就拋錯，
+    # 不會走到寫 RUN_INFO）在自己的 finally 裡寫入；本程式不再事後改寫任何 RUN_INFO。
+    R4.EXTRA_INFO = lambda: {"shared_from_r3A": shared, "backend_probe_enforced": (_S["probe"] or {}).get("enforced")}
+    return R4.main(argv)
 
 
 if __name__ == "__main__":

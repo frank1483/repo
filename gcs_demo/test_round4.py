@@ -69,6 +69,16 @@ class StrictParams(unittest.TestCase):
             return '{"params":{}}' if strict else '{"action":"GEN_COVERAGE","ids":[],"params":{"a":"b"}}'
         self.assertFalse(self._probe(partial)[0]["enforced"])
 
+        def loose_missing_keys(call):           # 寬鬆組缺鍵
+            strict = call["schema"]["anyOf"][0]["properties"]["params"].get("additionalProperties") is False
+            return '{"action":"GEN_COVERAGE","ids":[],"params":{}}' if strict else '{"params":{"mode":"fast"}}'
+        self.assertFalse(self._probe(loose_missing_keys)[0]["enforced"])
+
+        def loose_params_string(call):          # 寬鬆組 params 型別錯
+            strict = call["schema"]["anyOf"][0]["properties"]["params"].get("additionalProperties") is False
+            return '{"action":"GEN_COVERAGE","ids":[],"params":' + ('{}' if strict else '"fast"') + '}'
+        self.assertFalse(self._probe(loose_params_string)[0]["enforced"])
+
     def test_probe_failure_stops_before_cases(self):
         d = tempfile.mkdtemp()
         A4._S["out"], A4._S["probe"] = d, None
@@ -94,6 +104,38 @@ class StrictParams(unittest.TestCase):
             A4.main(["--phase", "research", "--fake", "--out", out, "--shared-from", shared])
         self.assertIn("輸出目錄已存在", str(cm.exception))
         self.assertEqual(open(p, "rb").read(), before)
+
+
+class OwnershipTests(unittest.TestCase):
+    def test_race_loser_does_not_write(self):
+        # 目錄在「存在檢查」之後、建立之前被別的程序建立並寫入：本程序的 makedirs 失敗，不寫任何 RUN_INFO
+        from . import m4b_runner as R4m
+        out = os.path.join(tempfile.mkdtemp(), "o")
+        orig_exists = os.path.exists
+        state = {"done": False}
+
+        def racing_exists(path):
+            if path == out and not state["done"]:
+                state["done"] = True
+                r = orig_exists(path)
+                os.makedirs(out)
+                with open(os.path.join(out, "RUN_INFO.json"), "wb") as f:
+                    f.write(b'{"other": 1}')
+                return r
+            return orig_exists(path)
+        R4m.os.path.exists = racing_exists
+        try:
+            with self.assertRaises(FileExistsError):
+                R4m.main(["--phase", "research", "--fake", "--out", out])
+        finally:
+            R4m.os.path.exists = orig_exists
+        self.assertEqual(open(os.path.join(out, "RUN_INFO.json"), "rb").read(), b'{"other": 1}')
+
+    def test_a4_main_sets_owner_hook_not_post_write(self):
+        import inspect
+        src = inspect.getsource(A4.main)
+        self.assertIn("R4.EXTRA_INFO", src)
+        self.assertNotIn("json.dump(info", src)
 
 
 if __name__ == "__main__":

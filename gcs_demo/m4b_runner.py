@@ -48,6 +48,7 @@ def deadline_for(purpose):
     return DEADLINE_S.get(purpose.split(":")[0], 60.0)
 
 
+EXTRA_INFO = None          # 可呼叫物件：回傳要併入 RUN_INFO 的欄位；None＝不加（A、B 的正式執行都不設）
 MAX_TOKENS = {"summary": 256, "plan": 512, "replan": 512}
 HARNESS = {"name": "m4b-v5"}
 TIMING_KEYS = ("prompt_eval_count", "eval_count", "prompt_eval_duration", "eval_duration", "load_duration", "total_duration")
@@ -353,6 +354,8 @@ def main(argv=None):
             info["ollama_stop"] = R.stop_ollama(proc, a.ollama_port)
         info["summary"] = summarize(recs) if recs else None
         info["end"] = R.now()
+        if EXTRA_INFO is not None:                      # 取得目錄的這個程序自己寫附加資訊（第四輪 a4_runner 用）
+            info.update(EXTRA_INFO())
         json.dump(info, open(os.path.join(a.out, "RUN_INFO.json"), "w", encoding="utf-8"), ensure_ascii=False,
                   indent=1, default=str)
     return 0
