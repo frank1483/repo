@@ -357,13 +357,11 @@
    ],
    "manual_gold_ref": {
     "manual": "qgc",
-    "path_any": [
-     "setup_view/sensors_px4.md",
-     "setup_view/sensors_ardupilot.md"
+    "paths": [
+     "docs/en/qgc-user-guide/setup_view/sensors_px4.md",
+     "docs/en/qgc-user-guide/setup_view/sensors_ardupilot.md"
     ],
-    "heading_any": [
-     "compass"
-    ]
+    "heading_segment": "Compass {#compass}"
    }
   },
   {

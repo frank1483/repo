@@ -228,16 +228,19 @@ class RoundThreeV3(unittest.TestCase):
 class RoundThreeV371(unittest.TestCase):
     def test_f20_requires_qgc_compass_section(self):
         from .m4b_runner import score
-        case = {"expect_proposals": [], "expect_artifacts": {"manual_claims": "ok"}, "expect_status": "DONE",
-                "gold_dirs": ["manual"], "manual_gold_any": ["compass", "calibrat"],
-                "manual_gold_ref": {"manual": "qgc", "path_any": ["setup_view/sensors_px4.md"], "heading_any": ["compass"]}}
-        px4 = {"manual": "px4", "path": "docs/en/config/compass.md", "heading_path": "Compass Calibration", "excerpt": "compass"}
-        qgc = {"manual": "qgc", "path": "docs/en/qgc-user-guide/setup_view/sensors_px4.md", "heading_path": "Sensors > Compass",
-               "excerpt": "..."}
-        bad = {"status": "DONE", "artifacts": {"manual_claims": {"verdict": "ok", "refs": [px4]}}}
-        good = {"status": "DONE", "artifacts": {"manual_claims": {"verdict": "ok", "refs": [px4, qgc]}}}
-        self.assertFalse(score(case, bad)["correct"])            # 只有 PX4 的 compass 片段不算
-        self.assertTrue(score(case, good)["correct"])
+        cases = {c["id"]: c for c in json.load(open(__import__("os").path.join(__import__("os").path.dirname(__file__),
+                                                                            "m4b_cases_eval_v2.json"), encoding="utf-8"))["cases"]}
+        case = dict(cases["F20"], expect_status="DONE")
+
+        def run(ref):
+            return score(case, {"status": "DONE", "artifacts": {"manual_claims": {"verdict": "ok", "refs": [ref]}}})["correct"]
+        px4 = "docs/en/qgc-user-guide/setup_view/sensors_px4.md"
+        ardu = "docs/en/qgc-user-guide/setup_view/sensors_ardupilot.md"
+        self.assertTrue(run({"manual": "qgc", "path": px4, "heading_path": "Sensor setup (PX4) > Compass {#compass}"}))
+        self.assertTrue(run({"manual": "qgc", "path": ardu, "heading_path": "Sensor Setup (ArduPilot) > Compass {#compass} > Sub"}))
+        self.assertFalse(run({"manual": "qgc", "path": px4, "heading_path": "Sensor setup (PX4) > Compasses"}))          # 0424 負例
+        self.assertFalse(run({"manual": "qgc", "path": ardu, "heading_path": "Sensor Setup (ArduPilot) > CompassMot (Optional)"}))
+        self.assertFalse(run({"manual": "px4", "path": "docs/en/config/compass.md", "heading_path": "Compass {#compass}"}))
 
     def test_scope_common_rate(self):
         from .m4b_runner import summarize

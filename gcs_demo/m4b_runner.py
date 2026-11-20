@@ -127,10 +127,9 @@ def score(case, r):
             terms = [t.lower() for t in case.get("manual_gold_any", [])]
             gref = case.get("manual_gold_ref")              # v3.7.1（F20）：指定手冊與章節時，要命中該來源的章節
             if gref:
-                ok = any(ref.get("manual") == gref["manual"] and
-                         any(x in (ref.get("path") or "") for x in gref["path_any"]) and
-                         any(h.lower() in (ref.get("heading_path") or "").lower() for h in gref["heading_any"])
-                         for ref in a.get("refs", []))
+                ok = any(ref.get("manual") == gref["manual"] and (ref.get("path") or "") in gref["paths"] and
+                         gref["heading_segment"] in [x.strip() for x in (ref.get("heading_path") or "").split(">")]
+                         for ref in a.get("refs", []))           # v4：完整路徑＋標題層級完全相同（含其下子段落）
             else:
                 ok = any(any(t in (ref.get(f) or "").lower() for t in terms)
                          for ref in a.get("refs", []) for f in ("path", "heading_path", "excerpt"))
