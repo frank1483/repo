@@ -1,7 +1,7 @@
 .pragma library
 // GenuiBind：預檢通過的節點 → 每個框的「畫面資料」（W1～W5 轉接元件說明 v1.2 §1、§2）。純函式，不讀即時狀態。
 // 版本 bind-m1-0.1。QML 元件只顯示這裡給的資料；找不到就回 {ok:false}，該框畫「資料無法顯示」，不畫半份。
-var BIND_VERSION = "bind-m1-0.4.1"   // 0.4.1：W4／W5 在 bound 還沒綁上時不讀 .cards／.citations（host01 run1 7 個 TypeError）。0.4： 0.4：使用者 11/20 16:40 D1（W4 改 GcpCard、長文換行、卡片增高）、D2（W1 安全提示→主要事實→常駐「未查」，矮畫面空間規則）；新增 contentMinH 給排版。0.3.1： 0.3.1：W2 右側標籤改用 labelTops 依實際高度避讓（real02 的 long 情境「目前」與「保留」重疊）。0.3： 0.3：只改 W 元件字級（通用級距）與 W2 標籤欄寬、W4 valueSize 固定 28（本檔邏輯不變）。0.2.2： 0.2.2：只改 W2 的「目前」標籤成兩行（本檔邏輯不變）。0.2.1： 0.2.1：橘色門檻改用顯示到小數一位後的值比較（0.2 run1 的 10 分鐘邊界顯示「10」卻是藍色）。0.2： 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
+var BIND_VERSION = "bind-m1-0.4.2"   // 0.4.2：使用者 11/20 21:02：W2 在 1280 寬要完整顯示「低於保留值 N 個百分點」，可換行並讓元件增高（W2 也進 contentMinH）。0.4.1： 0.4.1：W4／W5 在 bound 還沒綁上時不讀 .cards／.citations（host01 run1 7 個 TypeError）。0.4： 0.4：使用者 11/20 16:40 D1（W4 改 GcpCard、長文換行、卡片增高）、D2（W1 安全提示→主要事實→常駐「未查」，矮畫面空間規則）；新增 contentMinH 給排版。0.3.1： 0.3.1：W2 右側標籤改用 labelTops 依實際高度避讓（real02 的 long 情境「目前」與「保留」重疊）。0.3： 0.3：只改 W 元件字級（通用級距）與 W2 標籤欄寬、W4 valueSize 固定 28（本檔邏輯不變）。0.2.2： 0.2.2：只改 W2 的「目前」標籤成兩行（本檔邏輯不變）。0.2.1： 0.2.1：橘色門檻改用顯示到小數一位後的值比較（0.2 run1 的 10 分鐘邊界顯示「10」卻是藍色）。0.2： 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
 var MAX_POINTS = 150
 var ETA_WARN_MIN = 10                         // R1：ETA ≤ 10 分鐘用橘色〔顯示用候選值〕
 var ETA_NA_LABEL = "電量下降，無法估計到保留電量的時間"
@@ -216,6 +216,20 @@ function labelTops(lab, h, hCur, hRes) {
     }
     return { current: cur.top, reserve: res.top }
 }
+// ---- W2 右側標籤量法（0.4.2，與 GenuiW2Series.qml 一致）：18 px、行高固定 27；「目前」＝目前值一段＋差距一段，各自可換行，不省略
+// 標題 y 8＋高 27＋間距 4；畫布下緣留 12；畫布至少要放得下「目前」＋「保留」兩個標籤疊在一起
+var W2M = { px: 18, lineH: 27, leftW: 64, rightW: 220, top: 39, bottom: 12 }
+function w2LabelBox(lab) {
+    if (!lab) return null
+    var tw = W2M.rightW - 8
+    var cl = textLines(lab.current.text, W2M.px, tw) + (lab.diff ? textLines(lab.diff, W2M.px, tw) : 0)
+    var rl = lab.reserve ? textLines(lab.reserve.text, W2M.px, tw) : 0
+    return { curLines: cl, resLines: rl, hCur: cl * W2M.lineH, hRes: rl * W2M.lineH }
+}
+function w2MinH(d) {
+    var lab = seriesLabels(d, 100, 0), b = w2LabelBox(lab)
+    return b ? W2M.top + b.hCur + b.hRes + W2M.bottom : 0
+}
 // ---- D2：W1 排列（W1 元件與排版共用同一套量法）
 // 版面量法（與 GenuiW1Fact.qml 一致）：外框 GcpPanel 內縮 8、GcpCard 內縮 8＋上下各 8 → 可用高 = H − 32；可用寬 = W − 56
 var W1M = { px: 22, smallPx: 18, lineH: 33, padH: 32, padW: 56, maxTextLines: 3, maxQuoteLines: 2 }
@@ -275,6 +289,7 @@ function w4CardLayout(cards, widthPx) {
 function contentMinH(node, toolResults, answer, widthPx) {
     if (!node) return 0
     if (node.component_id === "W1_FACT") { var a = bindAnswer(answer); return a.ok ? w1MinH(a.data.lines, widthPx) : 0 }
+    if (node.component_id === "W2_SERIES") { var sr = bindSeries(toolResults, node.binding_ref.ref); return sr.ok ? w2MinH(sr.data) : 0 }
     if (node.component_id === "W4_DIAG") { var d = bindDiag(toolResults, node.binding_ref.ref); return d.ok ? w4CardLayout(d.data.cards, widthPx).minH : 0 }
     return 0
 }
