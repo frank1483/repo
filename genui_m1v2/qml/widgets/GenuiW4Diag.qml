@@ -9,8 +9,9 @@ import "../GenuiBind.js" as Bind
 GcpPanel {
     id: root
     property var bound: null
-    readonly property bool ok: !!(bound && bound.ok)
+    readonly property bool ok: !!(bound && bound.ok && bound.data && bound.data.cards)   // 0.4.1：host01 載入瞬間 bound 為 null 的 TypeError
     readonly property var lay: ok ? Bind.w4CardLayout(bound.data.cards, root.width) : null
+    function lines(i, k) { return (lay && lay.cards[i]) ? lay.cards[i][k] : 1 }
     readonly property bool overflow: ok && lay.minH > root.height + 0.5
     cornerRadius: GcpTheme.radius.medium
     blurSource: null
@@ -23,13 +24,13 @@ GcpPanel {
                 id: c
                 required property var modelData
                 required property int index
-                Layout.fillHeight: true; Layout.preferredWidth: root.lay.cardW; Layout.fillWidth: true
+                Layout.fillHeight: true; Layout.preferredWidth: root.lay ? root.lay.cardW : 0; Layout.fillWidth: true
                 outlined: true
                 Rectangle { id: dot; x: Bind.W4M.padCard; y: Bind.W4M.padCard + (Bind.W4M.labelLineH - 14) / 2; width: 14; height: 14; radius: 7
-                            color: GcpTheme.color[c.modelData.accent] }
+                            color: c.modelData ? GcpTheme.color[c.modelData.accent] : "transparent" }
                 Text { id: lab
                        x: Bind.W4M.padCard + Bind.W4M.dot; y: Bind.W4M.padCard; width: c.width - 2 * Bind.W4M.padCard - Bind.W4M.dot
-                       height: Bind.W4M.labelLineH * root.lay.cards[c.index].labelLines
+                       height: Bind.W4M.labelLineH * root.lines(c.index, "labelLines")
                        wrapMode: Text.Wrap; text: c.modelData.label
                        font.pixelSize: Bind.W4M.labelPx; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textLabel
                        lineHeightMode: Text.FixedHeight; lineHeight: Bind.W4M.labelLineH }
@@ -37,7 +38,7 @@ GcpPanel {
                     Text { height: Bind.W4M.valueLineH; text: c.modelData.value; verticalAlignment: Text.AlignBottom
                            font.pixelSize: Math.max(Bind.W4M.valuePx, GcpTheme.font.scale20); font.family: GcpTheme.font.chineseFamily; font.bold: true
                            color: GcpTheme.color.textPrimary }
-                    Text { visible: text.length > 0; height: c.modelData.unit && root.lay.cards[c.index].valueLines > 1 ? Bind.W4M.labelLineH : Bind.W4M.valueLineH
+                    Text { visible: text.length > 0; height: c.modelData.unit && root.lines(c.index, "valueLines") > 1 ? Bind.W4M.labelLineH : Bind.W4M.valueLineH
                            text: c.modelData.unit || ""; verticalAlignment: Text.AlignBottom
                            font.pixelSize: Bind.W4M.unitPx; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textSecondary }
                 }

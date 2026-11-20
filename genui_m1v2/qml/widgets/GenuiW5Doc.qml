@@ -8,7 +8,7 @@ import "../GenuiBind.js" as Bind
 GcpPanel {
     id: root
     property var bound: null
-    readonly property bool ok: !!(bound && bound.ok)
+    readonly property bool ok: !!(bound && bound.ok && bound.data && bound.data.citations)   // 0.4.1：host01 TypeError
     readonly property real titleH: Math.ceil(GcpTheme.font.scale13 * 1.5)
     readonly property real lineH: Math.ceil(GcpTheme.font.scale16 * 1.5)
     readonly property real moreH: Math.ceil(GcpTheme.font.scale13 * 1.5)
