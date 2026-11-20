@@ -7,6 +7,7 @@ QtObject {
         readonly property color statusCritical: "#c62828"; readonly property color statusWarning: "#ef6c00"; readonly property color primary: "#1f6feb"
         readonly property color lineSubtle: "#d0d7de"; readonly property color bgCard: "#ffffff"; readonly property color borderDefault: "#c9d1d9"
         readonly property color panelFill: "#f3f6fa"; readonly property color panelBorder: "#c9d1d9"; readonly property color selectionGlow: "#1f6feb"
+        readonly property color opaqueBgPanel: "#f3f6fa"; readonly property color opaqueBgCard: "#ffffff"; readonly property color opaqueBorderDefault: "#c9d1d9"
         readonly property color telemetryMetricGreen: "#2e7d32"; readonly property color telemetryMetricBlue: "#1565c0"; readonly property color telemetryMetricOrange: "#ef6c00"
     }
     readonly property QtObject font: QtObject {
