@@ -5,7 +5,7 @@
 // 模型（M2）只回傳 {"schema":"qa.claims/1","selected_claim_ids":[...]}；M1 用 selectRule()。
 // 句子裡的數字、單位、方向全部取自程式產生的 Fact，不取自模型輸出。
 
-var CLAIMS_VERSION = "claims-m1-0.3"
+var CLAIMS_VERSION = "claims-m1-0.5"   // 0.5：F2 偏離航線距離的主詞與最大值附時間（f.show_time）；前版 claims-m1-0.3
 var SCHEMA_ID = "qa.claims/1"
 var MAX_CLAIMS = 8                      // 〔待凍結〕整個答案的句數上限
 var MANDATORY_ORDER = ["T-STALE", "T-PARTIAL", "T-CANNOT", "T-NOTFOUND", "T-DOC-NONE", "T-OMITTED"]
@@ -15,7 +15,7 @@ var ETA_NA_REASON = { reserve_invalid: "保留電量設定無效", at_or_below_r
                       no_trend: "沒有有效的趨勢", not_falling: "電量沒有在下降" }
 var PARTIAL_SUFFIX = "（資料不完整）"
 
-var SUBJECT_ZH = { soc: "電量", alt: "高度", gs: "地速", rssi: "訊號強度", dist_home: "離家距離", alerts: "告警", manual: "手冊",
+var SUBJECT_ZH = { soc: "電量", alt: "高度", gs: "地速", rssi: "訊號強度", dist_home: "離家距離", deviation: "偏離航線距離", alerts: "告警", manual: "手冊",
                    T_TELEMETRY: "即時遙測", T_FLIGHTLOG: "飛行紀錄", T_ENERGY: "電量趨勢", T_ALERT_HISTORY: "告警歷史", T_MANUAL_SEARCH: "手冊" }
 var SUFFIX_ZH = { min: "最小值", max: "最大值", mean: "平均值", first: "起始值", last: "結束值", duration: "時長" }
 var LEVEL_ZH = { all: "", critical: "嚴重", warning: "警告", info: "提示" }
@@ -85,7 +85,7 @@ function generate(toolResults, ctx) {
             if (f.kind === "value" && finite(f.value)) {
                 var isStat = /\.(min|max|mean|first|last|duration)$/.test(f.subject)
                 add(optional, "T-VALUE", (r.tool === "T_FLIGHTLOG" ? "該趟紀錄中" : "") + subjectZh(f.subject) + (isStat ? "是 " : " 目前是 ") + num(f.value) + f.unit
-                    + (finite(f.time) && !isStat ? "（" + fmt(f.time) + "）" : "") + sfx, ti, [f.fact_id])
+                    + (finite(f.time) && (!isStat || f.show_time) ? "（" + fmt(f.time) + "）" : "") + sfx, ti, [f.fact_id])
                 var th = ctx.thresholds || []
                 for (var k = 0; k < th.length; ++k) {
                     if (th[k].subject !== f.subject || th[k].unit !== f.unit || !finite(th[k].value) || f.value === th[k].value) continue

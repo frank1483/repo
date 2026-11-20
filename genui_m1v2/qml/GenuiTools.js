@@ -4,7 +4,7 @@
 // 版本 m1v2：依 v3 §C（已確認）與 v3.1 草案 §C'、§D-6'、§L' 修改；舊版 genui_m1/ 不動。
 // 資料由呼叫端（重放器或紀錄讀取器）以陣列傳入；缺值一律不補。數值門檻都是候選值〔待凍結〕。
 
-var TOOLS_VERSION = "tools-m1-0.4.1"
+var TOOLS_VERSION = "tools-m1-0.5"   // 0.5：F2 DEVIATION（說明 f2_deviation_v1，使用者 11/21 03:08 裁決）
 var STATUS = ["OK", "EMPTY_COMPLETE", "PARTIAL", "UNAVAILABLE", "STALE", "INSUFFICIENT", "UNSUPPORTED", "ERROR"]
 
 var STALE_AFTER_S = 2          // 〔待凍結〕
@@ -357,4 +357,85 @@ function manualSearch(chunks, query, glossary) {
     }
     if (!facts.length) return result("T_MANUAL_SEARCH", inputs, "EMPTY_COMPLETE", [fact("F1", "not_found", "manual", null, "", null)], null, { degraded: true, content_terms: content })
     return result("T_MANUAL_SEARCH", inputs, "OK", facts, null, { degraded: true, content_terms: content })
+}
+
+// ---------------------------------------------------------------- T_FLIGHTLOG DEVIATION（F2，說明 f2_deviation_v1 與使用者 11/21 03:08 裁決）
+// waypoints: [{seq, lat, lon}]（任務原順序）；samples: [{t, lat, lon}]；只看水平距離。
+// 原點＝第一個有效航點，平面近似（本案局部任務範圍）；無效航點照原順序斷段、前後不接；航段長度須嚴格 > 0.01 m；
+// 跨 ±180 度經線 → INSUFFICIENT（reason antimeridian）；最大、平均用原始精度，顯示時才四捨五入（Claims.num）。
+var DEV_R = 6371008.8, DEV_MIN_SEG = 0.01
+function devValid(p) { return !!p && finite(p.lat) && finite(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180 }
+function devSegDist(px, py, a, b) {
+    var dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy
+    var u = ((px - a.x) * dx + (py - a.y) * dy) / L2
+    if (u < 0) u = 0; else if (u > 1) u = 1
+    var ex = a.x + u * dx - px, ey = a.y + u * dy - py
+    return Math.sqrt(ex * ex + ey * ey)
+}
+function flightlogDeviation(waypoints, samples, t0, t1, gaps) {
+    var inputs = { operation: "DEVIATION", t0: t0, t1: t1 }
+    if (!samples || !waypoints) return result("T_FLIGHTLOG", inputs, "ERROR", [], null, { internal_status: "UNAVAILABLE" })
+    var i, origin = null
+    for (i = 0; i < waypoints.length; ++i) if (devValid(waypoints[i])) { origin = waypoints[i]; break }
+    var coverage = { requested: [t0, t1], covered: null, gaps: gaps || [] }
+    function insufficient(reason, extra) { var d = { reason: reason, insufficient_reasons: [reason] }; if (extra) for (var k in extra) d[k] = extra[k]
+        return result("T_FLIGHTLOG", inputs, "INSUFFICIENT", [], coverage, { detail: d }) }
+    if (!origin) return insufficient("no_segment", { valid_segments: 0, breaks: [] })
+    var lat0 = origin.lat * Math.PI / 180, cos0 = Math.cos(lat0)
+    function xy(p) { return { x: DEV_R * (p.lon - origin.lon) * Math.PI / 180 * cos0, y: DEV_R * (p.lat - origin.lat) * Math.PI / 180 } }
+    var segs = [], breaks = [], lastValid = null, broken = false
+    for (i = 0; i < waypoints.length; ++i) {
+        var w = waypoints[i]
+        if (!devValid(w)) { broken = true; continue }
+        if (lastValid && Math.abs(w.lon - lastValid.lon) > 180) return insufficient("antimeridian", { at_seq: w.seq })
+        if (lastValid && broken) breaks.push({ after_seq: lastValid.seq, before_seq: w.seq })
+        if (lastValid && !broken) {
+            var a = xy(lastValid), b = xy(w), len = Math.sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y))
+            if (len > DEV_MIN_SEG) segs.push({ a: a, b: b, idx: segs.length, from_seq: lastValid.seq, to_seq: w.seq })
+        }
+        lastValid = w; broken = false
+    }
+    if (!segs.length) return insufficient("no_segment", { valid_segments: 0, breaks: breaks })
+    var pts = []
+    for (i = 0; i < samples.length; ++i) {
+        var s = samples[i]
+        if (!s || !finite(s.t) || !devValid(s) || s.t < t0 || s.t > t1) continue
+        if (Math.abs(s.lon - origin.lon) > 180) return insufficient("antimeridian", { at_t: s.t })
+        pts.push({ t: s.t, lat: s.lat, lon: s.lon, arrival: i })
+    }
+    pts.sort(function (p, q) { return p.t - q.t || p.arrival - q.arrival })
+    var detail = { valid_segments: segs.length, breaks: breaks, origin_seq: origin.seq }
+    if (!pts.length) return result("T_FLIGHTLOG", inputs, coverage.gaps.length || breaks.length ? "PARTIAL" : "ERROR", [], coverage,
+                                   coverage.gaps.length || breaks.length ? { detail: detail } : { internal_status: "EMPTY_COMPLETE", detail: detail })
+    coverage.covered = [pts[0].t, pts[pts.length - 1].t]
+    var dist = [], sum = 0, best = 0
+    for (i = 0; i < pts.length; ++i) {
+        var p = xy(pts[i]), dmin = Infinity, smin = -1
+        for (var k = 0; k < segs.length; ++k) { var d = devSegDist(p.x, p.y, segs[k].a, segs[k].b); if (d < dmin) { dmin = d; smin = k } }   // 同距離取編號小的
+        dist.push({ t: pts[i].t, value: dmin, arrival: pts[i].arrival, seg: smin }); sum += dmin
+        if (dmin > dist[best].value) best = i
+    }
+    var series = []
+    if (dist.length > SERIES_MAX_POINTS) {
+        var tA = dist[0].t, width = (dist[dist.length - 1].t - tA) / SERIES_BUCKETS, bucket = []
+        for (i = 0; i < SERIES_BUCKETS; ++i) bucket.push(null)
+        for (i = 0; i < dist.length; ++i) {
+            var bi = width > 0 ? Math.min(SERIES_BUCKETS - 1, Math.floor((dist[i].t - tA) / width)) : 0
+            var bk = bucket[bi] || (bucket[bi] = { mn: i, mx: i })
+            if (dist[i].value < dist[bk.mn].value) bk.mn = i
+            if (dist[i].value > dist[bk.mx].value) bk.mx = i
+        }
+        for (i = 0; i < SERIES_BUCKETS; ++i) {
+            if (!bucket[i]) continue
+            var lo = Math.min(bucket[i].mn, bucket[i].mx), hi = Math.max(bucket[i].mn, bucket[i].mx)
+            series.push({ t: dist[lo].t, value: dist[lo].value })
+            if (hi !== lo) series.push({ t: dist[hi].t, value: dist[hi].value })
+        }
+    } else for (i = 0; i < dist.length; ++i) series.push({ t: dist[i].t, value: dist[i].value })
+    var facts = [
+        fact("F1", "series", "deviation", null, "公尺", dist[dist.length - 1].t, { points: series, downsampled: dist.length > SERIES_MAX_POINTS }),
+        fact("F2", "value", "deviation.max", dist[best].value, "公尺", dist[best].t, { segment: segs[dist[best].seg].idx, show_time: true }),
+        fact("F3", "value", "deviation.mean", sum / dist.length, "公尺", null)
+    ]
+    return result("T_FLIGHTLOG", inputs, coverage.gaps.length || breaks.length ? "PARTIAL" : "OK", facts, coverage, { detail: detail })
 }
