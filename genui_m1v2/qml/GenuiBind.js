@@ -1,7 +1,7 @@
 .pragma library
 // GenuiBind：預檢通過的節點 → 每個框的「畫面資料」（W1～W5 轉接元件說明 v1.2 §1、§2）。純函式，不讀即時狀態。
 // 版本 bind-m1-0.1。QML 元件只顯示這裡給的資料；找不到就回 {ok:false}，該框畫「資料無法顯示」，不畫半份。
-var BIND_VERSION = "bind-m1-0.3"   // 0.3：只改 W 元件字級（通用級距）與 W2 標籤欄寬、W4 valueSize 固定 28（本檔邏輯不變）。0.2.2： 0.2.2：只改 W2 的「目前」標籤成兩行（本檔邏輯不變）。0.2.1： 0.2.1：橘色門檻改用顯示到小數一位後的值比較（0.2 run1 的 10 分鐘邊界顯示「10」卻是藍色）。0.2： 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
+var BIND_VERSION = "bind-m1-0.3.1"   // 0.3.1：W2 右側標籤改用 labelTops 依實際高度避讓（real02 的 long 情境「目前」與「保留」重疊）。0.3： 0.3：只改 W 元件字級（通用級距）與 W2 標籤欄寬、W4 valueSize 固定 28（本檔邏輯不變）。0.2.2： 0.2.2：只改 W2 的「目前」標籤成兩行（本檔邏輯不變）。0.2.1： 0.2.1：橘色門檻改用顯示到小數一位後的值比較（0.2 run1 的 10 分鐘邊界顯示「10」卻是藍色）。0.2： 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
 var MAX_POINTS = 150
 var ETA_WARN_MIN = 10                         // R1：ETA ≤ 10 分鐘用橘色〔顯示用候選值〕
 var ETA_NA_LABEL = "電量下降，無法估計到保留電量的時間"
@@ -183,6 +183,21 @@ function seriesLabels(d, h, labelH) {
         if (Math.abs(out.current.y - out.reserve.y) < labelH) { out.stacked = true; out.reserve.y = out.current.y + labelH }
     }
     return out
+}
+// W2（0.3.1）：右側兩個標籤的實際上緣位置。先以數值位置置中、夾在畫布內；若重疊，數值高的在上、低的緊接在下；
+// 下面那個超出畫布底時兩個一起往上推。hCur／hRes 是兩個標籤的實際高度（「目前」是兩行）。
+function labelTops(lab, h, hCur, hRes) {
+    if (!lab) return null
+    function clamp(t, hh) { return Math.max(0, Math.min(h - hh, t)) }
+    var cur = { top: clamp(lab.current.y - hCur / 2, hCur), h: hCur, v: -lab.current.y }
+    if (!lab.reserve) return { current: cur.top, reserve: null }
+    var res = { top: clamp(lab.reserve.y - hRes / 2, hRes), h: hRes, v: -lab.reserve.y }
+    var up = cur.v >= res.v ? cur : res, dn = up === cur ? res : cur   // 數值高（y 小）的在上
+    if (dn.top < up.top + up.h) {
+        dn.top = up.top + up.h
+        if (dn.top + dn.h > h) { var shift = dn.top + dn.h - h; dn.top -= shift; up.top = Math.max(0, up.top - shift) }
+    }
+    return { current: cur.top, reserve: res.top }
 }
 // W3／W5：依序顯示能放的個數，放不下的顯示「還有 N 筆／段」（Q1：不捲動）
 function fitCount(n, availH, itemH) {

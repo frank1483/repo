@@ -25,12 +25,13 @@ GcpPanel {
            font.pixelSize: GcpTheme.font.scale13; color: GcpTheme.color.textSecondary }
     Text { visible: !!root.labels; x: 16; y: cv.y + cv.height - height + 2; width: root.leftW - 6; horizontalAlignment: Text.AlignRight; text: root.labels ? root.labels.min : ""
            font.pixelSize: GcpTheme.font.scale13; color: GcpTheme.color.textSecondary }
-    Text { visible: !!root.labels; x: cv.x + cv.width + 6; y: root.labels ? Math.max(cv.y, Math.min(cv.y + cv.height - height, cv.y + root.labels.current.y - height / 2)) : 0
+    readonly property var tops: labels ? Bind.labelTops(labels, cv.height, labelH * 2, labelH) : null
+    Text { visible: !!root.labels; x: cv.x + cv.width + 6; y: root.tops ? cv.y + root.tops.current : 0; height: root.labelH * 2
            width: root.rightW - 8; wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
            text: root.labels ? root.labels.current.text + (root.labels.diff ? "\n" + root.labels.diff : "") : ""
            font.pixelSize: GcpTheme.font.scale13; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.primary }
     Text { visible: !!(root.labels && root.labels.reserve); x: cv.x + cv.width + 6
-           y: (root.labels && root.labels.reserve) ? Math.max(cv.y, Math.min(cv.y + cv.height - height, cv.y + root.labels.reserve.y - height / 2)) : 0
+           y: (root.tops && root.tops.reserve !== null) ? cv.y + root.tops.reserve : 0; height: root.labelH
            width: root.rightW - 8; elide: Text.ElideRight; text: (root.labels && root.labels.reserve) ? root.labels.reserve.text : ""
            font.pixelSize: GcpTheme.font.scale13; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.statusWarning }
     Canvas {
