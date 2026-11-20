@@ -73,5 +73,5 @@ for (const W of [1280, 1920]) for (const H of [1080, 600, 400, 300]) {
   ok('W4 never below content min ' + W + 'x' + H, !r4 || r4.height >= Bind.w4CardLayout(d.data.cards, r4.width).minH, r4)
 }
 ok('textWidth CJK vs ASCII', Bind.textWidth("電量", 18) === 36 && Math.abs(Bind.textWidth("ab", 10) - 12) < 1e-9)
-ok('versions', Bind.BIND_VERSION === "bind-m1-0.4.2" && Layout.LAYOUT_VERSION === "layout-m1-0.5", [Bind.BIND_VERSION, Layout.LAYOUT_VERSION])
+ok('versions', Bind.BIND_VERSION === "bind-m1-0.4.3" && Layout.LAYOUT_VERSION === "layout-m1-0.5", [Bind.BIND_VERSION, Layout.LAYOUT_VERSION])
 console.log(log.join('\n')); console.log(`test_bind_v4 (${Bind.BIND_VERSION}, ${Layout.LAYOUT_VERSION}): pass ${pass} fail ${fail}`); process.exit(fail ? 1 : 0)

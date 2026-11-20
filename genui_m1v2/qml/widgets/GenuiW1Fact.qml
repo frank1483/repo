@@ -9,7 +9,7 @@ import "../GenuiBind.js" as Bind
 GcpPanel {
     id: root
     property var bound: null
-    readonly property bool ok: !!(bound && bound.ok)
+    readonly property bool ok: !!(bound && bound.ok && bound.data && bound.data.lines)   // 0.4.3：同類防護
     readonly property real lineH: Bind.W1M.lineH
     readonly property var arr: ok ? Bind.w1Arrange(bound.data.lines, root.height - Bind.W1M.padH, root.width - Bind.W1M.padW) : ({ rows: [], tail: [], hidden: 0 })
     readonly property bool overflow: col.implicitHeight > card.height - 16 + 0.5

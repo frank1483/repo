@@ -26,5 +26,5 @@ for (const H of [1080, 600, 400, 300]) {
 const t = Bind.labelTops(Bind.seriesLabels(d, mh - Bind.W2M.top - Bind.W2M.bottom, b.hCur), mh - Bind.W2M.top - Bind.W2M.bottom, b.hCur, b.hRes)
 ok('labels inside canvas at min height', t.current >= 0 && t.current + b.hCur <= mh - 51 + 1e-9 && t.reserve >= 0 && t.reserve + b.hRes <= mh - 51 + 1e-9, t)
 ok('labels do not overlap', t.current + b.hCur <= t.reserve || t.reserve + b.hRes <= t.current, t)
-ok('version', Bind.BIND_VERSION === "bind-m1-0.4.2")
+ok('version', Bind.BIND_VERSION === "bind-m1-0.4.3")
 console.log(log.join('\n')); console.log(`test_bind_v5 (${Bind.BIND_VERSION}): pass ${pass} fail ${fail}`); process.exit(fail ? 1 : 0)

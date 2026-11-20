@@ -7,7 +7,7 @@ import "../GenuiBind.js" as Bind
 GcpPanel {
     id: root
     property var bound: null
-    readonly property bool ok: !!(bound && bound.ok)
+    readonly property bool ok: !!(bound && bound.ok && bound.data && bound.data.rows)   // 0.4.3：host02 TypeError
     readonly property real rowH: Math.ceil(GcpTheme.font.scale16 * 1.6)
     readonly property var fit: ok ? Bind.fitCount(bound.data.rows.length, height - 16, rowH) : ({ shown: 0, hidden: 0 })
     readonly property bool overflow: col.implicitHeight > height - 16 + 0.5

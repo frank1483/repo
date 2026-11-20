@@ -22,11 +22,11 @@ GcpPanel {
     readonly property real leftW: Bind.W2M.leftW
     readonly property real rightW: Bind.W2M.rightW
     readonly property var box0: ok ? Bind.w2LabelBox(Bind.seriesLabels(bound.data, 100, 0)) : null
-    readonly property var labels: ok ? Bind.seriesLabels(bound.data, cv.height, box0 ? box0.hCur : labelH * 2) : null
+    readonly property var labels: ok ? Bind.seriesLabels(bound.data, cv.height, 0)   // 0.4.3：不用舊 stacked 規則，順序交給 labelTops : null
     Text { visible: !!root.labels; x: 16; y: cv.y - 2; width: root.leftW - 6; horizontalAlignment: Text.AlignRight; text: root.labels ? root.labels.max : ""
-           font.pixelSize: GcpTheme.font.scale13; color: GcpTheme.color.textSecondary }
+           font.pixelSize: GcpTheme.font.scale13; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textSecondary }
     Text { visible: !!root.labels; x: 16; y: cv.y + cv.height - height + 2; width: root.leftW - 6; horizontalAlignment: Text.AlignRight; text: root.labels ? root.labels.min : ""
-           font.pixelSize: GcpTheme.font.scale13; color: GcpTheme.color.textSecondary }
+           font.pixelSize: GcpTheme.font.scale13; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textSecondary }
     readonly property var tops: (labels && box0) ? Bind.labelTops(labels, cv.height, box0.hCur, Math.max(labelH, box0.hRes)) : null
     Text { visible: !!root.labels; x: cv.x + cv.width + 6; y: root.tops ? cv.y + root.tops.current : 0; height: root.box0 ? root.box0.hCur : root.labelH * 2
            width: root.rightW - 8; wrapMode: Text.Wrap; lineHeightMode: Text.FixedHeight; lineHeight: root.labelH
