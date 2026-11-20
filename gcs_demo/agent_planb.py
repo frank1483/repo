@@ -235,7 +235,7 @@ class PlanBController(M4bController):
         outs = {x["id"]: x.get("out") or {} for x in live if x["state"] in ("OK", "PROPOSED")}
         pend = [x for x in live if x["state"] in ("PENDING", "WAITING")]
         prod, bad = OC.simulate_steps(pend + out, outs, self.have(task),
-                                      known=[x["id"] for x in live])   # 已略過的步驟也能滿足純順序 after
+                                      known=[x["id"] for x in live if x["state"] in TERMINAL_OK])  # 與執行器一致：只有 OK／PROPOSED／SKIPPED 滿足純順序 after
         if bad:
             return False, None, "；".join(f"{i} 不可達：{w}" for i, w in bad)
         sim = dict(self.have(task))
@@ -354,12 +354,12 @@ class PlanBController(M4bController):
             sid, field = ref.split(".", 1)
             if field not in (P[sid].get("out") or {}):
                 return "missing"
-        for x in s["require"]:
-            if P[x]["state"] != "PROPOSED":                 # 來源不會有提案（例如已略過）→ 永遠等不到套用，明確結束
-                s["reason"] = f"等待套用的 {x} 沒有開提案（{P[x]['state']}），不會套用"
-                return "fail_dep"
-            if P[x].get("applied") is not True:
-                return "wait"
+        dead = [x for x in s["require"] if P[x]["state"] != "PROPOSED"]   # v6：先看全部來源能不能有提案
+        if dead:
+            s["_why"] = "；".join(f"等待套用的 {x} 沒有開提案（{P[x]['state']}），不會套用" for x in dead)
+            return "fail_dep"
+        if any(P[x].get("applied") is not True for x in s["require"]):
+            return "wait"
         return "run"
 
     def _execute(self, task, qv):
@@ -377,7 +377,7 @@ class PlanBController(M4bController):
                     s["state"] = "SKIPPED"
                 elif r == "fail_dep":
                     s["state"] = "FAILED_DEP"
-                    s["reason"] = "前置步驟失敗"
+                    s["reason"] = s.pop("_why", None) or "前置步驟失敗"
                 elif r == "missing":                        # v4（CODEX-APP-0408 第 3 點）：缺結果相依 → 重新判斷
                     s["state"] = "FAILED_DEP"
                     s["reason"] = "前置步驟沒有產生所需結果"

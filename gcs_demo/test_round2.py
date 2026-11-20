@@ -296,5 +296,53 @@ class RoundTwoV5(unittest.TestCase):
         self.assertEqual(c._ready(task, task["plan"][1]), "fail_dep")
 
 
+class RoundTwoV6(unittest.TestCase):
+    def test_multi_require_order_independent(self):
+        c = PlanBController({}, None, GRAPH, COUNTER)
+        for order in (["s1", "s2"], ["s2", "s1"]):
+            t = {"plan": [{"id": "s1", "state": "PROPOSED", "after": [], "bind": {}, "require": {}, "when": None},
+                          {"id": "s2", "state": "SKIPPED", "after": [], "bind": {}, "require": {}, "when": None},
+                          {"id": "s3", "state": "PENDING", "after": [], "bind": {}, "when": None,
+                           "require": {k: "APPLIED" for k in order}}]}
+            self.assertEqual(c._ready(t, t["plan"][2]), "fail_dep", order)
+            self.assertIn("s2", t["plan"][2]["_why"])
+
+    def test_multi_require_end_to_end_reason_kept(self):
+        base = RoundTwoV4.BASE[:3]
+        s4 = st("s4", "color", "UI_THEME_PROPOSE", ["T001"], after=["s3"])
+        s5 = st("s5", "model", "MODEL_SWITCH_PROPOSE", ["M003"], after=["s3"], when="s3.route_preview.verdict==fail")
+        s6 = st("s6", "report", "REPORT_DRAFT", [], require={"s4": "APPLIED", "s5": "APPLIED"})
+        r6 = st("s7", "report", "REPORT_DRAFT", [], after=["s3"])
+        m = scripted(['{"directions":["plan","color","model","report"]}'])
+        c = PlanBController({}, None, GRAPH, COUNTER)
+        task = {"plan": [dict(x, state="PENDING") for x in base + [s4, s5, s6]], "directions": ["plan", "color", "model", "report"]}
+        for x in task["plan"][:3]:
+            x["state"] = "OK"
+        task["plan"][2]["out"] = {"route_preview": {"ref": "PV1", "verdict": "pass"}}
+        task["plan"][3]["state"] = "PROPOSED"
+        task["plan"][4]["state"] = "SKIPPED"
+        self.assertEqual(c._ready(task, task["plan"][5]), "fail_dep")
+
+    def test_failed_dep_does_not_satisfy_after(self):
+        outs = {}
+        s9 = st("s9", "report", "REPORT_DRAFT", [], after=["s5"])
+        _, bad = OC.simulate_steps([s9], outs, {}, known=[])        # s5 是 FAILED_DEP → 不在 known
+        self.assertEqual([b[0] for b in bad], ["s9"])
+        _, bad = OC.simulate_steps([s9], outs, {}, known=["s5"])    # s5 是 SKIPPED → 在 known
+        self.assertEqual(bad, [])
+
+    def test_validate_continuation_after_failed_dep_rejected(self):
+        # 正常入口（_validate，續做時的同一個驗證器）：after 指向 FAILED_DEP 的步驟 → 驗證就退回，與執行器一致
+        c = PlanBController({}, None, GRAPH, COUNTER)
+        task = {"plan": [{"id": "s5", "direction": "report", "action": "REPORT_DRAFT", "ids": [], "params": {}, "after": [],
+                          "bind": {}, "when": None, "require": {}, "state": "FAILED_DEP"}],
+                "cands": {"report": []}, "artifacts": {}, "proposals": []}
+        ok, _, err = c._validate(task, ["report"], plan(st("s9", "report", "REPORT_DRAFT", [], after=["s5"])), {"s5"})
+        self.assertFalse(ok)
+        task["plan"][0]["state"] = "SKIPPED"
+        ok, _, err = c._validate(task, ["report"], plan(st("s9", "report", "REPORT_DRAFT", [], after=["s5"])), {"s5"})
+        self.assertTrue(ok, err)
+
+
 if __name__ == "__main__":
     unittest.main()
