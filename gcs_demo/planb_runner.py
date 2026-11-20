@@ -66,7 +66,7 @@ def controller(*a, **kw):
 
 
 R4.M4bController = controller
-R4.HARNESS["name"] = "planb-v8"
+R4.HARNESS["name"] = "planb-v9"
 _run_case = R4.run_case
 
 
@@ -88,6 +88,10 @@ def run_case(case, cond, model_factory, graph, counter, work):
             rec["rescored_by_step_source"] = True
         rec.update(rescored)
     rec["replans"] = r.get("replans")
+    plans = [t for t in r.get("traces") or [] if t.get("purpose") == "plan"]    # v3.7 §2：首次計畫通過率、規則備援率
+    rec["first_plan_pass"] = bool(plans) and all(t.get("source") == "model" and len(t.get("replies") or []) == 1 for t in plans)
+    rec["rule_plan_used"] = any("改用規則計畫" in n for n in r.get("notes") or [])
+    rec["plan_rejections"] = [e.get("reason", "")[:80] for e in r.get("plan_log") or [] if e.get("event") == "correction"]
     rec["plan_states"] = [[s["id"], s["action"], s["state"]] for s in r.get("plan") or []]
     return rec, full
 
@@ -101,6 +105,11 @@ def summarize(recs):
     ok = [r for r in recs if r.get("shared_input_match")]
     bad = [r for r in recs if not r.get("shared_input_match")]
     out = _summarize(ok) if ok else {}
+    for c in out:
+        rs = [r for r in ok if r["cond"] == c]
+        planned = [r for r in rs if r.get("first_plan_pass") or r.get("rule_plan_used") or r.get("plan_rejections")]
+        out[c]["first_plan_pass_rate"] = f"{sum(1 for r in rs if r.get('first_plan_pass'))}/{len(planned)}"
+        out[c]["rule_plan_rate"] = f"{sum(1 for r in rs if r.get('rule_plan_used'))}/{len(planned)}"
     out["_shared_input_mismatch"] = {"n": len(bad), "rows": [[r["cond"], r["case"]] for r in bad]}
     return out
 

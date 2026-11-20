@@ -75,6 +75,10 @@ class PlanBController(M4bController):
         task.setdefault("plan_log", [])
         planned = {s["direction"] for s in task["plan"]}
         batch = [d for d in task["directions"] if task["dir_status"][d] == "PENDING" and d not in planned]
+        if "plan" in batch and task.get("area_status") in ("MANY", "NONE"):   # v3.7：與 A 相同，不交給模型猜
+            task["dir_status"]["plan"] = "NEEDS_USER"
+            task["notes"].append("原句沒有唯一指定區域，請框選或指名")
+            batch.remove("plan")
         if batch:                                           # 空批不呼叫模型
             self._add_steps(task, self._plan(task, batch, initial=True))
         self._execute(task, qv)                             # 先前批次在等的步驟也一起推進
@@ -124,26 +128,87 @@ class PlanBController(M4bController):
             self._execute(task, qv)
 
     # ---------- 規劃 ----------
+    def _ids_of(self, task, d, cat):
+        return [i for i in task["cands"].get(d, []) if self.graph.nodes[i]["cat"] == cat]
+
     def _example(self, task, dirs):
-        """依本批第一個方向自動生成的格式範例（不再寫死 plan／QUERY_AREA）。"""
-        d = dirs[0]
-        a = (ACTIONS.get(d) or ["DECLINE_FLIGHT"])[0]
-        need = ID_INPUT.get(a, [])
-        ids = [i for i in task["cands"].get(d, []) if self.graph.nodes[i]["cat"] in need][:1] if need else []
-        return json.dumps({"steps": [{"id": "s1", "direction": d, "action": a, "ids": ids, "params": {}, "after": [],
-                                      "bind": {}, "when": None, "require": {}}]}, ensure_ascii=False)
+        """v3.7：依本批方向產生的完整範例。有 plan 時示範「區域 → 航點 → 預覽 →（ui 時）首頁提案」；
+        版面示範「元件＋參數＋value」。範例只示範格式與相依寫法，內容要依句子決定。"""
+        steps, n = [], 1
+
+        def add(d, a, ids=(), params=None, bind=None, when=None):
+            nonlocal n
+            steps.append({"id": f"s{n}", "direction": d, "action": a, "ids": list(ids), "params": params or {},
+                          "after": [], "bind": bind or {}, "when": when, "require": {}})
+            n += 1
+            return steps[-1]["id"]
+        verify = None
+        for d in dirs:
+            if d == "plan":
+                area = (self._ids_of(task, "plan", "A") or ["A001"])[:1]
+                s1 = add("plan", "QUERY_AREA", area)
+                s2 = add("plan", "GEN_COVERAGE", bind={"area": f"{s1}.area_record"})
+                verify = add("plan", "VERIFY_PREVIEW", bind={"route": f"{s2}.coverage_route"})
+            elif d == "ui":
+                if verify:
+                    add("ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": f"{verify}.route_preview"},
+                        when=f"{verify}.route_preview.verdict==pass")
+            elif d == "layout":
+                c = self._ids_of(task, d, "C")[:1]
+                pp = [i for i in self._ids_of(task, d, "P") if i != "P001"][:1] or self._ids_of(task, d, "P")[:1]
+                if pp:
+                    val = (self.graph.nodes[pp[0]].get("allowed") or [""])[0]
+                    add("layout", "UI_LAYOUT_PROPOSE", (c if pp[0] != "P001" else []) + pp, {"value": val})
+            elif d in ("color", "model"):
+                add(d, ACTIONS[d][0], self._ids_of(task, d, "T" if d == "color" else "M")[:1])
+            elif ACTIONS.get(d):
+                add(d, ACTIONS[d][0])
+        return json.dumps({"steps": steps}, ensure_ascii=False)
 
     def _plan_schema(self, task, dirs):
-        acts = sorted({a for d in dirs for a in ACTIONS.get(d, [])}) or ["DECLINE_FLIGHT"]
-        ids = sorted({i for d in dirs for i in task["cands"].get(d, [])} | ({"U100"} if "ui" in dirs else set())) or ["U100"]
-        step = {"type": "object", "properties": {
-            "id": {"type": "string"}, "direction": {"type": "string", "enum": list(dirs)},
-            "action": {"type": "string", "enum": acts},
-            "ids": {"type": "array", "items": {"type": "string", "enum": ids}},
-            "params": {"type": "object"}, "after": {"type": "array", "items": {"type": "string"}},
-            "bind": {"type": "object"}, "when": {"type": ["string", "null"]}, "require": {"type": "object"}},
-            "required": ["id", "direction", "action", "ids", "params", "after", "bind", "when", "require"]}
-        return {"type": "object", "properties": {"steps": {"type": "array", "items": step}}, "required": ["steps"]}
+        """v3.7：每個動作一種形狀（anyOf）：ids 的角色與數量、必填 bind 槽、版面的 params.value。"""
+        shapes = []
+        allv = sorted({v for d in dirs for i in task["cands"].get(d, []) for v in (self.graph.nodes[i].get("allowed") or [])})
+        for d in dirs:
+            for a in ACTIONS.get(d, []):
+                ids = {"type": "array", "maxItems": 0}
+                params = {"type": "object"}
+                bind = {"type": "object"}
+                if a == "QUERY_AREA":
+                    ids = {"type": "array", "items": {"type": "string", "enum": self._ids_of(task, d, "A") or ["A001"]},
+                           "minItems": 1, "maxItems": 1}
+                elif a == "PROPOSE_HOME_ROUTE":
+                    ids = {"type": "array", "items": {"type": "string", "enum": ["U100"]}, "minItems": 1, "maxItems": 1}
+                elif a == "UI_LAYOUT_PROPOSE":
+                    cp = self._ids_of(task, d, "C") + self._ids_of(task, d, "P")
+                    ids = {"type": "array", "items": {"type": "string", "enum": cp or ["P001"]}, "minItems": 1, "maxItems": 2}
+                    params = {"type": "object", "properties": {"value": {"type": "string", "enum": allv or ["大"]}},
+                              "required": ["value"]}
+                elif a in ("UI_THEME_PROPOSE", "MODEL_SWITCH_PROPOSE"):
+                    ids = {"type": "array", "items": {"type": "string",
+                                                      "enum": self._ids_of(task, d, "T" if a == "UI_THEME_PROPOSE" else "M") or ["T001"]},
+                           "minItems": 1, "maxItems": 1}
+                if INPUTS.get(a):
+                    bind = {"type": "object", "properties": {slot: {"type": "string"} for slot in INPUTS[a]},
+                            "required": list(INPUTS[a])}
+                shapes.append({"type": "object", "properties": {
+                    "id": {"type": "string"}, "direction": {"type": "string", "enum": [d]},
+                    "action": {"type": "string", "enum": [a]}, "ids": ids, "params": params,
+                    "after": {"type": "array", "items": {"type": "string"}}, "bind": bind,
+                    "when": {"type": ["string", "null"]}, "require": {"type": "object"}},
+                    "required": ["id", "direction", "action", "ids", "params", "after", "bind", "when", "require"]})
+        item = {"anyOf": shapes} if shapes else {"type": "object"}
+        return {"type": "object", "properties": {"steps": {"type": "array", "minItems": 1, "items": item}},
+                "required": ["steps"]}
+
+    def _refs_hint(self, task, out):
+        """修正訊息：目前可以引用的步驟與它們產生的成果。"""
+        refs = []
+        for x in [y for y in task.get("plan", []) if y["state"] != "REPLACED"] + list(out):
+            pr = OC.PRODUCES.get(x["action"])
+            if pr:
+                refs.append(f"{x['id']}（{x['action']}，產生 {pr}）")
+        return "可以引用：" + ("、".join(refs) if refs else "（目前沒有可引用的步驟，要先加產生它的步驟）")
 
     def _plan_prompt(self, task, dirs, fixed, redo=None):
         parts = [f"句子：{task['text']}", "方向（依序）：" + "、".join(f"{d}（{KIND_ZH[d]}）" for d in dirs)]
@@ -200,6 +265,8 @@ class PlanBController(M4bController):
                 return False, None, f"{sid}：{a} 必須用 bind 指定 {'、'.join(sorted(missing))} 的來源步驟"
             ok, _, err = self._parse_step(task, d, json.dumps({"action": a, "ids": ids, "params": params}), ACTIONS[d])
             if not ok:
+                if a == "UI_LAYOUT_PROPOSE":                    # v3.7：版面錯誤列出可用的 C 與 P
+                    err += f"（可用元件 C：{'、'.join(self._ids_of(task, d, 'C')[:8]) or '無'}；可用參數 P：{'、'.join(self._ids_of(task, d, 'P')) or '無'}）"
                 return False, None, f"{sid}：{err}"
             prior = set(known) | seen
             for x in after:
@@ -208,10 +275,12 @@ class PlanBController(M4bController):
             for slot, ref in bind.items():
                 m = re.fullmatch(r"(s\d+)\.(\w+)", ref) if isinstance(ref, str) else None
                 if slot not in INPUTS.get(a, {}) or not m or m.group(1) not in prior:
-                    return False, None, f"{sid}：bind {slot} 不合法"
+                    return False, None, (f"{sid}：bind {slot} 不合法（{a} 的輸入槽是 {'、'.join(INPUTS.get(a, {})) or '無'}，"
+                                         f"值寫成「sN.{INPUTS.get(a, {}).get(slot, '欄位')}」）。" + self._refs_hint(task, out))
                 src = (known.get(m.group(1)) or next(s for s in out if s["id"] == m.group(1)))
                 if m.group(2) != INPUTS[a][slot] or m.group(2) not in OUTPUTS.get(src["action"], set()):
-                    return False, None, f"{sid}：bind 欄位型別不符"
+                    return False, None, (f"{sid}：bind {slot} 要指到產生 {INPUTS[a][slot]} 的步驟，"
+                                         f"{m.group(1)} 產生的是 {OC.PRODUCES.get(src['action'])}。" + self._refs_hint(task, out))
                 if m.group(1) not in after:
                     after = after + [m.group(1)]                  # 來源步驟自動列入 after
             if when is not None:

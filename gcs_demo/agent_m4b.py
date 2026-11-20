@@ -15,7 +15,7 @@ import time
 
 from .agent_loop import default_extract
 from . import outcomes as OC
-from .id_graph import DIRECTION_CATS, pack
+from .id_graph import DIRECTION_CATS, line_of, pack
 
 KINDS = ("plan", "ui", "qa", "report", "chat", "manual", "layout", "color", "model", "flight_request")
 KIND_DEF = {"plan": "任務規劃：巡檢、航線、覆蓋", "ui": "放到首頁：把結果放到首頁",
@@ -119,6 +119,8 @@ class M4bController:
             task["notes"].append(f"方向 {len(dirs)} 個超過上限 {self.cap}，請分批")
             return self._finish(task, "PARKED", ask=f"這句話包含 {len(dirs)} 件事，請先選最多 {self.cap} 件")
         task["directions"] = dirs
+        if "plan" in dirs:
+            task["area_fixed"], task["area_status"] = self.resolve_area(task)
         qv = self.tools["embed_query"](raw) if "embed_query" in self.tools else None   # 第 1 段之後，1 次
         task["qv_ok"] = qv is not None
         retrieved = {d: self.graph.retrieve(d, qv) for d in dirs}
@@ -143,6 +145,10 @@ class M4bController:
                 break
             for d, pl in packed["plan"].items():
                 task["cands"][d], task["lines"][d] = pl["items"], pl["lines"]
+                if d == "plan" and task.get("area_fixed"):  # v3.7：原句唯一指定的區域 → 候選只剩它
+                    fx = task["area_fixed"]
+                    task["cands"][d] = [fx]
+                    task["lines"][d] = [line_of(self.graph.nodes, self.graph.nodes[fx], with_desc=False)]
                 task["dir_status"][d] = "PENDING"
             for d in task["directions"]:                    # 等前一批結果的方向重新判斷
                 if task["dir_status"][d] == "WAITING":
@@ -185,11 +191,31 @@ class M4bController:
         if ds is None:
             ds = [k for k in KINDS if any(w in task["text"] for w in KEYWORDS.get(k, []))] or ["chat"]
             task["notes"].append("第 1 段無效或未呼叫模型，改用關鍵字表")
+        if "ui" in ds and "plan" not in ds and "route_preview" not in task["artifacts"] and self._names_route(task):
+            ds.insert(ds.index("ui"), "plan")                 # v3.7：要把航線放首頁但沒有預覽 → 程式補前置規劃
+            task["stage1_augmented"] = ["plan"]
+            task["notes"].append("要放首頁但缺前置規劃，程式補上 plan 方向")
         if "ui" in ds and "plan" in ds and ds.index("ui") < ds.index("plan"):   # 明確相依：ui 需要 plan 的成果
             ds.remove("ui")
             ds.insert(ds.index("plan") + 1, "ui")
             task["notes"].append("依相依把 ui 排到 plan 之後")
         return ds
+
+    def _names_route(self, task):
+        """原句明確指向某條航線：提到區域名稱／別名，或含規劃關鍵字。"""
+        if "query_area" in self.tools and self.tools["query_area"](task["text"])["status"] != "NONE":
+            return True
+        return any(w in task["text"] for w in KEYWORDS["plan"])
+
+    def resolve_area(self, task):
+        """v3.7 §1：原句能唯一比對到一個區域 → 程式定下該區域節點；比對不到或多個 → None 並記狀態。"""
+        if "query_area" not in self.tools:
+            return None, "NO_TOOL"
+        q = self.tools["query_area"](task["text"])
+        if q["status"] == "ONE":
+            ids = [i for i, n in self.graph.nodes.items() if n.get("area") == q["candidates"][0]]
+            return (ids[0] if ids else None), "ONE"
+        return None, q["status"]
 
     # ---------- 共用排程 ----------
     def _schedule(self, task, qv):
@@ -217,6 +243,11 @@ class M4bController:
         return OC.have_from(task["artifacts"], task["proposals"])
 
     def _run_direction(self, task, d, qv):
+        if d == "plan" and task.get("area_status") in ("MANY", "NONE") and "area_record" not in task["artifacts"]:
+            task["notes"].append("原句沒有唯一指定區域" + ("（比對到多個）" if task["area_status"] == "MANY" else "（比對不到）") +
+                                 "，請框選或指名")
+            task["dir_status"][d] = "NEEDS_USER"
+            return
         steps = 0
         while steps < self.steps_max:
             have = self.have(task)
@@ -243,7 +274,8 @@ class M4bController:
                        '只輸出 JSON：{"action":"動作代碼","ids":["ID"],"params":{}}')
             schema = {"type": "object", "properties": {
                 "action": {"type": "string", "enum": allowed},
-                "ids": {"type": "array", "items": {"type": "string", "enum": cands or ["U100"]}},
+                "ids": dict({"type": "array", "items": {"type": "string", "enum": cands or ["U100"]}},
+                            **({"maxItems": 1} if d in ("plan", "color", "model", "ui") else {"maxItems": 2})),
                 "params": {"type": "object"}}, "required": ["action", "ids", "params"]}
             step = self._call(task, f"step:{d}", content, lambda raw: self._parse_step(task, d, raw, allowed),
                               schema=schema)
@@ -327,8 +359,8 @@ class M4bController:
             return "" if cats == ["M"] else "模型提案要剛好一個模型（M）"
         if a == "PROPOSE_HOME_ROUTE":
             return "" if ids in ([], ["U100"]) else "首頁提案只能指定 U100"
-        if a == "QUERY_AREA":
-            return "" if all(c == "A" for c in cats) else "區域查詢只能指定區域（A）"
+        if a == "QUERY_AREA":                                # v3.7：恰好一個區域；多個是格式錯誤
+            return "" if cats == ["A"] else "區域查詢要剛好一個區域 ID（A），不可以一次填多個"
         return "" if not ids else f"{a} 不收 ids"
 
     def _rule_step(self, task, d):
@@ -548,5 +580,6 @@ class M4bController:
                 "directions": task["directions"], "dir_status": task["dir_status"], "steps": task["steps"],
                 "notes": task["notes"], "calls_used": task["ledger"].used, "traces": task["traces"],
                 "retrieval": task.get("retrieval"), "packing": task.get("packing"), "artifacts": task["artifacts"],
-                "qv_ok": task.get("qv_ok"), "t_pre_summary_s": t_pre, "stage1_source": task.get("stage1_source"),
+                "qv_ok": task.get("qv_ok"), "t_pre_summary_s": t_pre, "stage1_source": task.get("stage1_source"), "stage1_augmented": task.get("stage1_augmented"),
+                "area_status": task.get("area_status"), "area_fixed": task.get("area_fixed"),
                 "outcomes": OC.have_from(task["artifacts"], task["proposals"])}

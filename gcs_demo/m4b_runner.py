@@ -26,7 +26,8 @@ from .id_graph import load_index
 HERE = os.path.dirname(os.path.abspath(__file__))
 CASES = os.path.join(HERE, "m4b_cases_v2.json")
 # v4（v3.6 §6）：校準＝開發集（首跑 36 題，已看過失敗）；研究＝評估集（沒有用來調提示）
-CASES_BY_PHASE = {"calib": os.path.join(HERE, "m4b_cases_v2.json"), "research": os.path.join(HERE, "m4b_cases_eval_v1.json")}
+CASES_BY_PHASE = {"calib": os.path.join(HERE, "m4b_cases_dev_v3.json"), "research": os.path.join(HERE, "m4b_cases_eval_v2.json")}
+# v3.7 §5：calib＝開發集（前兩輪看過的 60 題）；research＝第三輪評估集 v2（沒有參與調整）
 DEFAULT_ID_INDEX = os.path.join(R.BASE_DOC, "adr0002_rag_v1", "id_index_v1")
 CONDITIONS = {
     "calib": [{"id": "A-s6-b30", "group": "A", "steps": 6, "budget": 30}],
@@ -48,7 +49,7 @@ def deadline_for(purpose):
 
 
 MAX_TOKENS = {"summary": 256, "plan": 512, "replan": 512}
-HARNESS = {"name": "m4b-v4"}
+HARNESS = {"name": "m4b-v5"}
 TIMING_KEYS = ("prompt_eval_count", "eval_count", "prompt_eval_duration", "eval_duration", "load_duration", "total_duration")
 
 
@@ -186,6 +187,7 @@ def run_case(case, cond, model_factory, graph, counter, work):
            "packing_pending": (r.get("packing") or {}).get("pending"), "error": err,
            "embed_calls": idx.calls[n_embed_before:] if idx else [],
            "model_calls_sent": len(calls),
+           "stage1_augmented": (r or {}).get("stage1_augmented"), "area_status": (r or {}).get("area_status"),
            "timing": _sum_timing(calls),
            "model_call_failures": sum(1 for x in calls if x.get("status") != 200),
            "model_call_timeouts": sum(1 for x in calls if x.get("status") == 504)}
@@ -250,7 +252,13 @@ def summarize(recs):
                   "p95_proposal_ready_common_s": p95([by[c][k]["t_proposal_ready_s"] for k in common]),
                   "common_cases": sorted(common),
                   "llm_calls_mean": round(sum(r.get("calls_used") or 0 for r in rs) / len(rs), 3),
-                  "claimed_done_wrong": sum(r.get("claimed_done_wrong", False) for r in rs)}
+                  "claimed_done_wrong": sum(r.get("claimed_done_wrong", False) for r in rs),
+                  # v3.7 §4 口徑
+                  "calls_sent_mean": round(sum(r.get("model_calls_sent") or 0 for r in rs) / len(rs), 3),
+                  "extra_in_prop_cases": sum(1 for r in pc if r.get("extra_proposals")),
+                  "dir_exact_rate": f"{sum(1 for r in rs if r.get('dirs_set_match'))}/{len(rs)}",
+                  "dir_augmented": sum(1 for r in rs if r.get("stage1_augmented")),
+                  "area_fixed_cases": sum(1 for r in rs if r.get("area_status") == "ONE")}
     return out
 
 

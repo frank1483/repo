@@ -1,0 +1,430 @@
+{
+ "version": "m4b-cases-eval-v2",
+ "annotation": "AI 共同決定（使用者委任）：Claude 2026-11-20 17:20 草擬的第三輪評估集 v2，不是人工標註；句子沒有用來調提示，首跑 36 題與第二輪評估集 24 題都已看過，合併為開發集 m4b_cases_dev_v3。請使用者抽看。",
+ "fields": "同 m4b_cases_v2",
+ "cases": [
+  {
+   "id": "F01",
+   "text": "去南側做一次巡檢",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "口語"
+  },
+  {
+   "id": "F02",
+   "text": "北側二要巡一下",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "無「巡檢」字樣"
+  },
+  {
+   "id": "F03",
+   "text": "北邊那塊規劃航線，電量留 35%",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "別名＋保留"
+  },
+  {
+   "id": "F04",
+   "text": "東區巡檢",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "PARKED",
+   "note": "查不到區域"
+  },
+  {
+   "id": "F05",
+   "text": "南側跟北側都巡",
+   "gold_dirs": [
+    "plan"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "PARKED",
+   "note": "兩個區域→請選"
+  },
+  {
+   "id": "F06",
+   "text": "把北側二的巡檢航線放上首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "兩方向",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "F07",
+   "text": "南區規劃好後丟到首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "口語先後",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "F08",
+   "text": "北側巡檢留 92% 再放首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "fail"
+   },
+   "expect_status": "INCOMPLETE",
+   "note": "預覽不合格→首頁合法略過"
+  },
+  {
+   "id": "F09",
+   "text": "字小一點",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "小"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "全域文字"
+  },
+  {
+   "id": "F10",
+   "text": "文字調到特大",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "特大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "全域文字"
+  },
+  {
+   "id": "F11",
+   "text": "風速計縮小",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C014",
+      "P002"
+     ],
+     "values": [
+      "縮小"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "元件大小"
+  },
+  {
+   "id": "F12",
+   "text": "把返航距離與飛行時間移到右上",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C015",
+      "P003"
+     ],
+     "values": [
+      "右上"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "元件位置"
+  },
+  {
+   "id": "F13",
+   "text": "顯示任務進度",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C007",
+      "P004"
+     ],
+     "values": [
+      "顯示"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "元件顯示"
+  },
+  {
+   "id": "F14",
+   "text": "把指令區隱藏",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "INCOMPLETE",
+   "note": "鎖定元件"
+  },
+  {
+   "id": "F15",
+   "text": "主題換成高對比",
+   "gold_dirs": [
+    "color"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_THEME_PROPOSE",
+     "ids": [
+      "T003"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "主題"
+  },
+  {
+   "id": "F16",
+   "text": "改成亮色主題",
+   "gold_dirs": [
+    "color"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_THEME_PROPOSE",
+     "ids": [
+      "T002"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "主題別名"
+  },
+  {
+   "id": "F17",
+   "text": "切到文字模型",
+   "gold_dirs": [
+    "model"
+   ],
+   "expect_proposals": [
+    {
+     "action": "MODEL_SWITCH_PROPOSE",
+     "ids": [
+      "M001"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "模型"
+  },
+  {
+   "id": "F18",
+   "text": "我要辨識作物",
+   "gold_dirs": [
+    "model"
+   ],
+   "expect_proposals": [
+    {
+     "action": "MODEL_SWITCH_PROPOSE",
+     "ids": [
+      "M011"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "辨識類別別名"
+  },
+  {
+   "id": "F19",
+   "text": "PX4 手冊裡任務模式怎麼運作",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "手冊",
+   "manual_gold_any": [
+    "mission"
+   ]
+  },
+  {
+   "id": "F20",
+   "text": "查 QGC 文件：怎麼校正羅盤",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "手冊",
+   "manual_gold_any": [
+    "compass",
+    "calibrat"
+   ]
+  },
+  {
+   "id": "F21",
+   "text": "降落",
+   "gold_dirs": [
+    "flight_request"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "flight_notice": null
+   },
+   "expect_status": "DONE",
+   "note": "只回固定說明"
+  },
+  {
+   "id": "F22",
+   "text": "北側二巡檢後拍照",
+   "gold_dirs": [
+    "plan",
+    "flight_request"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "pass",
+    "flight_notice": null
+   },
+   "expect_status": "DONE",
+   "note": "規劃＋飛控"
+  },
+  {
+   "id": "F23",
+   "text": "隱藏小地圖並把字體調大",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C016",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    },
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "同方向兩個提案"
+  },
+  {
+   "id": "F24",
+   "text": "目前風速多少",
+   "gold_dirs": [
+    "qa"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "INCOMPLETE",
+   "note": "問答工具未接"
+  }
+ ]
+}
