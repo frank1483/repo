@@ -149,6 +149,11 @@ def check_a_dir(phase, fake):
 A_BUNDLE_SHA = None   # v8：由 --a-bundle-sha 指定 A 同輪來源包（見 main）
 
 
+def bundle_sha(bundle_dir):
+    """來源包清單的 SHA-256（v8 修正：第二輪 v7 誤用不存在的 R4.sha_file，B 在載入模型前停止）。"""
+    return R4.R.sha_file(os.path.join(bundle_dir, "SHA256SUMS.txt"))
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--shared-from" not in argv:
@@ -161,8 +166,12 @@ def main(argv=None):
     phase = argv[argv.index("--phase") + 1]
     R4.CASES = R4.CASES_BY_PHASE[phase]
     global A_BUNDLE_SHA                                    # 第二輪 A、B 用同一個來源包：A 的包雜湊必須等於這次 --bundle
-    if "--bundle" in argv:
-        A_BUNDLE_SHA = R4.sha_file(os.path.join(argv[argv.index("--bundle") + 1], "SHA256SUMS.txt"))
+    if "--a-bundle" in argv:                               # v8：A 已用先前同意的包跑完（A 的程式未變），B 指定 A 的包核對
+        k = argv.index("--a-bundle")
+        A_BUNDLE_SHA = bundle_sha(argv[k + 1])
+        del argv[k:k + 2]
+    elif "--bundle" in argv:
+        A_BUNDLE_SHA = bundle_sha(argv[argv.index("--bundle") + 1])
     shared = check_a_dir(phase, "--fake" in argv)
     out = argv[argv.index("--out") + 1]
     rc = R4.main(argv)

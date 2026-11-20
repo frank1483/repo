@@ -369,5 +369,35 @@ class RoundTwoV7(unittest.TestCase):
                                 for e in r["plan_log"]), order)
 
 
+class RunnerLivePath(unittest.TestCase):
+    def test_bundle_sha_function_exists_and_matches(self):
+        import hashlib
+        import os
+        import tempfile
+        from . import planb_runner as PR
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "SHA256SUMS.txt"), "wb") as f:
+            f.write(b"abc *x\n")
+        self.assertEqual(PR.bundle_sha(d), hashlib.sha256(b"abc *x\n").hexdigest())
+
+    def test_live_arg_path_reaches_check_a_dir(self):
+        # live 參數路徑（含 --bundle、不含 --fake）要能走到 A 目錄核對，而不是在前面就因程式錯誤停止
+        import os
+        import tempfile
+        from . import planb_runner as PR
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "SHA256SUMS.txt"), "w") as f:
+            f.write("x\n")
+        a = tempfile.mkdtemp()
+        with open(os.path.join(a, "results.jsonl"), "w") as f:
+            f.write("")
+        with open(os.path.join(a, "RUN_INFO.json"), "w") as f:
+            f.write("{}")
+        with self.assertRaises(SystemExit) as cm:
+            PR.main(["--phase", "calib", "--out", os.path.join(a, "o"), "--bundle", d, "--consent-hash8", "x",
+                     "--shared-from", a])
+        self.assertIn("--shared-from 核對不通過", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
