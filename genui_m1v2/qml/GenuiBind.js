@@ -1,7 +1,7 @@
 .pragma library
 // GenuiBind：預檢通過的節點 → 每個框的「畫面資料」（W1～W5 轉接元件說明 v1.2 §1、§2）。純函式，不讀即時狀態。
 // 版本 bind-m1-0.1。QML 元件只顯示這裡給的資料；找不到就回 {ok:false}，該框畫「資料無法顯示」，不畫半份。
-var BIND_VERSION = "bind-m1-0.3.1"   // 0.3.1：W2 右側標籤改用 labelTops 依實際高度避讓（real02 的 long 情境「目前」與「保留」重疊）。0.3： 0.3：只改 W 元件字級（通用級距）與 W2 標籤欄寬、W4 valueSize 固定 28（本檔邏輯不變）。0.2.2： 0.2.2：只改 W2 的「目前」標籤成兩行（本檔邏輯不變）。0.2.1： 0.2.1：橘色門檻改用顯示到小數一位後的值比較（0.2 run1 的 10 分鐘邊界顯示「10」卻是藍色）。0.2： 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
+var BIND_VERSION = "bind-m1-0.4"   // 0.4：使用者 11/20 16:40 D1（W4 改 GcpCard、長文換行、卡片增高）、D2（W1 安全提示→主要事實→常駐「未查」，矮畫面空間規則）；新增 contentMinH 給排版。0.3.1： 0.3.1：W2 右側標籤改用 labelTops 依實際高度避讓（real02 的 long 情境「目前」與「保留」重疊）。0.3： 0.3：只改 W 元件字級（通用級距）與 W2 標籤欄寬、W4 valueSize 固定 28（本檔邏輯不變）。0.2.2： 0.2.2：只改 W2 的「目前」標籤成兩行（本檔邏輯不變）。0.2.1： 0.2.1：橘色門檻改用顯示到小數一位後的值比較（0.2 run1 的 10 分鐘邊界顯示「10」卻是藍色）。0.2： 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
 var MAX_POINTS = 150
 var ETA_WARN_MIN = 10                         // R1：ETA ≤ 10 分鐘用橘色〔顯示用候選值〕
 var ETA_NA_LABEL = "電量下降，無法估計到保留電量的時間"
@@ -54,12 +54,29 @@ function shortenAtSentence(t, maxChars) {
     return { text: acc, whole: n === ss.length, sentences: n }
 }
 
+// D2：安全提示（資料過期、部分缺漏、樣本不足）；「本次未執行：…」在 W1 縮成「未查：…」（答案區與紀錄保留原句）
+var SAFETY_TPL = ["T-STALE", "T-PARTIAL", "T-CANNOT"]
+function shortOmitted(t) {
+    var k = t.indexOf("："), e = t.indexOf("（")
+    var names = k >= 0 ? t.slice(k + 1, e > k ? e : t.length) : t
+    return "未查：" + names
+}
+// 估計文字寬度（像素）：中日韓與全形字算 1 個字級寬，其餘算 0.6；寧可估大，避免裁掉
+function textWidth(t, px) {
+    var w = 0, cps = Array.from(String(t))
+    for (var i = 0; i < cps.length; ++i) { var c = cps[i].codePointAt(0); w += (c >= 0x2E80 || (c >= 0xFF00 && c <= 0xFFEF)) ? px : px * 0.6 }
+    return w
+}
+function textLines(t, px, widthPx) { return Math.max(1, Math.ceil(textWidth(t, px) / Math.max(1, widthPx * 0.95))) }
+
 function bindAnswer(answer) {
     if (!answer || !Array.isArray(answer.lines)) return bad("NO_ANSWER")
     var m = [], o = [], i
     for (i = 0; i < answer.lines.length; ++i) {
         var l = answer.lines[i]; if (typeof l.text !== "string") return bad("LINE_TYPE")
-        var row = { text: l.text, mandatory: !!l.mandatory, kind: "text" }
+        var row = { text: l.text, mandatory: !!l.mandatory, kind: "text", tpl: l.template_id || "",
+                    role: SAFETY_TPL.indexOf(l.template_id) >= 0 ? "safety" : (l.template_id === "T-OMITTED" ? "omitted" : (l.mandatory ? "mandatory_fact" : "fact")) }
+        if (row.role === "omitted") row.short = shortOmitted(l.text)
         if (l.template_id === "T-DOC") { var d = splitDocLine(l.text); if (d) { row.kind = "doc"; row.quote = d.quote; row.source = d.source } }
         ;(l.mandatory ? m : o).push(row)
     }
@@ -198,6 +215,68 @@ function labelTops(lab, h, hCur, hRes) {
         if (dn.top + dn.h > h) { var shift = dn.top + dn.h - h; dn.top -= shift; up.top = Math.max(0, up.top - shift) }
     }
     return { current: cur.top, reserve: res.top }
+}
+// ---- D2：W1 排列（W1 元件與排版共用同一套量法）
+// 版面量法（與 GenuiW1Fact.qml 一致）：外框 GcpPanel 內縮 8、GcpCard 內縮 8＋上下各 8 → 可用高 = H − 32；可用寬 = W − 56
+var W1M = { px: 22, smallPx: 18, lineH: 33, padH: 32, padW: 56, maxTextLines: 3, maxQuoteLines: 2 }
+function w1RowHeight(r, availW) {
+    if (r.kind === "doc") {
+        var q = shortenAtSentence(r.quote, Math.max(1, Math.floor(availW / W1M.px)) * W1M.maxQuoteLines)
+        var qt = q.sentences > 0 ? "「" + q.text + (q.whole ? "」" : "…」") : ""
+        var ql = qt ? Math.min(W1M.maxQuoteLines, textLines(qt, W1M.px, availW)) : 0
+        return { h: W1M.lineH * (1 + ql), quote: qt, qLines: ql, lines: 1 }
+    }
+    var txt = r.role === "omitted" ? r.short : r.text
+    var n = Math.min(W1M.maxTextLines, textLines(txt, W1M.px, availW))
+    return { h: W1M.lineH * n, lines: n, text: txt }
+}
+// 必顯示：安全提示（依原順序）→ 主要事實（第一條事實；沒有就第一條必顯示事實）→ 其他必顯示事實 → … → 「未查」（最後）
+// 其餘事實是補充，放不下就收起並顯示「還有 N 行」
+function w1Arrange(lines, availH, availW) {
+    var safety = [], mfacts = [], facts = [], omitted = [], i
+    for (i = 0; i < lines.length; ++i) {
+        var r = lines[i]; var m = w1RowHeight(r, availW)
+        var row = { src: r, h: m.h, lines: m.lines, text: m.text, quote: m.quote, qLines: m.qLines, kind: r.kind, role: r.role, source: r.source }
+        if (r.role === "safety") safety.push(row); else if (r.role === "omitted") omitted.push(row)
+        else if (r.role === "mandatory_fact") mfacts.push(row); else facts.push(row)
+    }
+    var main = facts.length ? [facts.shift()] : []
+    var always = safety.concat(main, mfacts), tail = omitted, opt = facts
+    var used = 0
+    for (i = 0; i < always.length; ++i) used += always[i].h
+    for (i = 0; i < tail.length; ++i) used += tail[i].h
+    var shownOpt = [], left = availH - used
+    for (i = 0; i < opt.length; ++i) {
+        var restAfter = opt.length - i - 1, need = opt[i].h + (restAfter > 0 ? W1M.lineH : 0)
+        if (need <= left) { shownOpt.push(opt[i]); left -= opt[i].h } else break
+    }
+    var hidden = opt.length - shownOpt.length
+    return { rows: always.concat(shownOpt), tail: tail, hidden: hidden, required_h: used + (opt.length ? W1M.lineH : 0) }
+}
+function w1MinH(lines, widthPx) {
+    var a = w1Arrange(lines, 0, widthPx - W1M.padW)
+    return W1M.padH + a.required_h
+}
+// ---- D1：W4 卡片量法（與 GenuiW4Diag.qml 一致）：外框內縮 8、卡片間距 8；卡片內距 12；圓點 14＋間距 6
+var W4M = { labelPx: 18, labelLineH: 27, valuePx: 28, valueLineH: 40, unitPx: 18, padOuter: 8, gap: 8, padCard: 12, dot: 20 }
+function w4CardLayout(cards, widthPx) {
+    var n = Math.max(1, cards.length), cardW = (widthPx - 2 * W4M.padOuter - W4M.gap * (n - 1)) / n
+    var labelW = cardW - 2 * W4M.padCard - W4M.dot, out = [], maxH = 0
+    for (var i = 0; i < cards.length; ++i) {
+        var ll = textLines(cards[i].label, W4M.labelPx, labelW)
+        var vw = textWidth(cards[i].value, W4M.valuePx) + 6 + textWidth(cards[i].unit, W4M.unitPx)
+        var vl = vw > cardW - 2 * W4M.padCard ? 2 : 1                                   // 數值＋單位放不下一行時單位換到下一行
+        var h = W4M.padCard + ll * W4M.labelLineH + W4M.valueLineH + (vl - 1) * W4M.labelLineH + W4M.padCard
+        out.push({ labelLines: ll, valueLines: vl, h: h }); if (h > maxH) maxH = h
+    }
+    return { cardW: cardW, cards: out, minH: 2 * W4M.padOuter + maxH }
+}
+// 給排版用：依內容算這個框在指定寬度下至少要多高（0 表示用目錄的最小高度）
+function contentMinH(node, toolResults, answer, widthPx) {
+    if (!node) return 0
+    if (node.component_id === "W1_FACT") { var a = bindAnswer(answer); return a.ok ? w1MinH(a.data.lines, widthPx) : 0 }
+    if (node.component_id === "W4_DIAG") { var d = bindDiag(toolResults, node.binding_ref.ref); return d.ok ? w4CardLayout(d.data.cards, widthPx).minH : 0 }
+    return 0
 }
 // W3／W5：依序顯示能放的個數，放不下的顯示「還有 N 筆／段」（Q1：不捲動）
 function fitCount(n, availH, itemH) {

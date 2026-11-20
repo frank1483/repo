@@ -1,6 +1,7 @@
-// W1 答案區（說明 v1.2 §2；bind-m1-0.2 R3）：GcpPanel＋GcpCard。mandatory 行永遠顯示，其餘從最後一行收，改顯示「還有 N 行」。
-// bind-m1-0.3：字級改用正式主題的通用級距（內文 scale16＝22、說明 scale13＝18、標題 sectionTitle＝18），不用各頁專用的大字級（real01 截圖重疊、裁切）。
-// 引用行（T-DOC）最多 3 行：第 1 行出處（文件、章節、版本，一定保留），第 2～3 行引文，在完整句邊界縮短。
+// W1 答案區（說明 v1.2 §2；bind-m1-0.2 R3；bind-m1-0.4 D2）：GcpPanel＋GcpCard。
+// D2（使用者 11/20 16:40）：依序顯示 安全提示 → 最重要的事實 → 其他必顯示事實 → 補充（放不下就收起，顯示「還有 N 行」）→ 常駐「未查：…」（最後一行）。
+//   「未查：…」是「本次未執行：…」的縮短版，只用在 W1；答案區原句與紀錄不改。排版用同一套量法（Bind.contentMinH）保證放得下必顯示的行。
+// 字級：內文 scale16＝22、出處與「還有 N 行」scale13＝18；行高固定 33（與 Bind.W1M 一致）。
 import QtQuick
 import QGroundControl.GCP
 import "../GenuiBind.js" as Bind
@@ -9,20 +10,28 @@ GcpPanel {
     id: root
     property var bound: null
     readonly property bool ok: !!(bound && bound.ok)
-    readonly property real lineH: Math.ceil(GcpTheme.font.scale16 * 1.5)
-    readonly property int charsPerLine: Math.max(1, Math.floor((card.width - 24) / GcpTheme.font.scale16))
-    // 每行：一般行 1 行高；引用行 = 出處 1 行 + 引文行數（1～2）
-    readonly property var rows: ok ? bound.data.lines.map(function (l) {
-        if (l.kind !== "doc") return { kind: "text", text: l.text, h: lineH, mandatory: l.mandatory }
-        var q = Bind.shortenAtSentence(l.quote, charsPerLine * 2)
-        var qt = q.sentences > 0 ? "「" + q.text + (q.whole ? "」" : "…」") : ""
-        var qLines = qt ? Math.min(2, Math.ceil(Array.from(qt).length / charsPerLine)) : 0
-        return { kind: "doc", source: "出處：" + l.source, quote: qt, qLines: qLines, h: lineH * (1 + qLines), mandatory: l.mandatory }
-    }) : []
-    readonly property var fit: ok ? Bind.fitLinesH(rows.map(function (r) { return r.h }), rows.map(function (r) { return r.mandatory }), card.height - 16, lineH) : ({ shown: 0, hidden: 0 })
+    readonly property real lineH: Bind.W1M.lineH
+    readonly property var arr: ok ? Bind.w1Arrange(bound.data.lines, root.height - Bind.W1M.padH, root.width - Bind.W1M.padW) : ({ rows: [], tail: [], hidden: 0 })
     readonly property bool overflow: col.implicitHeight > card.height - 16 + 0.5
     cornerRadius: GcpTheme.radius.medium
     blurSource: null
+    component Line: Column {
+        id: ln
+        property var r
+        width: parent ? parent.width : 0
+        Text { visible: ln.r.kind === "doc"; width: ln.width; height: root.lineH; elide: Text.ElideMiddle
+               text: ln.r.kind === "doc" ? "出處：" + ln.r.source : ""
+               font.pixelSize: GcpTheme.font.scale13; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textLabel
+               lineHeightMode: Text.FixedHeight; lineHeight: root.lineH; verticalAlignment: Text.AlignVCenter }
+        Text { readonly property int n: ln.r.kind === "doc" ? ln.r.qLines : ln.r.lines
+               visible: n > 0; width: ln.width; height: root.lineH * n
+               wrapMode: Text.Wrap; maximumLineCount: n; elide: Text.ElideRight
+               text: ln.r.kind === "doc" ? (ln.r.quote || "") : ln.r.text
+               font.pixelSize: GcpTheme.font.scale16; font.family: GcpTheme.font.chineseFamily
+               font.bold: ln.r.role === "safety"
+               color: ln.r.role === "safety" ? GcpTheme.color.statusWarning : (ln.r.role === "omitted" ? GcpTheme.color.textSecondary : GcpTheme.color.textPrimary)
+               lineHeightMode: Text.FixedHeight; lineHeight: root.lineH }
+    }
     GcpCard {
         id: card
         anchors.fill: parent; anchors.margins: 8
@@ -30,22 +39,11 @@ GcpPanel {
         Column {
             id: col
             x: 12; y: 8; width: card.width - 24
-            Repeater {
-                model: root.ok ? root.fit.shown : 0
-                Column {
-                    property var r: root.rows[index]
-                    width: col.width
-                    Text { width: parent.width; height: root.lineH; elide: r.kind === "doc" ? Text.ElideMiddle : Text.ElideRight
-                           text: r.kind === "doc" ? r.source : r.text
-                           font.pixelSize: r.kind === "doc" ? GcpTheme.font.scale13 : GcpTheme.font.scale16; font.family: GcpTheme.font.chineseFamily
-                           color: r.kind === "doc" ? GcpTheme.color.textLabel : GcpTheme.color.textPrimary }
-                    Text { visible: r.kind === "doc" && r.qLines > 0; width: parent.width; height: root.lineH * r.qLines
-                           wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight; text: r.quote || ""
-                           font.pixelSize: GcpTheme.font.scale16; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textPrimary }
-                }
-            }
-            Text { visible: root.fit.hidden > 0; width: col.width; height: root.lineH; text: "還有 " + root.fit.hidden + " 行"
-                   font.pixelSize: GcpTheme.font.scale13; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textSecondary }
+            Repeater { model: root.arr.rows; Line { required property var modelData; r: modelData } }
+            Text { visible: root.ok && root.arr.hidden > 0; width: col.width; height: root.lineH; text: "還有 " + root.arr.hidden + " 行"
+                   font.pixelSize: GcpTheme.font.scale13; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textSecondary
+                   lineHeightMode: Text.FixedHeight; lineHeight: root.lineH; verticalAlignment: Text.AlignVCenter }
+            Repeater { model: root.arr.tail; Line { required property var modelData; r: modelData } }
             Text { visible: !root.ok; width: col.width; height: root.lineH; text: "資料無法顯示"
                    font.pixelSize: GcpTheme.font.scale16; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textSecondary }
         }

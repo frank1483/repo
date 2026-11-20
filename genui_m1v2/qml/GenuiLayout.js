@@ -4,7 +4,7 @@
 // 依據：M1 演算法說明 v2 §5～7、候選 ADR §4（H-24 逐列貪婪）、G-02（新增元件要按「套用」）。
 // 模型永遠不產生座標；LayoutSchema 只由 layout() 產生。尺寸數值都是候選值〔待凍結〕。
 
-var LAYOUT_VERSION = "layout-m1-0.4"   // 0.4：電量下降但無法估 ETA（T-ETA-NA）也放 W4（使用者 11/20 07:17 R1）；K1 驗算照 plan 重建自動涵蓋
+var LAYOUT_VERSION = "layout-m1-0.5"   // 0.5：layout() 可帶 contentMinH(node, 寬度) 讓 W1／W4 依內容加高（使用者 11/20 16:40 D1、D2）；不帶時與 0.4 相同。0.4： 0.4：電量下降但無法估 ETA（T-ETA-NA）也放 W4（使用者 11/20 07:17 R1）；K1 驗算照 plan 重建自動涵蓋
 var CATALOG_ID = "catalog-m1-0.2"
 var GRID_COLS = 12, GAP = 16, UNIT = 8
 var MAX_INSTANCES = 5
@@ -175,7 +175,7 @@ function validatePlan(p, toolResults, trusted) {
 // ---------------------------------------------------------------- LayoutEngine（逐列貪婪）
 // viewport: {width, height, revision}（Qt 實際回報的工作區內容區，像素）
 // 回傳 {ok, error, layout:{schema, request_id, viewport_revision, col_width, rects[], rows, dropped[], compact}}
-function layout(p, viewport, toolResults, trusted) {
+function layout(p, viewport, toolResults, trusted, contentMinH) {
     var v = validatePlan(p, toolResults, trusted)
     if (!v.ok) return { ok: false, error: v.error, layout: null }
     if (!viewport || !finite(viewport.width) || !finite(viewport.height) || viewport.width <= 0 || viewport.height <= 0)
@@ -209,7 +209,11 @@ function layout(p, viewport, toolResults, trusted) {
             var total = 0, heights = []
             for (i = 0; i < rows.length; ++i) {
                 var h = 0
-                for (var j = 0; j < rows[i].items.length; ++j) h = Math.max(h, CATALOG[rows[i].items[j].node.component_id][modes[m]])
+                for (var j = 0; j < rows[i].items.length; ++j) {
+                    var itj = rows[i].items[j], need = CATALOG[itj.node.component_id][modes[m]]
+                    if (contentMinH) { var cm = contentMinH(itj.node, itj.cols * colW + (itj.cols - 1) * GAP); if (cm > need) need = Math.ceil(cm) }
+                    h = Math.max(h, need)
+                }
                 heights.push(h); total += h
             }
             total += GAP * (rows.length - 1)
@@ -247,7 +251,7 @@ function layout(p, viewport, toolResults, trusted) {
 
 // ---------------------------------------------------------------- 預檢（排版後、上畫面前的幾何檢查）
 // alertRect: 告警區在同一座標系的矩形（可省略）。標示、截字、遮蔽要等實際畫面，不在這裡檢查。
-function validateLayout(p, lay, viewport, alertRect) {
+function validateLayout(p, lay, viewport, alertRect, contentMinH) {
     function bad(code, id) { return { ok: false, error: code, node_id: id || "" } }
     if (!lay || lay.schema !== "LayoutSchema/1" || !Array.isArray(lay.rects)) return bad("LAYOUT_TYPE")
     if (lay.request_id !== p.request_id) return bad("LAYOUT_FOREIGN")
@@ -263,6 +267,7 @@ function validateLayout(p, lay, viewport, alertRect) {
         if (r.x < 0 || r.y < 0 || r.x + r.width > viewport.width || r.y + r.height > viewport.height) return bad("OUT_OF_BOUNDS", r.node_id)
         var c = CATALOG[n.component_id]
         if (r.width < c.min_cols * colW + (c.min_cols - 1) * GAP || r.height < c.min_h) return bad("BELOW_MIN_SIZE", r.node_id)
+        if (contentMinH && r.height < Math.ceil(contentMinH(n, r.width))) return bad("BELOW_CONTENT_MIN", r.node_id)
         if (alertRect && r.x < alertRect.x + alertRect.width && alertRect.x < r.x + r.width && r.y < alertRect.y + alertRect.height && alertRect.y < r.y + r.height)
             return bad("ALERT_OCCLUDED", r.node_id)
         for (var j = 0; j < i; ++j) {

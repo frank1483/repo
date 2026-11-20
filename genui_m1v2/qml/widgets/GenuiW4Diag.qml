@@ -1,27 +1,46 @@
-// W4 數值卡（說明 v1.2 §2、Q2）：最多 3 張 GcpTelemetryMetricCard 並排；accentColor 只從 3 個主題色挑。
-// bind-m1-0.3：字級改用正式主題的通用級距（內文 scale16＝22、說明 scale13＝18、標題 sectionTitle＝18），不用各頁專用的大字級（real01 截圖重疊、裁切）。
+// W4 數值卡（說明 v1.2 §2、Q2；bind-m1-0.4 D1）：最多 3 張 GcpCard 並排；圓點顏色只從 3 個主題色挑。
+// D1（使用者 11/20 16:40）：不用 GcpTelemetryMetricCard（標籤 33 px 比數值 28 px 大）。標籤與單位 18 px、可換行；數值 28 px 起；
+//   兩行還放不下時由排版把卡片加高（Bind.contentMinH 與本檔用同一套量法），不裁掉「無法估計」這類關鍵文字。
 import QtQuick
 import QtQuick.Layouts
 import QGroundControl.GCP
+import "../GenuiBind.js" as Bind
 
 GcpPanel {
     id: root
     property var bound: null
     readonly property bool ok: !!(bound && bound.ok)
-    readonly property bool overflow: false
+    readonly property var lay: ok ? Bind.w4CardLayout(bound.data.cards, root.width) : null
+    readonly property bool overflow: ok && lay.minH > root.height + 0.5
     cornerRadius: GcpTheme.radius.medium
     blurSource: null
     RowLayout {
-        anchors.fill: parent; anchors.margins: 8; spacing: 8
+        anchors.fill: parent; anchors.margins: Bind.W4M.padOuter; spacing: Bind.W4M.gap
         visible: root.ok
         Repeater {
             model: root.ok ? root.bound.data.cards : []
-            GcpTelemetryMetricCard {
+            GcpCard {
+                id: c
                 required property var modelData
-                Layout.fillWidth: true; Layout.fillHeight: true
-                label: modelData.label; value: modelData.value; unit: modelData.unit; showDot: true
-                valueSize: GcpTheme.font.scale20      // 允許清單「valueSize 固定」：轉接層固定成 28 px（原預設 66 px 塞不進 W4 框，real01 截圖）
-                accentColor: GcpTheme.color[modelData.accent]
+                required property int index
+                Layout.fillHeight: true; Layout.preferredWidth: root.lay.cardW; Layout.fillWidth: true
+                outlined: true
+                Rectangle { id: dot; x: Bind.W4M.padCard; y: Bind.W4M.padCard + (Bind.W4M.labelLineH - 14) / 2; width: 14; height: 14; radius: 7
+                            color: GcpTheme.color[c.modelData.accent] }
+                Text { id: lab
+                       x: Bind.W4M.padCard + Bind.W4M.dot; y: Bind.W4M.padCard; width: c.width - 2 * Bind.W4M.padCard - Bind.W4M.dot
+                       height: Bind.W4M.labelLineH * root.lay.cards[c.index].labelLines
+                       wrapMode: Text.Wrap; text: c.modelData.label
+                       font.pixelSize: Bind.W4M.labelPx; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textLabel
+                       lineHeightMode: Text.FixedHeight; lineHeight: Bind.W4M.labelLineH }
+                Flow { x: Bind.W4M.padCard; y: lab.y + lab.height; width: c.width - 2 * Bind.W4M.padCard; spacing: 6
+                    Text { height: Bind.W4M.valueLineH; text: c.modelData.value; verticalAlignment: Text.AlignBottom
+                           font.pixelSize: Math.max(Bind.W4M.valuePx, GcpTheme.font.scale20); font.family: GcpTheme.font.chineseFamily; font.bold: true
+                           color: GcpTheme.color.textPrimary }
+                    Text { visible: text.length > 0; height: c.modelData.unit && root.lay.cards[c.index].valueLines > 1 ? Bind.W4M.labelLineH : Bind.W4M.valueLineH
+                           text: c.modelData.unit || ""; verticalAlignment: Text.AlignBottom
+                           font.pixelSize: Bind.W4M.unitPx; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textSecondary }
+                }
             }
         }
     }
