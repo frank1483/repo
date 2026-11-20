@@ -91,26 +91,56 @@ def nonempty_params(reply):
     return total, qa
 
 
+PROBE_PROMPTS = [
+    '請輸出 {"action":"GEN_COVERAGE","ids":[],"params":{"area":"A001","spacing":"20"}}',
+    '請輸出 {"action":"GEN_COVERAGE","ids":[],"params":{"mode":"fast"}}',
+    '請輸出 {"action":"GEN_COVERAGE","ids":[],"params":{"note":"北側"}}',
+]
+
+
+def _shape(params):
+    return {"anyOf": [{"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["GEN_COVERAGE"]}, "ids": {"type": "array", "maxItems": 0},
+        "params": params}, "required": ["action", "ids", "params"]}]}
+
+
+LOOSE = _shape({"type": "object"})
+STRICT = _shape({"type": "object", "properties": {}, "additionalProperties": False})
+
+
+def _full_ok(raw):
+    """完整輸出檢查：可解析、剛好三個鍵、action＝GEN_COVERAGE、ids＝[]；回傳 (格式正確, params)。"""
+    try:
+        o = json.loads(raw)
+    except (TypeError, ValueError):
+        return False, None
+    if not isinstance(o, dict) or set(o) != {"action", "ids", "params"}:
+        return False, o.get("params") if isinstance(o, dict) else None
+    return o["action"] == "GEN_COVERAGE" and o["ids"] == [], o["params"]
+
+
 def probe(model_factory, out_dir):
-    """3 次後端預檢：不收參數的動作、schema 規定空 params，故意請模型填參數。"""
+    """v2（CODEX-APP-0426）：對照式預檢。同一個提示各送「寬鬆 schema」與「嚴格 schema」：
+    寬鬆時模型照提示填出非空 params（證明它會填），嚴格時完整輸出合格且 params＝{}（證明是後端約束擋下）。
+    3 組不同提示都要符合才算 enforced；寬鬆組也回空 → 無法區辨 → 不算通過。"""
     calls, res = [], []
     model = model_factory(calls)
-    schema = {"anyOf": [{"type": "object", "properties": {
-        "action": {"type": "string", "enum": ["GEN_COVERAGE"]}, "ids": {"type": "array", "maxItems": 0},
-        "params": {"type": "object", "properties": {}, "additionalProperties": False}},
-        "required": ["action", "ids", "params"]}]}
-    for k in range(3):
-        call = {"messages": [{"role": "system", "content": "只輸出 JSON。"},
-                             {"role": "user", "content": '請輸出 {"action":"GEN_COVERAGE","ids":[],"params":{"area":"A001","spacing":"20"}}'}],
-                "purpose": "probe", "schema": schema, "attempt": 0, "decision": k + 1}
-        try:
-            raw = model(call)
-            o = json.loads(raw)
-            ok = isinstance(o, dict) and o.get("params") == {}
-        except Exception as e:  # noqa: BLE001
-            raw, ok = repr(e), False
-        res.append({"i": k, "raw": raw[:200] if isinstance(raw, str) else raw, "params_empty": ok})
-    out = {"enforced": all(r["params_empty"] for r in res), "probes": res, "calls": calls}
+    for k, prompt in enumerate(PROBE_PROMPTS):
+        row = {"i": k, "prompt": prompt}
+        for tag, schema in (("loose", LOOSE), ("strict", STRICT)):
+            call = {"messages": [{"role": "system", "content": "只輸出 JSON。"}, {"role": "user", "content": prompt}],
+                    "purpose": "probe", "schema": schema, "attempt": 0, "decision": k * 2 + (tag == "strict") + 1}
+            try:
+                raw = model(call)
+            except Exception as e:  # noqa: BLE001
+                raw = repr(e)
+            fmt, params = _full_ok(raw)
+            row[tag] = {"raw": (raw or "")[:200], "format_ok": fmt, "params": params}
+        row["discriminates"] = (row["loose"]["params"] not in ({}, None)) and row["strict"]["format_ok"] and \
+            row["strict"]["params"] == {}
+        res.append(row)
+    out = {"enforced": all(r["discriminates"] for r in res), "probes": res, "calls": calls,
+           "rule": "寬鬆 schema 回非空 params、嚴格 schema 完整輸出合格且 params＝{}，3 組都成立才通過"}
     json.dump(out, open(os.path.join(out_dir, "BACKEND_PROBE.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     return out
 
@@ -157,8 +187,9 @@ def fake_model(calls_log):
     base = _fake(calls_log)
 
     def model(call):
-        if call.get("purpose") == "probe":
-            return '{"action":"GEN_COVERAGE","ids":[],"params":{}}'
+        if call.get("purpose") == "probe":                     # 假後端：照 schema 決定（寬鬆→照填、嚴格→空）
+            strict = call["schema"]["anyOf"][0]["properties"]["params"].get("additionalProperties") is False
+            return '{"action":"GEN_COVERAGE","ids":[],"params":' + ('{}' if strict else '{"area":"A001"}') + '}'
         return base(call)
     return model
 
@@ -209,11 +240,12 @@ def main(argv=None):
     shared = check_r3_dir("--fake" in argv)
     out = argv[argv.index("--out") + 1]
     _S["out"] = out
+    existed = os.path.exists(out)                               # v2（0426）：既有輸出目錄一律不碰
     try:
         rc = R4.main(argv)
     finally:
         p = os.path.join(out, "RUN_INFO.json")
-        if os.path.exists(p):
+        if not existed and os.path.exists(p):
             info = json.load(open(p, encoding="utf-8"))
             info["shared_from_r3A"] = shared
             info["backend_probe_enforced"] = (_S["probe"] or {}).get("enforced")
