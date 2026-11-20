@@ -66,6 +66,9 @@ class PlanBController(M4bController):
                                "directions": list(self.preset["directions"]), "calls": n})
         task["notes"].append("第 1 段方向沿用同一案例在方案 A 的輸出")
         task["stage1_source"] = self.preset.get("stage1_source")
+        task["stage1_raw"] = self.preset.get("stage1_raw")            # v3.7：補方向前後都隨 A 的輸入帶過來
+        if self.preset.get("stage1_augmented"):
+            task["stage1_augmented"] = list(self.preset["stage1_augmented"])
         return list(self.preset["directions"])
 
     # ---------- 共用排程（每批） ----------
@@ -128,9 +131,6 @@ class PlanBController(M4bController):
             self._execute(task, qv)
 
     # ---------- 規劃 ----------
-    def _ids_of(self, task, d, cat):
-        return [i for i in task["cands"].get(d, []) if self.graph.nodes[i]["cat"] == cat]
-
     def _example(self, task, dirs):
         """v3.7：依本批方向產生的完整範例。有 plan 時示範「區域 → 航點 → 預覽 →（ui 時）首頁提案」；
         版面示範「元件＋參數＋value」。範例只示範格式與相依寫法，內容要依句子決定。"""
@@ -168,26 +168,10 @@ class PlanBController(M4bController):
     def _plan_schema(self, task, dirs):
         """v3.7：每個動作一種形狀（anyOf）：ids 的角色與數量、必填 bind 槽、版面的 params.value。"""
         shapes = []
-        allv = sorted({v for d in dirs for i in task["cands"].get(d, []) for v in (self.graph.nodes[i].get("allowed") or [])})
         for d in dirs:
             for a in ACTIONS.get(d, []):
-                ids = {"type": "array", "maxItems": 0}
-                params = {"type": "object"}
+                ids, params = self.action_shape(task, d, a)
                 bind = {"type": "object"}
-                if a == "QUERY_AREA":
-                    ids = {"type": "array", "items": {"type": "string", "enum": self._ids_of(task, d, "A") or ["A001"]},
-                           "minItems": 1, "maxItems": 1}
-                elif a == "PROPOSE_HOME_ROUTE":
-                    ids = {"type": "array", "items": {"type": "string", "enum": ["U100"]}, "minItems": 1, "maxItems": 1}
-                elif a == "UI_LAYOUT_PROPOSE":
-                    cp = self._ids_of(task, d, "C") + self._ids_of(task, d, "P")
-                    ids = {"type": "array", "items": {"type": "string", "enum": cp or ["P001"]}, "minItems": 1, "maxItems": 2}
-                    params = {"type": "object", "properties": {"value": {"type": "string", "enum": allv or ["大"]}},
-                              "required": ["value"]}
-                elif a in ("UI_THEME_PROPOSE", "MODEL_SWITCH_PROPOSE"):
-                    ids = {"type": "array", "items": {"type": "string",
-                                                      "enum": self._ids_of(task, d, "T" if a == "UI_THEME_PROPOSE" else "M") or ["T001"]},
-                           "minItems": 1, "maxItems": 1}
                 if INPUTS.get(a):
                     bind = {"type": "object", "properties": {slot: {"type": "string"} for slot in INPUTS[a]},
                             "required": list(INPUTS[a])}
@@ -262,7 +246,8 @@ class PlanBController(M4bController):
                 return False, None, f"{sid}：和已完成的步驟完全相同（{d}／{a}），不可重做"
             missing = set(INPUTS.get(a, {})) - set(bind)
             if missing:
-                return False, None, f"{sid}：{a} 必須用 bind 指定 {'、'.join(sorted(missing))} 的來源步驟"
+                return False, None, (f"{sid}：{a} 必須用 bind 指定 {'、'.join(sorted(missing))} 的來源步驟。" +
+                                     self._refs_hint(task, out))
             ok, _, err = self._parse_step(task, d, json.dumps({"action": a, "ids": ids, "params": params}), ACTIONS[d])
             if not ok:
                 if a == "UI_LAYOUT_PROPOSE":                    # v3.7：版面錯誤列出可用的 C 與 P

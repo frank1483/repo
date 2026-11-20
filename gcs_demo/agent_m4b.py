@@ -188,9 +188,11 @@ class M4bController:
                   "required": ["directions"]}
         ds = self._call(task, "stage1", content, parse, schema=schema)
         task["stage1_source"] = "model" if ds is not None else "keyword"
+        task["stage1_raw"] = list(ds) if ds is not None else None
         if ds is None:
             ds = [k for k in KINDS if any(w in task["text"] for w in KEYWORDS.get(k, []))] or ["chat"]
             task["notes"].append("第 1 段無效或未呼叫模型，改用關鍵字表")
+            task["stage1_raw"] = list(ds)
         if "ui" in ds and "plan" not in ds and "route_preview" not in task["artifacts"] and self._names_route(task):
             ds.insert(ds.index("ui"), "plan")                 # v3.7：要把航線放首頁但沒有預覽 → 程式補前置規劃
             task["stage1_augmented"] = ["plan"]
@@ -200,6 +202,30 @@ class M4bController:
             ds.insert(ds.index("plan") + 1, "ui")
             task["notes"].append("依相依把 ui 排到 plan 之後")
         return ds
+
+    def _ids_of(self, task, d, cat):
+        return [i for i in task["cands"].get(d, []) if self.graph.nodes[i]["cat"] == cat]
+
+    def action_shape(self, task, d, a):
+        """v3.7：動作的 ids／params JSON Schema（A 的逐步與 B 的計畫共用）。"""
+        ids = {"type": "array", "maxItems": 0}
+        params = {"type": "object"}
+        if a == "QUERY_AREA":                                  # 恰好一個；原句唯一時只剩那一個
+            ids = {"type": "array", "items": {"type": "string", "enum": self._ids_of(task, d, "A") or ["A001"]},
+                   "minItems": 1, "maxItems": 1}
+        elif a == "PROPOSE_HOME_ROUTE":
+            ids = {"type": "array", "items": {"type": "string", "enum": ["U100"]}, "minItems": 1, "maxItems": 1}
+        elif a == "UI_LAYOUT_PROPOSE":
+            cp = self._ids_of(task, d, "C") + self._ids_of(task, d, "P")
+            allv = sorted({v for i in task["cands"].get(d, []) for v in (self.graph.nodes[i].get("allowed") or [])})
+            ids = {"type": "array", "items": {"type": "string", "enum": cp or ["P001"]}, "minItems": 1, "maxItems": 2}
+            params = {"type": "object", "properties": {"value": {"type": "string", "enum": allv or ["大"]}},
+                      "required": ["value"]}
+        elif a in ("UI_THEME_PROPOSE", "MODEL_SWITCH_PROPOSE"):
+            ids = {"type": "array", "items": {"type": "string",
+                                              "enum": self._ids_of(task, d, "T" if a == "UI_THEME_PROPOSE" else "M") or ["T001"]},
+                   "minItems": 1, "maxItems": 1}
+        return ids, params
 
     def _names_route(self, task):
         """原句明確指向某條航線：提到區域名稱／別名，或含規劃關鍵字。"""
@@ -272,11 +298,9 @@ class M4bController:
                                 f"重做後依賴它的後續成果會作廢、要重算" for a in redo)) +
                        "\n- FINISH：本方向結束\n- HOLD：無法安全處理，停下\n"
                        '只輸出 JSON：{"action":"動作代碼","ids":["ID"],"params":{}}')
-            schema = {"type": "object", "properties": {
-                "action": {"type": "string", "enum": allowed},
-                "ids": dict({"type": "array", "items": {"type": "string", "enum": cands or ["U100"]}},
-                            **({"maxItems": 1} if d in ("plan", "color", "model", "ui") else {"maxItems": 2})),
-                "params": {"type": "object"}}, "required": ["action", "ids", "params"]}
+            schema = {"anyOf": [{"type": "object", "properties": dict(
+                zip(("ids", "params"), self.action_shape(task, d, a)), action={"type": "string", "enum": [a]}),
+                "required": ["action", "ids", "params"]} for a in allowed]}      # v3.7：每個動作一種形狀
             step = self._call(task, f"step:{d}", content, lambda raw: self._parse_step(task, d, raw, allowed),
                               schema=schema)
             source = "model" if step is not None else "rule"
@@ -358,7 +382,7 @@ class M4bController:
         if a == "MODEL_SWITCH_PROPOSE":
             return "" if cats == ["M"] else "模型提案要剛好一個模型（M）"
         if a == "PROPOSE_HOME_ROUTE":
-            return "" if ids in ([], ["U100"]) else "首頁提案只能指定 U100"
+            return "" if ids == ["U100"] else "首頁提案的 ids 要剛好是 [\"U100\"]"
         if a == "QUERY_AREA":                                # v3.7：恰好一個區域；多個是格式錯誤
             return "" if cats == ["A"] else "區域查詢要剛好一個區域 ID（A），不可以一次填多個"
         return "" if not ids else f"{a} 不收 ids"
@@ -580,6 +604,6 @@ class M4bController:
                 "directions": task["directions"], "dir_status": task["dir_status"], "steps": task["steps"],
                 "notes": task["notes"], "calls_used": task["ledger"].used, "traces": task["traces"],
                 "retrieval": task.get("retrieval"), "packing": task.get("packing"), "artifacts": task["artifacts"],
-                "qv_ok": task.get("qv_ok"), "t_pre_summary_s": t_pre, "stage1_source": task.get("stage1_source"), "stage1_augmented": task.get("stage1_augmented"),
+                "qv_ok": task.get("qv_ok"), "t_pre_summary_s": t_pre, "stage1_source": task.get("stage1_source"), "stage1_augmented": task.get("stage1_augmented"), "stage1_raw": task.get("stage1_raw"),
                 "area_status": task.get("area_status"), "area_fixed": task.get("area_fixed"),
                 "outcomes": OC.have_from(task["artifacts"], task["proposals"])}

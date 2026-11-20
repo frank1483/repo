@@ -125,5 +125,60 @@ class PlanBOutputTests(unittest.TestCase):
         self.assertIn("可以引用：s1（QUERY_AREA，產生 area_record）", m.calls[2]["messages"][1]["content"])
 
 
+class RoundThreeV2(unittest.TestCase):
+    def test_query_area_zero_one_many_ids(self):
+        c = M4bController({}, None, GRAPH, COUNTER)
+        task = {"cands": {"plan": ["A003"]}, "artifacts": {}, "proposals": []}
+        for ids, ok in (([], False), (["A003"], True), (["A003", "A001"], False)):
+            r = c._parse_step(task, "plan", json.dumps({"action": "QUERY_AREA", "ids": ids, "params": {}}), ["QUERY_AREA"])
+            self.assertEqual(r[0], ok, ids)
+        shape = c.action_shape(task, "plan", "QUERY_AREA")[0]
+        self.assertEqual((shape["minItems"], shape["maxItems"], shape["items"]["enum"]), (1, 1, ["A003"]))
+        self.assertEqual(c.action_shape(task, "plan", "GEN_COVERAGE")[0]["maxItems"], 0)
+
+    def test_a_step_schema_is_anyof_per_action(self):
+        m = scripted(['{"directions":["plan"]}', '{"action":"QUERY_AREA","ids":["A003"],"params":{}}',
+                      '{"action":"GEN_COVERAGE","ids":[],"params":{}}', '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}'])
+        _, T = tools3(["A003"])
+        M4bController(T, m, GRAPH, COUNTER).request("南側巡檢")
+        shapes = m.calls[1]["schema"]["anyOf"]
+        qa = next(x for x in shapes if x["properties"]["action"]["enum"] == ["QUERY_AREA"])
+        self.assertEqual(qa["properties"]["ids"]["minItems"], 1)
+
+    def test_b_home_requires_exactly_u100(self):
+        base = [st("s1", "plan", "QUERY_AREA", ["A003"]), st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"})]
+        empty = plan(*(base + [st("s4", "ui", "PROPOSE_HOME_ROUTE", [], bind={"preview": "s3.route_preview"},
+                                  when="s3.route_preview.verdict==pass")]))
+        m = scripted(['{"directions":["plan","ui"]}', empty, empty, empty])
+        _, T = tools3(["A003", "U100"])
+        r = PlanBController(T, m, GRAPH, COUNTER).request("南區巡檢航線放首頁")
+        self.assertTrue(any("U100" in e.get("reason", "") for e in r["plan_log"]))
+        self.assertIn("計畫無效或未呼叫模型，改用規則計畫", r["notes"])
+
+    def test_augmented_directions_before_after_and_to_b(self):
+        from .m4b_runner import score
+        m = scripted(['{"directions":["ui"]}', '{"action":"QUERY_AREA","ids":["A001"],"params":{}}',
+                      '{"action":"GEN_COVERAGE","ids":[],"params":{}}', '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}',
+                      '{"action":"PROPOSE_HOME_ROUTE","ids":["U100"],"params":{}}'])
+        _, T = tools3(["A001", "U100"])
+        r = M4bController(T, m, GRAPH, COUNTER).request("北側巡檢放到首頁，保留 20%")
+        self.assertEqual((r["stage1_raw"], r["directions"], r["stage1_augmented"]), (["ui"], ["plan", "ui"], ["plan"]))
+        case = {"expect_proposals": [{"action": "PROPOSE_HOME_ROUTE", "ids": ["U100"], "values": []}],
+                "expect_artifacts": {}, "expect_status": "DONE", "gold_dirs": ["plan", "ui"]}
+        sc = score(case, r)
+        self.assertEqual((sc["dirs_raw_match"], sc["dirs_set_match"]), (False, True))
+        pre = {"directions": r["directions"], "stage1_calls": 1, "stage1_source": "model", "stage1_raw": ["ui"],
+               "stage1_augmented": ["plan"]}
+        good = plan(st("s1", "plan", "QUERY_AREA", ["A001"]), st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
+                    st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}),
+                    st("s4", "ui", "PROPOSE_HOME_ROUTE", ["U100"], bind={"preview": "s3.route_preview"},
+                       when="s3.route_preview.verdict==pass"))
+        mb = scripted([good])
+        _, TB = tools3(["A001", "U100"])
+        rb = PlanBController(TB, mb, GRAPH, COUNTER, preset=pre).request("北側巡檢放到首頁，保留 20%")
+        self.assertEqual((rb["stage1_raw"], rb["stage1_augmented"]), (["ui"], ["plan"]))
+
+
 if __name__ == "__main__":
     unittest.main()

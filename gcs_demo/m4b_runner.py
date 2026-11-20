@@ -150,6 +150,7 @@ def score(case, r):
             "dependency_ok": dep_ok, "artifacts_ok": arts, "status_match": r.get("status") == case["expect_status"],
             "dirs_selected": r.get("directions"), "dirs_gold": case["gold_dirs"],
             "dirs_set_match": set(r.get("directions") or []) == set(case["gold_dirs"]),
+            "dirs_raw_match": set(r.get("stage1_raw") or r.get("directions") or []) == set(case["gold_dirs"]),
             "flight_notice": "flight_notice" in A, "claimed_done_wrong": r.get("status") == "DONE" and not correct}
 
 
@@ -187,7 +188,8 @@ def run_case(case, cond, model_factory, graph, counter, work):
            "packing_pending": (r.get("packing") or {}).get("pending"), "error": err,
            "embed_calls": idx.calls[n_embed_before:] if idx else [],
            "model_calls_sent": len(calls),
-           "stage1_augmented": (r or {}).get("stage1_augmented"), "area_status": (r or {}).get("area_status"),
+           "stage1_augmented": (r or {}).get("stage1_augmented"), "stage1_raw": (r or {}).get("stage1_raw"),
+           "area_status": (r or {}).get("area_status"),
            "timing": _sum_timing(calls),
            "model_call_failures": sum(1 for x in calls if x.get("status") != 200),
            "model_call_timeouts": sum(1 for x in calls if x.get("status") == 504)}
@@ -256,7 +258,8 @@ def summarize(recs):
                   # v3.7 §4 口徑
                   "calls_sent_mean": round(sum(r.get("model_calls_sent") or 0 for r in rs) / len(rs), 3),
                   "extra_in_prop_cases": sum(1 for r in pc if r.get("extra_proposals")),
-                  "dir_exact_rate": f"{sum(1 for r in rs if r.get('dirs_set_match'))}/{len(rs)}",
+                  "dir_exact_rate": f"{sum(1 for r in rs if r.get('dirs_set_match'))}/{len(rs)}",          # 補方向後
+                  "dir_exact_raw_rate": f"{sum(1 for r in rs if r.get('dirs_raw_match'))}/{len(rs)}",      # 補方向前（模型或關鍵字原輸出）
                   "dir_augmented": sum(1 for r in rs if r.get("stage1_augmented")),
                   "area_fixed_cases": sum(1 for r in rs if r.get("area_status") == "ONE")}
     return out

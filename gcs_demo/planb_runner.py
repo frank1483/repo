@@ -48,7 +48,8 @@ def a_record(cond, case):
     n = sum(len(t.get("replies") or []) for t in rep.get("traces") or [] if t.get("purpose") == "stage1")
     batches = [[b["directions"], {d: v["items"] for d, v in b["per_dir"].items()}]
                for b in (rep.get("packing") or {}).get("batches") or []]
-    preset = {"directions": rep.get("directions"), "stage1_calls": n, "stage1_source": rep.get("stage1_source")}
+    preset = {"directions": rep.get("directions"), "stage1_calls": n, "stage1_source": rep.get("stage1_source"),
+              "stage1_raw": rep.get("stage1_raw"), "stage1_augmented": rep.get("stage1_augmented")}
     if rep.get("status") in ("INVALID_INPUT", "TOO_LONG"):
         preset = None                            # Gate 擋下：第 1 段沒跑，B 自己的 Gate 會得到同樣結果
     elif not rep.get("directions"):              # 第 1 段跑了但在規劃前結束（例如方向超過上限）→ B 照 A 的結果結束
