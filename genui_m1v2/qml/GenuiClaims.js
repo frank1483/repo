@@ -5,7 +5,7 @@
 // 模型（M2）只回傳 {"schema":"qa.claims/1","selected_claim_ids":[...]}；M1 用 selectRule()。
 // 句子裡的數字、單位、方向全部取自程式產生的 Fact，不取自模型輸出。
 
-var CLAIMS_VERSION = "claims-m1-0.5"   // 0.5：F2 偏離航線距離的主詞與最大值附時間（f.show_time）；前版 claims-m1-0.3
+var CLAIMS_VERSION = "claims-m1-0.6"   // 0.6：F2 接進流程（說明 v2）：無法取得的原因句、句尾比較基準、同句其他事請另問。0.5：F2 偏離航線距離的主詞與最大值附時間（f.show_time）；前版 claims-m1-0.3
 var SCHEMA_ID = "qa.claims/1"
 var MAX_CLAIMS = 8                      // 〔待凍結〕整個答案的句數上限
 var MANDATORY_ORDER = ["T-STALE", "T-PARTIAL", "T-CANNOT", "T-NOTFOUND", "T-DOC-NONE", "T-OMITTED"]
@@ -14,6 +14,10 @@ var RULE_ORDER = ["T-VALUE", "T-THRESH", "T-TREND", "T-ETA", "T-ETA-NA", "T-COUN
 var ETA_NA_REASON = { reserve_invalid: "保留電量設定無效", at_or_below_reserve: "目前電量已不高於保留電量", over_limit: "照目前趨勢超過 600 分鐘",
                       no_trend: "沒有有效的趨勢", not_falling: "電量沒有在下降" }
 var PARTIAL_SUFFIX = "（資料不完整）"
+// F2 接進流程（說明 v2 §2-2、§2-3、§6）
+var DEV_NA_REASON = { no_record: "沒有該趟的飛行紀錄", no_loaded_mission: "沒有載入任務", record_route_missing: "該趟紀錄沒有任務航點",
+                      route_mismatch: "無法確認載入的航線是該趟的規劃航線" }
+var DEV_BASIS_SUFFIX = "（以目前載入的航線比較）"
 
 var SUBJECT_ZH = { soc: "電量", alt: "高度", gs: "地速", rssi: "訊號強度", dist_home: "離家距離", deviation: "偏離航線距離", alerts: "告警", manual: "手冊",
                    T_TELEMETRY: "即時遙測", T_FLIGHTLOG: "飛行紀錄", T_ENERGY: "電量趨勢", T_ALERT_HISTORY: "告警歷史", T_MANUAL_SEARCH: "手冊" }
@@ -62,6 +66,8 @@ function generate(toolResults, ctx) {
             add(mandatory, "T-PARTIAL", toolZh + "的資料不完整，且樣本不足，無法估計", ti, [])
             continue
         }
+        if ((st === "UNAVAILABLE" || st === "ERROR") && DEV_NA_REASON[d.unavailable_reason]) {
+            add(mandatory, "T-NOTFOUND", "無法取得偏離航線距離（" + DEV_NA_REASON[d.unavailable_reason] + "）", ti, []); continue }
         if (st === "UNAVAILABLE" || st === "ERROR") { add(mandatory, "T-NOTFOUND", "查不到" + toolZh + "的資料", ti, []); continue }
         if (st === "UNSUPPORTED") { add(mandatory, "T-NOTFOUND", "此機型不支援" + toolZh, ti, []); continue }
         if (st === "INSUFFICIENT") { add(mandatory, "T-CANNOT", toolZh + "樣本不足，無法估計", ti, []); continue }
@@ -85,7 +91,8 @@ function generate(toolResults, ctx) {
             if (f.kind === "value" && finite(f.value)) {
                 var isStat = /\.(min|max|mean|first|last|duration)$/.test(f.subject)
                 add(optional, "T-VALUE", (r.tool === "T_FLIGHTLOG" ? "該趟紀錄中" : "") + subjectZh(f.subject) + (isStat ? "是 " : " 目前是 ") + num(f.value) + f.unit
-                    + (finite(f.time) && (!isStat || f.show_time) ? "（" + fmt(f.time) + "）" : "") + sfx, ti, [f.fact_id])
+                    + (finite(f.time) && (!isStat || f.show_time) ? "（" + fmt(f.time) + "）" : "") + sfx
+                    + (d.basis === "current_loaded" && /^deviation\./.test(f.subject) ? DEV_BASIS_SUFFIX : ""), ti, [f.fact_id])
                 var th = ctx.thresholds || []
                 for (var k = 0; k < th.length; ++k) {
                     if (th[k].subject !== f.subject || th[k].unit !== f.unit || !finite(th[k].value) || f.value === th[k].value) continue
@@ -111,6 +118,9 @@ function generate(toolResults, ctx) {
         for (var o = 0; o < omitted.length; ++o) names.push(SUBJECT_ZH[omitted[o]] || omitted[o])
         mandatory.push({ claim_id: "C" + (++seq), template_id: "T-OMITTED", text: "本次未執行：" + names.join("、") + "（一次最多查三項）", facts: [], tool: null })
     }
+    // 同句另外問的事（說明 v2 §2-2）：這次不查，固定 1 句；W1 縮成「未查：X。請另外再問一次。」
+    var deferred = ctx.deferred_asks || []
+    if (deferred.length) mandatory.push({ claim_id: "C" + (++seq), template_id: "T-OMITTED", text: "本次未回答：" + deferred.join("、") + "。請另外再問一次。", facts: [], tool: null })
     var mpos = {}
     for (var mi = 0; mi < mandatory.length; ++mi) mpos[mandatory[mi].claim_id] = mi
     mandatory.sort(function (a, b) { return MANDATORY_ORDER.indexOf(a.template_id) - MANDATORY_ORDER.indexOf(b.template_id) || mpos[a.claim_id] - mpos[b.claim_id] })

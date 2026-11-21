@@ -25,6 +25,6 @@ ok('mean sentence', txt.some(t => t === '該趟紀錄中偏離航線距離平均
 const r2 = Tools.flightlogDeviation(cases[0].wp, [{ t: 0, lat: 0.000113, lon: cases[0].s[0].lon }], 0, 10)
 ok('raw precision kept', r2.facts[1].value !== Math.round(r2.facts[1].value * 10) / 10, r2.facts[1].value)
 ok('INSUFFICIENT → T-CANNOT', Claims.answer([Tools.flightlogDeviation(cases[4].wp, cases[4].s, 0, 10)], {}).lines.some(l => l.template_id === 'T-CANNOT' && l.text === '飛行紀錄樣本不足，無法估計'))
-ok('versions', Tools.TOOLS_VERSION.startsWith('tools-m1-0.5') && Claims.CLAIMS_VERSION.startsWith('claims-m1-0.5'), [Tools.TOOLS_VERSION, Claims.CLAIMS_VERSION])
+ok('versions', /^tools-m1-0\.[5-9]/.test(Tools.TOOLS_VERSION) && /^claims-m1-0\.[5-9]/.test(Claims.CLAIMS_VERSION), [Tools.TOOLS_VERSION, Claims.CLAIMS_VERSION])
 fs.writeFileSync(process.argv[2] || '/dev/null', JSON.stringify(out, (k, v) => typeof v === 'number' ? v.toPrecision(17) : v))
 console.log(log.join('\n')); console.log(`test_f2_v1: pass ${pass} fail ${fail}`); process.exit(fail ? 1 : 0)

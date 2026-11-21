@@ -5,7 +5,7 @@
 // M1 只有第 1 層規則，source 一律是 "rule"；不呼叫模型、不算 embedding。
 // 所有門檻都是候選值〔待凍結〕，校準包跑完才凍結。
 
-var POLICY_VERSION = "gate-m1-0.4"
+var POLICY_VERSION = "gate-m1-0.5"   // 0.5：F2 偏離航線意圖（規則 5a、8a；說明 f2_deviation_v1/F2_接進問答流程_說明_v2，使用者 11/21 12:51、13:11 裁決）
 var LEXICON_VERSION = "lex-m1-0.2"
 var MAX_INPUT_CHARS = 200
 var T_SCORE = 1      // calibration_v1 A1 凍結值（hash8 b1da1e48）
@@ -57,6 +57,35 @@ var INTENT_TERMS = {
     REPORT:  [["報告", 2], ["產生", 1], ["匯出", 1]]
 }
 var CLARIFY_ORDER = ["ALERT_Q", "MISSION", "UI_OP", "QA", "REPORT"]
+
+// F2 偏離航線意圖（說明 v2 §2-1、§6）：線索＋航線指涉；GPS 類詞只有航線詞能保留（紀錄詞不算）
+var DEV_CUES = ["偏離", "偏多遠", "偏了多遠", "偏了多少", "偏多少", "偏移", "離航線", "離規劃航線"]
+// 有 GPS 類詞時，只有「偏移／偏離」直接接著航線的說法才算問航線偏離（「航線上的 GPS 偏移」是定位偏移）
+var DEV_ROUTE_PHRASES = ["偏離航線", "偏離規劃", "偏離任務", "偏離路線", "偏移航線", "離航線", "離規劃航線"]
+var DEV_ROUTE_WORDS = ["航線", "規劃", "任務", "航點", "路線"]
+var DEV_RECORD_WORDS = ["上一趟", "最近一次", "這趟"]
+var DEV_SENSOR_WORDS = ["gps", "定位", "位置", "羅盤", "磁力計", "訊號"]
+// R-7：明確指定拿目前載入的航線比較（要同時有比較詞）
+var DEV_CURRENT_ROUTE = ["目前載入的航線", "目前的航線", "目前航線", "現在的航線", "載入的航線", "這條航線"]
+var DEV_COMPARE_WORDS = ["比較", "對照", "比"]
+// R-2／R-5：同句另外問的事（這次不查，W1 請使用者另問）。即時遙測不列（「目前載入的航線」會誤中）。
+var DEV_OTHER_ASKS = [
+    { name: "飛行時間", any: ["飛了多久", "飛多久", "飛行時間", "飛行時長"] },
+    { name: "電量", any: ["電量", "電池", "剩多久", "掉多快"] },
+    { name: "告警", any: ["告警", "警告", "異常", "有沒有問題"] },
+    { name: "手冊", any: ["怎麼設定", "是什麼意思", "手冊", "參數"] }
+]
+function deviationIntent(input) {
+    var text = normalize(input), cues = matched(text, DEV_CUES), route = matched(text, DEV_ROUTE_WORDS), rec = matched(text, DEV_RECORD_WORDS)
+    var sensor = matched(text, DEV_SENSOR_WORDS)
+    var out = { hit: false, cues: cues, route_words: route, record_words: rec, sensor_words: sensor, basis: "record_check", other_asks: [] }
+    if (!cues.length || !(route.length || rec.length)) return out
+    if (sensor.length && !matched(text, DEV_ROUTE_PHRASES).length) { out.excluded = "sensor"; return out }
+    out.hit = true
+    if (matched(text, DEV_CURRENT_ROUTE).length && matched(text, DEV_COMPARE_WORDS).length) out.basis = "current_loaded"
+    for (var i = 0; i < DEV_OTHER_ASKS.length; ++i) if (matched(text, DEV_OTHER_ASKS[i].any).length) out.other_asks.push(DEV_OTHER_ASKS[i].name)
+    return out
+}
 
 // ---------------------------------------------------------------- 小工具
 // 依碼位切字串。Qt 6.8.3 的 Array.from(字串) 會按 UTF-16 切（qt_poc_run1 發現），所以用 for…of。
@@ -207,11 +236,16 @@ function gate(input) {
     var domain = matched(text, DOMAIN_KEYWORDS).concat(matched(text, TELEMETRY_TERMS), matched(text, SYSTEM_TERMS),
                                                        matched(text, FLIGHT_VERBS), masked.hits)
     res.matched_terms.domain = domain
+    // 5a F2 偏離航線意圖：本身就是領域證據（「上一趟偏了多遠」沒有其他領域詞）
+    var dev = deviationIntent(input)
+    if (dev.hit) res.matched_terms.deviation = dev.cues
     // 6 沒有領域證據
-    if (!domain.length) return done("OUT_OF_DOMAIN", 6, REPLY_OUT_OF_DOMAIN)
+    if (!domain.length && !dev.hit) return done("OUT_OF_DOMAIN", 6, REPLY_OUT_OF_DOMAIN)
     // 7 問原因
     var cause = matched(text, CAUSE_WORDS)
     if (cause.length) { res.matched_terms.cause = cause; return done("NO_CAUSE_ANALYSIS", 7, REPLY_NO_CAUSE) }
+    // 8a F2 偏離航線意圖 → QA（不打分；問原因的已在 7 擋下）
+    if (dev.hit) return done("QA", 12)
     // 8 意圖打分
     var ranked = []
     for (var c = 0; c < CLARIFY_ORDER.length; ++c) {
@@ -263,6 +297,11 @@ var TOOL_TRIGGERS = [
 ]
 function selectTools(input, cls) {
     var text = normalize(input), tools = [], reasons = {}
+    // F2（說明 v2 §2-1、§2-2）：只跑飛行紀錄的 DEVIATION；同句其他事不查，列進 deferred_asks
+    var dev = deviationIntent(input)
+    if (dev.hit && cls !== "ALERT_Q")
+        return { tools: ["T_FLIGHTLOG"], tools_truncated: false, omitted_tools: [], reasons: { T_FLIGHTLOG: ["(F2) "].concat(dev.cues) },
+                 flightlog_op: "DEVIATION", route_basis: dev.basis, deferred_asks: dev.other_asks }
     if (cls === "ALERT_Q") { tools.push("T_ALERT_HISTORY"); reasons.T_ALERT_HISTORY = ["(ALERT_Q 固定先跑)"] }
     for (var i = 0; i < TOOL_TRIGGERS.length; ++i) {
         var t = TOOL_TRIGGERS[i], hit = matched(text, t.any)
@@ -306,5 +345,6 @@ function route(input, opts) {
         policy_version: POLICY_VERSION, timestamp_utc8: opts.timestamp_utc8 || ""
     }
     return { gate: g, handler: row.handler, confirm: row.confirm, fallback: row.fallback, tools: tools.tools,
-             tools_truncated: tools.tools_truncated, omitted_tools: tools.omitted_tools, tool_reasons: tools.reasons, reply: g.reply, record: record }
+             tools_truncated: tools.tools_truncated, omitted_tools: tools.omitted_tools, tool_reasons: tools.reasons, reply: g.reply, record: record,
+             flightlog_op: tools.flightlog_op || null, route_basis: tools.route_basis || null, deferred_asks: tools.deferred_asks || [] }
 }

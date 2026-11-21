@@ -5,9 +5,9 @@ function load(file, names) {
   return new Function(src + '\nreturn {' + names.join(',') + '}')()
 }
 module.exports = {
-  Gate: load('GenuiGate.js', ['gate', 'route', 'selectTools', 'resolveParam', 'timeWindowCandidates', 'normalize', 'maskNouns', 'splitClauses', 'splitClausesQ', 'commandVerbs', 'hasContentChar', 'capabilityOk', 'codePoints', 'isQuestion', 'POLICY_VERSION', 'LEXICON_VERSION', 'REPLY_TOO_LONG', 'REPLY_NO_CAUSE', 'REPLY_HOLD']),
+  Gate: load('GenuiGate.js', ['deviationIntent', 'gate', 'route', 'selectTools', 'resolveParam', 'timeWindowCandidates', 'normalize', 'maskNouns', 'splitClauses', 'splitClausesQ', 'commandVerbs', 'hasContentChar', 'capabilityOk', 'codePoints', 'isQuestion', 'POLICY_VERSION', 'LEXICON_VERSION', 'REPLY_TOO_LONG', 'REPLY_NO_CAUSE', 'REPLY_HOLD']),
   Hash: load('GenuiHash.js', ['sha256Hex']),
-  Tools: load('GenuiTools.js', ['telemetryLatest', 'flightlogSeries', 'energyTrend', 'alertHistory', 'manualSearch', 'contentTerms', 'tokenize', 'TOOLS_VERSION', 'expandQuery', 'ENERGY', 'STATUS', 'flightlogDeviation']),
+  Tools: load('GenuiTools.js', ['telemetryLatest', 'flightlogSeries', 'energyTrend', 'alertHistory', 'manualSearch', 'contentTerms', 'tokenize', 'TOOLS_VERSION', 'expandQuery', 'ENERGY', 'STATUS', 'flightlogDeviation', 'deviationForRecord', 'routeMatch']),
   Claims: load('GenuiClaims.js', ['generate', 'selectRule', 'validateSelection', 'render', 'answer', 'quota', 'MAX_CLAIMS', 'CLAIMS_VERSION']),
   Bind: load('GenuiBind.js', ['resolve', 'fitLinesH', 'seriesLabels', 'labelTops', 'w1Arrange', 'w1MinH', 'w4CardLayout', 'w2LabelBox', 'w2MinH', 'W2M', 'contentMinH', 'textWidth', 'textLines', 'shortOmitted', 'W1M', 'W4M', 'splitDocLine', 'sentences', 'shortenAtSentence', 'ETA_WARN_MIN', 'ETA_NA_LABEL', 'fitLines', 'fitCount', 'seriesPaths', 'axisRange', 'num', 'ETA_NA_REASON', 'BIND_VERSION', 'MAX_POINTS']),
   Layout: load('GenuiLayout.js', ['plan', 'needsConfirm', 'checkApply', 'validatePlan', 'layout', 'validateLayout', 'CATALOG', 'GAP', 'GRID_COLS', 'LAYOUT_VERSION'])

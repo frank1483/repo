@@ -4,7 +4,7 @@
 // 版本 m1v2：依 v3 §C（已確認）與 v3.1 草案 §C'、§D-6'、§L' 修改；舊版 genui_m1/ 不動。
 // 資料由呼叫端（重放器或紀錄讀取器）以陣列傳入；缺值一律不補。數值門檻都是候選值〔待凍結〕。
 
-var TOOLS_VERSION = "tools-m1-0.5"   // 0.5：F2 DEVIATION（說明 f2_deviation_v1，使用者 11/21 03:08 裁決）
+var TOOLS_VERSION = "tools-m1-0.6"   // 0.6：F2 航線核對與比較基準 deviationForRecord（接進流程說明 v2，使用者 11/21 13:11 R-6、R-7）。0.5：F2 DEVIATION（說明 f2_deviation_v1，使用者 11/21 03:08 裁決）
 var STATUS = ["OK", "EMPTY_COMPLETE", "PARTIAL", "UNAVAILABLE", "STALE", "INSUFFICIENT", "UNSUPPORTED", "ERROR"]
 
 var STALE_AFTER_S = 2          // 〔待凍結〕
@@ -438,4 +438,47 @@ function flightlogDeviation(waypoints, samples, t0, t1, gaps) {
         fact("F3", "value", "deviation.mean", sum / dist.length, "公尺", null)
     ]
     return result("T_FLIGHTLOG", inputs, coverage.gaps.length || breaks.length ? "PARTIAL" : "OK", facts, coverage, { detail: detail })
+}
+
+// ---------------------------------------------------------------- F2 接進流程：航線核對與比較基準（說明 F2_接進問答流程 v2 §2-3、§6；使用者 11/21 13:11）
+// record: {samples, t0, t1, gaps, mission_waypoints}（mission_waypoints＝該趟紀錄裡記的任務航點，沒有就 null）
+// loaded: 規劃頁目前載入的任務航點（沒有就 null）；basis: "record_check"（預設）或 "current_loaded"（使用者明確指定）
+// record_check：點數相同、原順序逐點配對、每點水平差 ≤ 1 m（含）才算同一條航線，通過後用該趟的原航點計算；容差只用在核對。
+// current_loaded：跳過核對，用該趟的位置紀錄和載入的航線比較。無法取得一律 ERROR，detail.unavailable_reason 記原因。
+var ROUTE_MATCH_TOL_M = 1
+function routePointGap(a, b) {
+    var la = (a.lat + b.lat) / 2 * Math.PI / 180, dx = DEV_R * (b.lon - a.lon) * Math.PI / 180 * Math.cos(la), dy = DEV_R * (b.lat - a.lat) * Math.PI / 180
+    return Math.sqrt(dx * dx + dy * dy)
+}
+function routeMatch(recorded, loaded) {
+    if (recorded.length !== loaded.length) return { ok: false, reason: "count", recorded: recorded.length, loaded: loaded.length }
+    var worst = 0
+    for (var i = 0; i < recorded.length; ++i) {
+        var a = recorded[i], b = loaded[i], va = devValid(a), vb = devValid(b)
+        if (va !== vb) return { ok: false, reason: "validity", index: i }
+        if (!va) continue
+        if (Math.abs(a.lon - b.lon) > 180) return { ok: false, reason: "antimeridian", index: i }
+        var g = routePointGap(a, b); if (g > worst) worst = g
+        if (g > ROUTE_MATCH_TOL_M) return { ok: false, reason: "gap", index: i, gap_m: g }
+    }
+    return { ok: true, max_gap_m: worst }
+}
+function deviationForRecord(record, loaded, basis) {
+    basis = basis === "current_loaded" ? "current_loaded" : "record_check"
+    var inputs = { operation: "DEVIATION", basis: basis, t0: record ? record.t0 : null, t1: record ? record.t1 : null }
+    function na(reason, extra) { var d = { unavailable_reason: reason, basis: basis }; if (extra) for (var k in extra) d[k] = extra[k]
+        return result("T_FLIGHTLOG", inputs, "ERROR", [], null, { internal_status: "UNAVAILABLE", detail: d }) }
+    if (!record || !record.samples) return na("no_record")
+    if (!loaded || !loaded.length) return na("no_loaded_mission")
+    var wps = loaded, check = null
+    if (basis === "record_check") {
+        if (!record.mission_waypoints || !record.mission_waypoints.length) return na("record_route_missing")
+        check = routeMatch(record.mission_waypoints, loaded)
+        if (!check.ok) return na("route_mismatch", { route_check: check })
+        wps = record.mission_waypoints
+    }
+    var r = flightlogDeviation(wps, record.samples, record.t0, record.t1, record.gaps)
+    r.inputs.basis = basis
+    r.detail = r.detail || {}; r.detail.basis = basis; if (check) r.detail.route_check = check
+    return r
 }
