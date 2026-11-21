@@ -3,6 +3,7 @@
 // 缺口斷線；電量圖畫保留電量水平線（Q4）。bind-m1-0.2 R4：左側標縱軸最小／最大值，右側標「目前」「保留」與差距；兩標籤太近時改兩行。
 // 0.4.2（使用者 11/20 21:02）：右側標籤字級 18、行高固定 27；「目前」與差距各自可換行、不省略；放不下時由排版讓 W2 增高（Bind.w2MinH）。
 // 0.2.2：「目前」標籤改兩行（第 1 行目前值、第 2 行與保留值的差距），避免 bind02 截圖裡差距說明被「…」截掉。
+// bind-m1-0.4.5：標題用 data.title（中文名稱）；左側刻度欄寬依刻度文字（Bind.w2LeftW）。
 import QtQuick
 import QGroundControl.GCP
 import "../GenuiBind.js" as Bind
@@ -16,10 +17,10 @@ GcpPanel {
     cornerRadius: GcpTheme.radius.medium
     blurSource: null
     Text { id: title; x: 16; y: 8; height: Math.ceil(GcpTheme.font.sectionTitle * 1.5)
-           text: root.ok ? root.bound.data.subject + (root.bound.data.unit ? "（" + root.bound.data.unit + "）" : "") : "資料無法顯示"
+           text: root.ok ? root.bound.data.title + (root.bound.data.unit ? "（" + root.bound.data.unit + "）" : "") : "資料無法顯示"
            font.pixelSize: GcpTheme.font.sectionTitle; font.family: GcpTheme.font.chineseFamily; color: GcpTheme.color.textPrimary }
     readonly property real labelH: Bind.W2M.lineH
-    readonly property real leftW: Bind.W2M.leftW
+    readonly property real leftW: ok ? Bind.w2LeftW(Bind.seriesLabels(bound.data, 100, 0)) : Bind.W2M.leftW
     readonly property real rightW: Bind.W2M.rightW
     readonly property var box0: ok ? Bind.w2LabelBox(Bind.seriesLabels(bound.data, 100, 0)) : null
     // 0.4.3：不用舊 stacked 規則（傳 0），上下順序交給 labelTops；0.4.4：註解移出三元運算式（host03 語法錯誤）

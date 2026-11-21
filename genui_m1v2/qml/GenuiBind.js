@@ -1,7 +1,7 @@
 .pragma library
 // GenuiBind：預檢通過的節點 → 每個框的「畫面資料」（W1～W5 轉接元件說明 v1.2 §1、§2）。純函式，不讀即時狀態。
 // 版本 bind-m1-0.1。QML 元件只顯示這裡給的資料；找不到就回 {ok:false}，該框畫「資料無法顯示」，不畫半份。
-var BIND_VERSION = "bind-m1-0.4.4"   // 0.4.4：GenuiW2Series.qml 註解把三元運算式的「: null」吃掉（host03 run1 W2 載入失敗）；靜態檢查加：行內註解前若有未配對的「?」就判失敗。0.4.3： 0.4.3：host02 run1：W2 矮時「保留」被 seriesLabels 的舊 stacked 規則移到「目前」下方，與線條上下顛倒 → W2 改傳 0（不用舊規則），由 labelTops 依數值高低排、往上推時不改順序；W3 未接資料時的 TypeError。0.4.2： 0.4.2：使用者 11/20 21:02：W2 在 1280 寬要完整顯示「低於保留值 N 個百分點」，可換行並讓元件增高（W2 也進 contentMinH）。0.4.1： 0.4.1：W4／W5 在 bound 還沒綁上時不讀 .cards／.citations（host01 run1 7 個 TypeError）。0.4： 0.4：使用者 11/20 16:40 D1（W4 改 GcpCard、長文換行、卡片增高）、D2（W1 安全提示→主要事實→常駐「未查」，矮畫面空間規則）；新增 contentMinH 給排版。0.3.1： 0.3.1：W2 右側標籤改用 labelTops 依實際高度避讓（real02 的 long 情境「目前」與「保留」重疊）。0.3： 0.3：只改 W 元件字級（通用級距）與 W2 標籤欄寬、W4 valueSize 固定 28（本檔邏輯不變）。0.2.2： 0.2.2：只改 W2 的「目前」標籤成兩行（本檔邏輯不變）。0.2.1： 0.2.1：橘色門檻改用顯示到小數一位後的值比較（0.2 run1 的 10 分鐘邊界顯示「10」卻是藍色）。0.2： 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
+var BIND_VERSION = "bind-m1-0.4.5"   // 0.4.5：host15 run1 看圖 W2 四點：標題用中文名稱（不露出 deviation／soc 欄位名）；距離類縱軸下限不小於 0；飛行紀錄最後一點標「結束時」不標「目前」；左側刻度欄依刻度文字加寬。0.4.4：GenuiW2Series.qml 註解把三元運算式的「: null」吃掉（host03 run1 W2 載入失敗）；靜態檢查加：行內註解前若有未配對的「?」就判失敗。0.4.3： 0.4.3：host02 run1：W2 矮時「保留」被 seriesLabels 的舊 stacked 規則移到「目前」下方，與線條上下顛倒 → W2 改傳 0（不用舊規則），由 labelTops 依數值高低排、往上推時不改順序；W3 未接資料時的 TypeError。0.4.2： 0.4.2：使用者 11/20 21:02：W2 在 1280 寬要完整顯示「低於保留值 N 個百分點」，可換行並讓元件增高（W2 也進 contentMinH）。0.4.1： 0.4.1：W4／W5 在 bound 還沒綁上時不讀 .cards／.citations（host01 run1 7 個 TypeError）。0.4： 0.4：使用者 11/20 16:40 D1（W4 改 GcpCard、長文換行、卡片增高）、D2（W1 安全提示→主要事實→常駐「未查」，矮畫面空間規則）；新增 contentMinH 給排版。0.3.1： 0.3.1：W2 右側標籤改用 labelTops 依實際高度避讓（real02 的 long 情境「目前」與「保留」重疊）。0.3： 0.3：只改 W 元件字級（通用級距）與 W2 標籤欄寬、W4 valueSize 固定 28（本檔邏輯不變）。0.2.2： 0.2.2：只改 W2 的「目前」標籤成兩行（本檔邏輯不變）。0.2.1： 0.2.1：橘色門檻改用顯示到小數一位後的值比較（0.2 run1 的 10 分鐘邊界顯示「10」卻是藍色）。0.2： 0.2：使用者 11/20 07:17 R1～R4 裁決（W4 橘色門檻與無法估計文字、W5 完整句、W1 引用出處優先、W2 數字標示）
 var MAX_POINTS = 150
 var ETA_WARN_MIN = 10                         // R1：ETA ≤ 10 分鐘用橘色〔顯示用候選值〕
 var ETA_NA_LABEL = "電量下降，無法估計到保留電量的時間"
@@ -24,15 +24,20 @@ function findFact(toolResults, ref) {
 function finite(x) { return typeof x === "number" && isFinite(x) }
 
 // 縱軸範圍：min～max 加 5% 邊距；全部同值時上下各留 1 個單位；有保留電量線時把它也包進來
-function axisRange(values, extra) {
+function axisRange(values, extra, floorZero) {
     var lo = Infinity, hi = -Infinity, i
     for (i = 0; i < values.length; ++i) { if (values[i] < lo) lo = values[i]; if (values[i] > hi) hi = values[i] }
     if (finite(extra)) { if (extra < lo) lo = extra; if (extra > hi) hi = extra }
     if (!(lo <= hi)) return null
-    if (lo === hi) return { min: lo - 1, max: hi + 1 }
-    var pad = (hi - lo) * 0.05
-    return { min: lo - pad, max: hi + pad }
+    var out
+    if (lo === hi) out = { min: lo - 1, max: hi + 1 }
+    else { var pad = (hi - lo) * 0.05; out = { min: lo - pad, max: hi + pad } }
+    if (floorZero && lo >= 0 && out.min < 0) out.min = 0          // 0.4.5：距離不會是負數
+    return out
 }
+// 0.4.5：W2 標題用中文名稱；距離類縱軸下限不小於 0
+var SERIES_TITLE = { soc: "電量", deviation: "偏離航線距離" }
+var SERIES_NONNEG = { deviation: true }
 
 // T-DOC 行「「引文」（文件 › 章節，版本）」拆成引文與出處（R3）
 function splitDocLine(t) {
@@ -97,8 +102,10 @@ function bindSeries(toolResults, ref) {
     if (isEnergy) for (i = 0; i < r.facts.length; ++i) if (r.facts[i].kind === "trend" && r.facts[i].reserve_valid && finite(r.facts[i].reserve_pct)) reserve = r.facts[i].reserve_pct
     var req = r.coverage && r.coverage.requested
     var t0 = req ? req[0] : (pts.length ? pts[0].t : 0), t1 = req ? req[1] : (pts.length ? pts[pts.length - 1].t : 1)
-    return { ok: true, error: "", data: { subject: hit.fact.subject, unit: hit.fact.unit || "", points: pts, t0: t0, t1: t1,
-             gaps: (r.coverage && r.coverage.gaps) || [], reserve_pct: reserve, y: pts.length ? axisRange(vals, reserve) : null } }
+    var subj = hit.fact.subject
+    return { ok: true, error: "", data: { subject: subj, title: SERIES_TITLE[subj] || subj, unit: hit.fact.unit || "", points: pts, t0: t0, t1: t1,
+             last_label: r.tool === "T_FLIGHTLOG" ? "結束時" : "目前",
+             gaps: (r.coverage && r.coverage.gaps) || [], reserve_pct: reserve, y: pts.length ? axisRange(vals, reserve, !!SERIES_NONNEG[subj]) : null } }
 }
 
 function bindEvents(toolResults, ref) {
@@ -192,7 +199,7 @@ function seriesLabels(d, h, labelH) {
     if (!d || !d.y || !d.points.length) return null
     var unit = d.unit === "%" ? "%" : (d.unit ? " " + d.unit : ""), last = d.points[d.points.length - 1].v
     var yOf = function (v) { return h - (v - d.y.min) / ((d.y.max - d.y.min) || 1) * h }
-    var out = { min: num(d.y.min) + unit, max: num(d.y.max) + unit, current: { text: "目前 " + num(last) + unit, y: yOf(last) }, reserve: null, diff: "", stacked: false }
+    var out = { min: num(d.y.min) + unit, max: num(d.y.max) + unit, current: { text: (d.last_label || "目前") + " " + num(last) + unit, y: yOf(last) }, reserve: null, diff: "", stacked: false }
     if (d.reserve_pct !== null && d.reserve_pct !== undefined) {
         out.reserve = { text: "保留 " + num(d.reserve_pct) + unit, y: yOf(d.reserve_pct) }
         var gap = Math.round((last - d.reserve_pct) * 10) / 10
@@ -225,6 +232,11 @@ function w2LabelBox(lab) {
     var cl = textLines(lab.current.text, W2M.px, tw) + (lab.diff ? textLines(lab.diff, W2M.px, tw) : 0)
     var rl = lab.reserve ? textLines(lab.reserve.text, W2M.px, tw) : 0
     return { curLines: cl, resLines: rl, hCur: cl * W2M.lineH, hRes: rl * W2M.lineH }
+}
+// 0.4.5：左側刻度欄寬＝最寬刻度文字＋6（至少 W2M.leftW）
+function w2LeftW(lab) {
+    if (!lab) return W2M.leftW
+    return Math.max(W2M.leftW, Math.ceil(Math.max(textWidth(lab.max, W2M.px), textWidth(lab.min, W2M.px))) + 6)
 }
 function w2MinH(d) {
     var lab = seriesLabels(d, 100, 0), b = w2LabelBox(lab)

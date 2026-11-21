@@ -9,6 +9,6 @@ module.exports = {
   Hash: load('GenuiHash.js', ['sha256Hex']),
   Tools: load('GenuiTools.js', ['telemetryLatest', 'flightlogSeries', 'energyTrend', 'alertHistory', 'manualSearch', 'contentTerms', 'tokenize', 'TOOLS_VERSION', 'expandQuery', 'ENERGY', 'STATUS', 'flightlogDeviation', 'deviationForRecord', 'routeMatch']),
   Claims: load('GenuiClaims.js', ['generate', 'selectRule', 'validateSelection', 'render', 'answer', 'quota', 'MAX_CLAIMS', 'CLAIMS_VERSION']),
-  Bind: load('GenuiBind.js', ['resolve', 'fitLinesH', 'seriesLabels', 'labelTops', 'w1Arrange', 'w1MinH', 'w4CardLayout', 'w2LabelBox', 'w2MinH', 'W2M', 'contentMinH', 'textWidth', 'textLines', 'shortOmitted', 'W1M', 'W4M', 'splitDocLine', 'sentences', 'shortenAtSentence', 'ETA_WARN_MIN', 'ETA_NA_LABEL', 'fitLines', 'fitCount', 'seriesPaths', 'axisRange', 'num', 'ETA_NA_REASON', 'BIND_VERSION', 'MAX_POINTS']),
+  Bind: load('GenuiBind.js', ['resolve', 'fitLinesH', 'seriesLabels', 'labelTops', 'w1Arrange', 'w1MinH', 'w4CardLayout', 'w2LabelBox', 'w2MinH', 'W2M', 'contentMinH', 'w2LeftW', 'SERIES_TITLE', 'textWidth', 'textLines', 'shortOmitted', 'W1M', 'W4M', 'splitDocLine', 'sentences', 'shortenAtSentence', 'ETA_WARN_MIN', 'ETA_NA_LABEL', 'fitLines', 'fitCount', 'seriesPaths', 'axisRange', 'num', 'ETA_NA_REASON', 'BIND_VERSION', 'MAX_POINTS']),
   Layout: load('GenuiLayout.js', ['plan', 'needsConfirm', 'checkApply', 'validatePlan', 'layout', 'validateLayout', 'CATALOG', 'GAP', 'GRID_COLS', 'LAYOUT_VERSION'])
 }
