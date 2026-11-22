@@ -187,12 +187,12 @@ class SafetyIngest:
         try:
             if hooks:
                 hooks.point(f"ingest:{src}:announced")
-            v = copy.deepcopy(value)
+            v, vref = copy.deepcopy(value), copy.deepcopy(value)     # 複製在臨界區外（G0-1：鎖內只做 O(1)）
             if hooks:
                 hooks.point(f"ingest:{src}:before_write")
             with self._lk:
                 if seq > st["applied_seq"]:
-                    st["value"], st["ref"], st["applied_seq"] = v, copy.deepcopy(v), seq
+                    st["value"], st["ref"], st["applied_seq"] = v, vref, seq
                     if st["stale"] and seq > st["stale_seq"]:
                         st["stale"] = False
             ok = True
@@ -209,11 +209,15 @@ class SafetyIngest:
         if src in DISCRETE_SOURCES or self._beyond_eps(src, value, st["ref"]):
             self.event(src, value, hooks)
         else:
-            v = copy.deepcopy(value)
-            with self._lk:                       # ε 內：不宣告事件，但同樣遵守「舊值不覆蓋新值」
+            with self._lk:                       # ε 內：不宣告事件；收到時就取序號，同樣遵守「舊值不覆蓋新值」
                 st["next_seq"] += 1
-                if st["next_seq"] > st["applied_seq"]:
-                    st["value"], st["applied_seq"] = v, st["next_seq"]
+                seq = st["next_seq"]
+            v = copy.deepcopy(value)
+            if hooks:
+                hooks.point(f"ingest:{src}:sample_before_write")
+            with self._lk:
+                if seq > st["applied_seq"]:
+                    st["value"], st["applied_seq"] = v, seq
 
     def snapshot(self, timeout_ms=None):
         """seqlock 讀法：前後讀 safety_seq 相同且全部 ready 才成立。"""
@@ -223,7 +227,8 @@ class SafetyIngest:
             _, s0 = self.word.read()
             if all(v["ready"] for v in self._state.values()):
                 with self._lk:
-                    vals = {k: copy.deepcopy(v["value"]) for k, v in self._state.items()}
+                    refs = {k: v["value"] for k, v in self._state.items()}
+                vals = copy.deepcopy(refs)
                 _, s1 = self.word.read()
                 if s0 == s1 and all(v["ready"] for v in self._state.values()):
                     return s0, vals
@@ -339,7 +344,7 @@ class ActiveStore:
             try:
                 with open(p, "rb") as f:
                     rec = json.loads(f.read().decode("utf-8"))
-                if rec.get("sha256") == _sha({k: v for k, v in rec.items() if k != "sha256"}):
+                if _ptr_shape_ok(rec) and rec["sha256"] == _sha({k: v for k, v in rec.items() if k != "sha256"}):
                     out.append((ab, rec))
             except (OSError, ValueError):
                 pass
@@ -350,6 +355,19 @@ class ActiveStore:
         if not ptrs:
             return None
         return max(ptrs, key=lambda x: x[1]["seq"])
+
+    def best_valid(self):
+        """補件 G0-6：依 seq 由大到小，取第一份「結構與自身 hash 正確、且引用的檢查點可核證」的指標。
+        回傳 (ab, rec, checkpoint_state, rejected)；都不行時 (None, None, None, rejected)。"""
+        rejected = []
+        for ab, rec in sorted(self.read_ptrs(), key=lambda x: -x[1]["seq"]):
+            try:
+                state = self.read_checkpoint(rec["segment_id"], rec["checkpoint_hash"])
+                return ab, rec, state, rejected
+            except (CommitError, OSError, ValueError, KeyError, TypeError) as e:
+                rejected.append({"pointer": ab, "segment_id": rec["segment_id"],
+                                 "reason": getattr(e, "code", type(e).__name__)})
+        return None, None, None, rejected
 
     def write_ptr(self, segment_id, checkpoint_hash):
         cur = self.read_ptrs()
@@ -428,6 +446,16 @@ class ActiveStore:
                 except ValueError:
                     out[name] = None
         return _sha(out)
+
+
+def _ptr_shape_ok(rec):
+    """指標必須是 {segment_id:int≥0, checkpoint_hash:64 位小寫十六進位, seq:int≥1, sha256:64 位}，不多不少。"""
+    if not isinstance(rec, dict) or set(rec) != {"segment_id", "checkpoint_hash", "seq", "sha256"}:
+        return False
+    hx = set("0123456789abcdef")
+    return (type(rec["segment_id"]) is int and rec["segment_id"] >= 0 and type(rec["seq"]) is int and rec["seq"] >= 1
+            and all(isinstance(rec[k], str) and len(rec[k]) == 64 and set(rec[k]) <= hx
+                    for k in ("checkpoint_hash", "sha256")))
 
 
 # ---------------- 協調器 ----------------
@@ -699,12 +727,13 @@ def init_store(root, hooks=None):
 def boot(root, hooks=None, eps=None):
     """依 ptr-A／ptr-B 與最新分段恢復，寫新分段並切換指標，回傳 (Coordinator, report)。"""
     st = ActiveStore(root, hooks)
-    best = st.best_ptr()
     report = {"recovery": [], "frozen": []}
-    if best is None:
+    ab, best_rec, state, rejected = st.best_valid()
+    if rejected:
+        report["pointer_rejected"] = rejected
+    if best_rec is None:
         return _restricted_boot(st, eps, hooks, report)
-    seg = best[1]["segment_id"]
-    state = st.read_checkpoint(seg, best[1]["checkpoint_hash"])
+    seg = best_rec["segment_id"]
     if state.get("prev_segment_id") is not None:
         prev_tail = st.tail_hash(state["prev_segment_id"])
         if state["prev_segment_tail_hash"] != prev_tail:
@@ -794,13 +823,14 @@ def boot(root, hooks=None, eps=None):
     tail = st.tail_hash(seg)
     h = st.write_checkpoint(new_seg, {"global_seq": gmax, "route_roots": roots, "slot_state": slot_state,
                                       "ui_root": ui_root}, tail, seg)
+    rj = st.journal(new_seg, "coordinator.jsonl")      # 補件 G0-4：RECOVERY 先持久化，再啟用新指標
+    for x in report["recovery"]:
+        if x.get("action") == "use_before":
+            rj.append({"kind": "RECOVERY", "tx_id": x["tx"], "action": "use_before", "why": x.get("why"),
+                       "from_segment": seg})
     st.write_ptr(new_seg, h)
     c = Coordinator(st, eps, hooks, boot_state={"global_seq": gmax, "route_roots": roots, "slot_state": slot_state,
                                                 "ui_root": ui_root, "segment": new_seg, "root_gen": 0})
-    for x in report["recovery"]:                        # G0-4：採用 before 的交易寫 RECOVERY（新分段的協調器日誌）
-        if x.get("action") == "use_before":
-            c.cj.append({"kind": "RECOVERY", "tx_id": x["tx"], "action": "use_before", "why": x.get("why"),
-                         "from_segment": seg})
     report["segment"] = new_seg
     return c, report
 
@@ -824,11 +854,17 @@ def _restricted_boot(st: ActiveStore, eps, hooks, report):
             with open(p, "rb") as f:
                 raw = f.read()
             rec = json.loads(raw.decode("utf-8"))
-            okh = rec.get("sha256") == _sha({k: v for k, v in rec.items() if k != "sha256"})
-            diag.append({"pointer": ab, "result": "hash_mismatch" if not okh else "ok", "bytes": len(raw)})
+            if not _ptr_shape_ok(rec):
+                res = "bad_shape"
+            elif rec["sha256"] != _sha({k: v for k, v in rec.items() if k != "sha256"}):
+                res = "hash_mismatch"
+            else:
+                res = "checkpoint_unverifiable"
+            diag.append({"pointer": ab, "result": res, "bytes": len(raw)})
         except (OSError, ValueError) as e:
             diag.append({"pointer": ab, "result": "unreadable", "error": repr(e)[:120]})
-    report.update(mode="RESTRICTED_READ_ONLY", diagnostics={"pointers": diag, "segments": segs, "files": names})
+    report.update(mode="RESTRICTED_READ_ONLY", diagnostics={"pointers": diag, "segments": segs, "files": names,
+                                                            "rejected": report.get("pointer_rejected", [])})
     report["frozen"].append("all_slots_restricted_read_only")
     c = Coordinator(st, eps, hooks, boot_state={"global_seq": 0, "route_roots": {}, "slot_state": {},
                                                 "ui_root": None, "segment": -1, "root_gen": 0}, read_only=True)

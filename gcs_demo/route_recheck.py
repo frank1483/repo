@@ -8,9 +8,35 @@ S 是提交層一致快照：
 """
 from __future__ import annotations
 
-from .energy import Wind
+import dataclasses
+import math
+
+from .energy import Wind, bearing_rad, leg_estimate
 from . import coverage as cv
 from .commit_layer import TEST_VALUES
+
+
+def headwind_bound_end_pct(points, vehicle, wind_speed_max, takeoff_pct, reserve_eff, speed_mps=None,
+                           hover_s_per_wp=5.0):
+    """G0-3（補件）：方向無關的保守上界。多旋翼舊版能耗模型中，地速固定、時間＝距離／地速與風無關，
+    功率隨空速單調遞增；空速 |g−w| ≤ |g|＋|w|（三角不等式），等號在正逆風時成立。
+    所以每一段都用「風速上限的正逆風」計算，得到的耗電對任何風向、任何不超過上限的風速都是上界。
+    只適用於 legacy 多旋翼（airframe_profile 為 None）；其他機型回 None（呼叫端要擋下）。"""
+    if vehicle.type != "multirotor" or vehicle.airframe_profile is not None:
+        return None
+    v2 = dataclasses.replace(vehicle, reserve_pct=reserve_eff)
+    g = vehicle.cruise_mps if speed_mps is None else speed_mps
+    cap = v2.battery_wh * v2.usable_frac
+    pct = takeoff_pct
+    for a, b in zip(points, points[1:]):
+        pa, pb = (a["lat"], a["lon"]), (b["lat"], b["lon"])
+        brg = math.degrees(bearing_rad(pa, pb)) % 360
+        w = Wind(speed_mps=wind_speed_max, from_deg=brg)        # 風從前方來＝正逆風
+        est = leg_estimate(v2, pa, pb, a.get("alt", 0), b.get("alt", 0), g, w)
+        if b.get("kind") == "target":
+            est["energy_wh"] += v2.p_hover_w * hover_s_per_wp / 3600.0 * v2.calib
+        pct -= est["energy_wh"] / cap * 100.0
+    return pct
 
 
 def _current(vehicle, S, base):
@@ -32,19 +58,18 @@ def make_route_recheck(record, vehicle, base, shown=None, eps=None, margin_pct=N
         if chk["decision"] == "BLOCK":
             return {"action": "BLOCK", "reasons": [r["code"] for r in chk["reasons"] if r["code"] != "HINT"],
                     "hint": chk.get("hint")}
-        # 聯合最壞情況：電量少 ε、風速多 ε、風向兩側各偏 ε、禁航區半徑再加定位 ε
-        worst_end = None
-        for ddir in (-e["wind_dir"], 0.0, e["wind_dir"]):
-            w = {"speed_mps": S["wind"]["speed_mps"] + e["wind_speed"],
-                 "from_deg": (S["wind"]["from_deg"] + ddir) % 360}
-            nf = [dict(z, radius_m=z["radius_m"] + e["position_m"]) for z in cur["no_fly"]]
-            wc = dict(cur, wind=Wind(**w), takeoff_pct=S["battery"] - e["battery"], no_fly=nf)
-            wchk = cv.apply_check(record, **wc)
-            if wchk["evaluation"]["nfz_crossings"]:
-                return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_NFZ"]}
-            end = wchk["evaluation"]["est_end_pct"]
-            worst_end = end if worst_end is None else min(worst_end, end)
+        # 聯合最壞情況（G0-3 補件）：
+        # - 禁航區：所有點的位移 ≤ 定位 ε，所以把禁航區半徑加 ε 是幾何上界（與風無關，只算一次）；
+        # - 電量：起飛電量取 −ε；風取「風速＋ε 的逐段正逆風」，對整段風向區間都是上界（不再只取三個方向樣本）。
+        nf = [dict(z, radius_m=z["radius_m"] + e["position_m"]) for z in cur["no_fly"]]
+        wchk = cv.apply_check(record, **dict(cur, no_fly=nf))
+        if wchk["evaluation"]["nfz_crossings"]:
+            return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_NFZ"]}
         reserve_eff = chk["evaluation"]["reserve_eff_pct"]
+        worst_end = headwind_bound_end_pct(record["route"], vehicle, S["wind"]["speed_mps"] + e["wind_speed"],
+                                           S["battery"] - e["battery"], reserve_eff, base.get("speed_mps"))
+        if worst_end is None:
+            return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_UNVERIFIED"]}
         if worst_end < reserve_eff + margin:
             return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_BATTERY"], "worst_end_pct": worst_end}
         if shown is None:
