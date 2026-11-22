@@ -213,6 +213,15 @@ class PublishWord:
             self.root_gen = new.root_gen
             return True
 
+    def cas_new(self, expect_gen, new: Descriptor) -> bool:
+        """0439 #4：新的結構發布（UI、undo）。耗盡後一律失敗；回滾等補償發布用 cas_gen。"""
+        with self._lock:
+            if self.exhausted or self.root_gen != expect_gen or new.root_gen >= 2 ** TEST_VALUES["root_gen_bits"]:
+                return False
+            self.desc[new.root_gen] = new
+            self.root_gen = new.root_gen
+            return True
+
     def cas_gen(self, expect_gen, new: Descriptor) -> bool:
         """UI 替身、undo、回滾用：只比對 root_gen（結構寫入租約保證沒有第二個結構發布者）。"""
         with self._lock:
@@ -441,6 +450,7 @@ class ActiveStore:
         self.budget = budget or StorageBudget(root)
         os.makedirs(os.path.join(root, "active"), exist_ok=True)
         self._last_status = None
+        self._partial_status = []
 
     def seg_dir(self, n):
         return os.path.join(self.root, "active", f"seg-{n}")
@@ -456,6 +466,7 @@ class ActiveStore:
         """0437 #1／#2：逐份指標的有界讀取與判定。回傳 [(ab, status, rec|None)]；status ∈ ok／missing／
         unreadable／too_large／bad_shape／hash_mismatch。每份讀取計入掃描帳本（1 行）。"""
         out = []
+        self._partial_status = out                       # 0439 #2：逐份累積；中途超限時，已完成的判定仍可取用
         cap = TEST_VALUES["pointer_read_cap_bytes"]
         for ab in "AB":
             p = self._ptr_path(ab)
@@ -469,7 +480,11 @@ class ActiveStore:
                 out.append((ab, "unreadable", None))
                 continue
             if scan is not None:
-                scan.consume(len(raw), 1)
+                try:
+                    scan.consume(len(raw), 1)
+                except CommitError:
+                    out.append((ab, "unchecked_scan_limit", None))   # 讀了但帳本已超限：不判定、不重讀
+                    raise
             if len(raw) > cap:
                 out.append((ab, "too_large", None))
                 continue
@@ -498,6 +513,7 @@ class ActiveStore:
     def best_valid(self, scan=None):
         """補件 G0-6：依 seq 由大到小，取第一份「結構與自身 hash 正確、且引用的檢查點可核證」的指標。
         回傳 (ab, rec, checkpoint_state, rejected)；都不行時 (None, None, None, rejected)。"""
+        self._last_status = None
         status = self.read_ptr_status(scan)              # 只讀一輪（0438 #2）
         self._last_status = status
         rejected = [{"pointer": ab, "segment_id": None, "reason": s} for ab, s, _ in status if s not in ("ok", "missing")]
@@ -880,8 +896,9 @@ class Coordinator:
             entry = {"global_seq": gs, "tx_kind": "genui", "tx_id": tx_id, "before": d0.ui_root, "after": new_ui_root}
             d1 = Descriptor(d0.root_gen + 1, gs, new_ui_root, d0.route_roots, UndoNode(entry, d0.undo_head))
             self.hooks.point("ui:active_durable")          # 替身：ADR-0001 §5 ② 在此生效
-            ok = self.word.cas_gen(d0.root_gen, d1)         # 不比對 safety_seq，一定成功
-            assert ok, "lease guarantees single structure publisher"
+            if not self.word.cas_new(d0.root_gen, d1):      # 0439 #4：生效點封閉新發布（不比對 safety_seq）
+                self._end(gs, tx_id, "ABORTED", d0, None)
+                return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
             self._end(gs, tx_id, "COMMITTED", d1, None)
             return {"action": "WRITE", "tx_id": tx_id, "global_seq": gs}
         finally:
@@ -893,7 +910,7 @@ class Coordinator:
             return {"action": "BLOCK", "code": "STORE_READ_ONLY"}
         self._acquire()
         try:
-            if self.word.gen_exhausted():
+            if self.word.gen_exhausted(need=2):           # undo＋可能的補償，各需一個世代
                 return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
             d0 = self.word.current()
             node = d0.undo_head
@@ -920,18 +937,45 @@ class Coordinator:
                 d1 = Descriptor(d0.root_gen + 1, gs, e["before"], d0.route_roots, node.next)
                 term_rec = None
             self.hooks.point("undo:before_publish")
-            if not self.word.cas_gen(d0.root_gen, d1):   # 0438 #4：發布失敗就中止，不寫 COMMITTED
+            if not self.word.cas_new(d0.root_gen, d1):   # 0439 #4：生效點封閉新發布
                 self._end(gs, tx_id, "ABORTED", d0, None)
                 return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
             self.store.budget.terminal_mode = True       # 0438 #3：undo 的收尾（COMMITTED／END）屬終態，動用預留
             try:
                 term = self.rj.append(term_rec) if term_rec else None
+                self.hooks.point("undo:after_committed")
                 self._end(gs, tx_id, "COMMITTED", d1, term)
+            except (CommitError, OSError) as err:        # 0439 #3：收尾寫不進去 → 補償回 undo 前，再失敗就凍結
+                return self._undo_compensate(gs, tx_id, e, d0, d1, str(err))
             finally:
                 self.store.budget.terminal_mode = False
             return {"action": "WRITE", "tx_id": tx_id, "undid": e["tx_id"], "needs_reverify": True}
         finally:
             self.lease.release()
+
+    def _undo_compensate(self, gs, tx_id, e, d0, d1, why):
+        """undo 已發布但收尾紀錄寫不進去：發布回 undo 前的描述元（補償），寫 ROLLED_BACK＋END。
+        BOOT 對應：有 ROLLED_BACK → 採 before（＝undo 前）；補償或其紀錄失敗 → 凍結該槽（UI undo 凍結 'ui'）。"""
+        slot = e.get("slot_id") or "ui"
+        d2 = Descriptor(d1.root_gen + 1, gs, d0.ui_root, d0.route_roots, d0.undo_head)
+        self.hooks.point("undo:compensate_publish")
+        published = self.word.cas_gen(d1.root_gen, d2)
+        self.store.budget.terminal_mode = True
+        try:
+            if not published:
+                raise CommitError("ROLLBACK_PUBLISH_FAILED", "undo 補償無法發布")
+            term = self.rj.append({"kind": "ROLLED_BACK", "tx_id": tx_id, "slot_id": slot, "why": why})
+            self._end(gs, tx_id, "ROLLED_BACK", self.word.current(), term)
+            return {"action": "BLOCK", "tx_id": tx_id, "code": "ROLLED_BACK", "reasons": [why]}
+        except (CommitError, OSError) as err:
+            self._freeze(slot, "undo_terminal_unwritable:" + str(err)[:80], tx_id)
+            try:
+                self._end(gs, tx_id, "COMMIT_FROZEN", self.word.current(), None)
+            except (CommitError, OSError):
+                pass
+            return {"action": "BLOCK", "tx_id": tx_id, "code": "COMMIT_FROZEN", "reasons": [why, str(err)[:80]]}
+        finally:
+            self.store.budget.terminal_mode = False
 
     # --- 檢查點輸出（BOOT 與分段交接用）
     def state_for_checkpoint(self):
@@ -968,6 +1012,10 @@ def boot(root, hooks=None, eps=None):
         if e.code != "BOOT_SCAN_LIMIT":
             raise
         report["scan_limit"] = {"code": e.code, "detail": e.detail, **scan.report()}
+        # 0439 #2：超限時沿用已完成的指標判定；沒讀到的那份標 unchecked，受限診斷不再重讀
+        done = list(st._last_status if st._last_status is not None else getattr(st, "_partial_status", []) or [])
+        seen = {a for a, _, _ in done}
+        report["_ptr_status"] = done + [(a, "unchecked_scan_limit", None) for a in "AB" if a not in seen]
         return _restricted_boot(st, eps, hooks, report, force=True)
 
 
@@ -1080,7 +1128,14 @@ def _boot_scan(st, eps, hooks, report, scan):
     plan = reserve_plan()["parts"]                      # 0438 #3：開始寫之前，確認剩餘空間足夠這次 BOOT 的最壞寫入量
     need = plan["checkpoint"] + plan["recovery"] + plan["pointers"]
     if st.budget.used() + need > st.budget.disk_budget:
-        raise _BootWriteFailure("reserve_check", CommitError("STORE_READ_ONLY", "剩餘空間不足以完成 BOOT 寫入"))
+        raise _BootWriteFailure("reserve_check", CommitError("STORE_READ_ONLY", "邏輯額度不足以完成 BOOT 寫入"))
+    try:                                                  # 0439 #3：實體剩餘空間也要容得下最壞寫入量
+        free = shutil.disk_usage(st.root).free
+    except OSError as e:
+        raise _BootWriteFailure("reserve_check", CommitError("STORE_READ_ONLY", "無法查詢剩餘空間：" + repr(e)[:80]))
+    if free < need:
+        raise _BootWriteFailure("reserve_check", CommitError("STORE_READ_ONLY", "檔案系統剩餘空間不足以完成 BOOT 寫入"))
+    scan.check()                                          # 0439 #2：寫入前最後一道掃描時間哨點
     st.budget.terminal_mode = True                     # G0 第 5 節：BOOT 的檢查點、RECOVERY 與指標動用終態預留
     stage = "checkpoint"
     try:

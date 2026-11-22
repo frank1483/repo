@@ -355,9 +355,23 @@ class PreviewService:
         rec = self.previews.get(b["preview_ref"])
         if rec is None:
             raise ApiError("NOT_FOUND", ["preview_ref"])
-        if b["target_generation"] != self.c.word.current().root_gen:   # 0438 #5：先拒絕過期請求，不留任何副作用
-            raise ApiError("TARGET_STALE")
         k = (principal, b["target_slot_id"], b["draft_id"])
+        # 0439 #5：先取結構寫入租約（與所有結構發布同一把），世代在檢查到版本轉移結束之間不會變；
+        # 鎖序固定為「租約 → tok_lock」，與提交路徑（租約內的 guard 取 tok_lock）一致。
+        if not self.c.lease.acquire(timeout=cl.TEST_VALUES["lease_timeout_s"]):
+            raise ApiError("BUSY_RETRY", ["結構寫入中，稍後再試"])
+        try:
+            self._apply_transition(principal, b, k)
+        finally:
+            self.c.lease.release()
+        snap = self.feeder.poll()
+        return self._apply_check_rest(principal, b, rec, snap)
+
+    def _apply_transition(self, principal, b, k):
+        if hasattr(self, "_pause_lease"):                 # 測試用暫停點（取得租約前後）
+            self._pause_lease()
+        if b["target_generation"] != self.c.word.current().root_gen:   # 過期請求：不留任何副作用
+            raise ApiError("TARGET_STALE")
         with self.tok_lock:                               # 0438 #5：檢查、撤銷與版本更新是同一個狀態轉移
             if b["preview_ref"] in self.superseded:
                 raise ApiError("CONFIRM_TOKEN_STALE", ["preview_superseded"])
@@ -371,7 +385,8 @@ class PreviewService:
             if hasattr(self, "_pause"):                  # 測試用暫停點（並行換版）
                 self._pause()
             self.current_preview[k] = (b["preview_ref"], b["draft_rev"])
-        snap = self.feeder.poll()
+
+    def _apply_check_rest(self, principal, b, rec, snap):
         m = snap["mission"]
         cur = dict(vehicle=self._vehicle(snap), wind=Wind(**snap["wind"]),
                    takeoff_pct=snap["battery"] if snap["battery"] is not None else 100.0,
