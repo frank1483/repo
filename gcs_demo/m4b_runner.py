@@ -26,13 +26,17 @@ from .id_graph import load_index
 HERE = os.path.dirname(os.path.abspath(__file__))
 CASES = os.path.join(HERE, "m4b_cases_v2.json")
 # v4（v3.6 §6）：校準＝開發集（首跑 36 題，已看過失敗）；研究＝評估集（沒有用來調提示）
-CASES_BY_PHASE = {"calib": os.path.join(HERE, "m4b_cases_dev_v3.json"), "research": os.path.join(HERE, "m4b_cases_eval_v2.json")}
+CASES_BY_PHASE = {"calib": os.path.join(HERE, "m4b_cases_dev_v3.json"), "research": os.path.join(HERE, "m4b_cases_eval_v3.json"),
+                  "smoke": os.path.join(HERE, "m4b_cases_v39_smoke.json")}
+# v3.9：smoke＝F13、C14、F23 與使用者找到的反例（小範圍驗證）；research＝評估集 v3（回歸）
 # v3.7 §5：calib＝開發集（前兩輪看過的 60 題）；research＝第三輪評估集 v2（沒有參與調整）
 DEFAULT_ID_INDEX = os.path.join(R.BASE_DOC, "adr0002_rag_v1", "id_index_v1")
 CONDITIONS = {
     "calib": [{"id": "A-s6-b30", "group": "A", "steps": 6, "budget": 30}],
     "research": [{"id": "B0", "group": "B0", "steps": 6, "budget": 0},
                  {"id": "A-s6-b30", "group": "A", "steps": 6, "budget": 30}],
+    "smoke": [{"id": "B0", "group": "B0", "steps": 6, "budget": 0},
+              {"id": "A-s6-b30", "group": "A", "steps": 6, "budget": 30}],
 }
 GROUP_NOTE = {"B0": "規則：方向用關鍵字表、每步用規則腳本，零次 LLM 呼叫；查詢向量仍算 1 次",
               "A": "方案 A：模型排方向並逐步選動作（每步只看當前方向的候選）"}
@@ -144,7 +148,9 @@ def score(case, r):
                                            (p.get("source") or {}).get("preview_ref") == final_prev.get("ref")
                                            for p in ps)
     props_ok = len(hit_t) == len(want) and not rest and all(dep_ok.values())
-    correct = props_ok and all(arts.values()) and r.get("status") == case["expect_status"]
+    st_ok = r.get("status") in case["expect_status"] if isinstance(case["expect_status"], list) \
+        else r.get("status") == case["expect_status"]               # v3.9：反例可列多個可接受終態
+    correct = props_ok and all(arts.values()) and st_ok
     is_prop_case = bool(want)
     return {"correct": correct, "prop_case": is_prop_case,
             "model_decided": correct and is_prop_case and bool(by) and all(b == "model" for b in by),
@@ -154,7 +160,7 @@ def score(case, r):
             "extra_proposals": [[g[0][0], sorted(g[0][1]), dict(g[0][2]), g[1].get("state")] for g in rest],
             "false_open": (not is_prop_case) and bool(got),
             "t_proposal_ready_s": max(hit_t) if (is_prop_case and correct and all(t is not None for t in hit_t)) else None,
-            "dependency_ok": dep_ok, "artifacts_ok": arts, "status_match": r.get("status") == case["expect_status"],
+            "dependency_ok": dep_ok, "artifacts_ok": arts, "status_match": st_ok,
             "dirs_selected": r.get("directions"), "dirs_gold": case["gold_dirs"],
             "dirs_set_match": set(r.get("directions") or []) == set(case["gold_dirs"]),
             "dirs_raw_match": set(r.get("stage1_raw") or r.get("directions") or []) == set(case["gold_dirs"]),
@@ -232,6 +238,35 @@ def _timing(rs):
         {"retries_total": sum((r.get("timing") or {}).get("retries", 0) for r in rs)}
 
 
+PROBE_QUERIES = [("F20", "查 QGC 文件：怎麼校正羅盤"), ("C24", "PX4 文件中任務模式的航點接受半徑")]
+
+
+def retrieval_probe():
+    """v3.9 §2：同一索引比較四種設定在混合檢索（BM25＋向量 RRF）的前五：原句／只擴詞／只限來源／兩者；
+    記錄各自是否命中凍結計分標準。標題加權維持 0。"""
+    from .agent_m4b import M4bController
+    from .rag_index import HEADING_BOOST, QUERY_GLOSSARY_V2
+    idx = R.manual_index()
+    allc = {c["id"]: c for f in ("m4b_cases_dev_v3.json", "m4b_cases_eval_v2.json")
+            for c in json.load(open(os.path.join(HERE, f), encoding="utf-8"))["cases"]}
+    out = {"heading_boost": HEADING_BOOST, "rows": []}
+    for cid, q in PROBE_QUERIES:
+        qv = idx.query_vector(q) if R._INDEX["use_vector"] else None
+        src = M4bController._manual_source(None, q)
+        for name, man, extra in (("original", None, None), ("glossary_only", None, QUERY_GLOSSARY_V2),
+                                 ("source_only", src, None), ("both", src, QUERY_GLOSSARY_V2)):
+            r = idx.search(q, k=5, use_vector=R._INDEX["use_vector"], vector=qv, require_pre=R._INDEX["use_vector"],
+                           manual=man, extra=extra)
+            refs = [{k: y[k] for k in ("manual", "path", "heading_path", "version", "chunk_id")} | {"excerpt": y["text"][:400]}
+                    for y in r["results"]]
+            case = dict(allc[cid], expect_status="DONE", expect_proposals=[], expect_artifacts={"manual_claims": "ok"})
+            hit = score(case, {"status": "DONE", "artifacts": {"manual_claims": {"verdict": "ok" if refs else "not_found",
+                                                                                   "refs": refs}}})["artifacts_ok"]["manual_claims"]
+            out["rows"].append({"case": cid, "setting": name, "hit_top5": hit, "mode": r.get("mode"),
+                                "degraded": r.get("degraded"), "top5": [[x["manual"], x["path"], x["heading_path"]] for x in refs]})
+    return out
+
+
 def summarize(recs):
     """主表（v3.5 §7 比較口徑）：正確提案完成率（分母＝應提案案例）、提案就緒 P95（只算提案全對的案例，旁列納入數）、
     每案例 LLM 呼叫次數；另列誤開率、未達終點／錯誤數、整理前與含整理的 P95，以及各組都答對的相同案例 P95。"""
@@ -280,7 +315,7 @@ def summarize(recs):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", choices=("calib", "research"), required=True)
+    ap.add_argument("--phase", choices=("calib", "research", "smoke"), required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--fake", action="store_true", help="只用假模型檢查執行器（不是 live）")
     ap.add_argument("--ollama-port", type=int, default=11555)
@@ -338,6 +373,8 @@ def main(argv=None):
         info["token_counter"] = {"impl": "gcs_demo/gemma4_tokenizer.py（llama.cpp gemma4 規則，曾與伺服器 token ID 比對 12/12）",
                                  "blob_digest": tok["blob_digest"], "vocab_merges_types_sha256": tok["vocab_merges_types_sha256"],
                                  "n_tokens": tok["n_tokens"], "n_merges": tok["n_merges"]}
+        if a.phase == "smoke":                                  # v3.9：混合檢索前五（F20、C24），用正式索引與查詢向量
+            info["retrieval_probe"] = retrieval_probe()
         sampler.start()
         with open(os.path.join(a.out, "results.jsonl"), "a", encoding="utf-8") as f:
             for cond in CONDITIONS[a.phase]:

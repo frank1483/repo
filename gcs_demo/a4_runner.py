@@ -237,6 +237,7 @@ def main(argv=None):
         del argv[k:k + 2]
     if argv[argv.index("--phase") + 1] != "research":
         raise SystemExit("第四輪只跑 research（評估集 v2）")
+    R4.CASES_BY_PHASE["research"] = os.path.join(os.path.dirname(R4.CASES), "m4b_cases_eval_v2.json")  # 第四輪固定評估集 v2
     R4.CASES = R4.CASES_BY_PHASE["research"]
     shared = check_r3_dir("--fake" in argv)
     out = argv[argv.index("--out") + 1]

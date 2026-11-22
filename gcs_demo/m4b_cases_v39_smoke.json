@@ -1,0 +1,153 @@
+{
+ "version": "m4b-cases-v39-smoke",
+ "annotation": "AI 共同決定（使用者委任）：v3.9 小範圍驗證案例（使用者 2026-11-22 18:16 指示：「用 A／B 驗證 F13、C14、F23 和上述反例」）。F13、C14、F23 沿用原標註；K01～K04 為使用者找到的反例。都已看過，只當回歸。",
+ "fields": "同 m4b_cases_v2；expect_status 可為清單（任一即可）",
+ "cases": [
+  {
+   "id": "F13",
+   "text": "顯示任務進度",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C007",
+      "P004"
+     ],
+     "values": [
+      "顯示"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "元件顯示"
+  },
+  {
+   "id": "C14",
+   "text": "北側巡檢放到首頁，保留 20%",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "條件在句尾",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "F23",
+   "text": "隱藏小地圖並把字體調大",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C016",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    },
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "同方向兩個提案；v3.7.1：同方向雙提案，A 目前第一張提案後即結束版面方向；主表保留在分母並註明，另列排除後的比例；v3.9：兩項都開才 DONE"
+  },
+  {
+   "id": "K01",
+   "text": "不要隱藏小地圖",
+   "gold_dirs": [
+    "chat"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": [
+    "DONE",
+    "INCOMPLETE"
+   ],
+   "note": "否定：不可開提案（使用者 18:16 反例）"
+  },
+  {
+   "id": "K02",
+   "text": "隱藏小地圖，然後把風速計移動",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C016",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "PARKED",
+   "note": "缺位置：只開隱藏，風速計要使用者補充（反例）"
+  },
+  {
+   "id": "K03",
+   "text": "隱藏小地圖，然後顯示小地圖",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "PARKED",
+   "note": "衝突：兩張都不開，請使用者確認（反例）"
+  },
+  {
+   "id": "K04",
+   "text": "不要隱藏小地圖，把字體調大",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "否定子句不開，另一項照開"
+  }
+ ]
+}
