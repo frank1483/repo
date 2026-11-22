@@ -216,13 +216,19 @@ def required_items(graph, direction, cands):
     return req
 
 
-def pack(graph, directions, retrieved, counter):
-    """預算分配（v3.4 §2.3）。directions 依優先序；retrieved[d]＝retrieve() 結果；counter(text)→token 數。"""
+def pack(graph, directions, retrieved, counter, must=None):
+    """預算分配（v3.4 §2.3）。directions 依優先序；retrieved[d]＝retrieve() 結果；counter(text)→token 數。
+    must[d]＝原句點名、一定要送出的 ID（v3.10）：和必要資料一起先放、一起計入預算，可選資料在剩餘額度內補。"""
     plan, used, pending = {}, 0, []
-    log = {"trimmed": {}, "deferred_total": [], "expanded_to": {}}
+    log = {"trimmed": {}, "deferred_total": [], "expanded_to": {}, "must": {}}
+    must = must or {}
     for d in directions:                                     # 1. 先放必要資料
         cands = retrieved[d]["candidates"]
-        req = required_items(graph, d, cands)
+        extra = [i for i in must.get(d, []) if i in graph.nodes]
+        req = list(dict.fromkeys(extra + list(required_items(graph, d, cands))))
+        added = [i for i in extra if i not in cands]
+        if added:
+            log["must"][d] = added
         req_text = "\n".join(line_of(graph.nodes, graph.nodes[i], with_desc=False) for i in req)
         need = counter(req_text) if req_text else 0
         cap = BUDGET_DIR if need <= BUDGET_DIR else min(need, BUDGET_DIR_MAX)

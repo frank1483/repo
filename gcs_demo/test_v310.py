@@ -55,6 +55,20 @@ class SharedClassification(unittest.TestCase):
             self.assertEqual((r["status"], len(r["proposals"])), ("DONE", 1), C.__name__)
 
 
+class HomeClause(unittest.TestCase):
+    """v3.10 反例 1：只有明確要求把成果放到首頁才補 ui。"""
+    def test_question_and_manual_do_not_add_ui(self):
+        for t, d in [("北側巡檢航線是否已顯示在首頁？", ["qa"]), ("北側巡檢航線已經顯示在首頁了嗎", ["qa"]),
+                     ("查 QGC 手冊：首頁的航線顯示功能", ["manual"]), ("PX4 文件裡首頁顯示航線的設定", ["manual"]),
+                     ("首頁的北側巡檢航線有沒有更新", ["qa"])]:
+            self.assertNotIn("ui", corr(t, d)[0], t)
+
+    def test_positive_home_kept(self):
+        self.assertEqual(corr("把南側巡檢航線放到首頁", ["layout"])[0], ["ui"])          # G03
+        self.assertEqual(corr("規劃北側二航線並顯示在首頁", ["plan", "ui"]), (["plan", "ui"], None))   # C13
+        self.assertEqual(corr("規劃北側二航線並顯示在首頁", ["plan"])[0], ["plan", "ui"])
+
+
 class G19Candidates(unittest.TestCase):
     def test_named_component_reserved_and_wrong_rejected(self):
         m = scripted(['{"directions":["layout"]}', BIG_C005, BIG_C005, BIG_C005, BIG_C005])
@@ -63,7 +77,22 @@ class G19Candidates(unittest.TestCase):
         r = c.request("放大高度顯示")
         self.assertEqual([(p["ids"], p["params"]) for p in r["proposals"]], [(["C012", "P002"], {"value": "放大"})])
         self.assertEqual(r["status"], "DONE")
-        self.assertTrue(any("補進候選" in n for n in r["notes"]))
+        self.assertTrue(any("列為必要候選" in n for n in r["notes"]))
+
+    def test_must_candidate_counted_in_budget(self):
+        """v3.10 反例 2：點名元件要在分批時就列為必要候選，送出的內容與預算紀錄一致、不超過上限。"""
+        from .id_graph import BUDGET_DIR
+        m = scripted(['{"directions":["layout"]}', BIG_C012])
+        _, T = tools3(["C005", "P002"])
+        c = M4bController(T, m, NoC012(), lambda text: len(text) * 4)   # 很貴的計數器：可選資料一定會被修剪
+        r = c.request("放大高度顯示")
+        pd = r["packing"]["batches"][0]["per_dir"]["layout"]
+        self.assertIn("C012", pd["items"])
+        self.assertLessEqual(pd["tokens"], pd["cap"])
+        self.assertTrue(r["packing"]["batches"][0]["log"]["trimmed"].get("layout"))
+        self.assertEqual(r["packing"]["batches"][0]["log"]["must"], {"layout": ["C012"]})
+        self.assertEqual(r["proposals"][0]["ids"], ["C012", "P002"])
+        self.assertGreaterEqual(BUDGET_DIR, 1)
 
     def test_model_can_pick_reserved(self):
         m = scripted(['{"directions":["layout"]}', BIG_C012])

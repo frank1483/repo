@@ -145,8 +145,15 @@ class M4bController:
         for d in dirs:
             task["dir_status"][d] = "PENDING_BATCH"
         remaining = list(dirs)
+        must = {}
+        if "layout" in dirs:                               # v3.10（G19）：原句點名的元件與參數列為必要候選，分批時一起計入預算
+            named = []
+            for x in list(task.get("layout_items") or []) + list(task.get("layout_unclear") or []) + \
+                    list(task.get("layout_conflicts") or []):
+                named += [i for i in x[:2] if i]
+            must["layout"] = list(dict.fromkeys(named))
         while remaining:                                   # v3.5：每批上限 3,000；每個方向只分配一次
-            packed = pack(self.graph, remaining, retrieved, self.counter)
+            packed = pack(self.graph, remaining, retrieved, self.counter, must=must)
             task["packing"]["batches"].append(
                 {"directions": list(packed["plan"]), "pending": packed["pending"], "log": packed["log"],
                  "total_tokens": packed["total_tokens"],
@@ -160,17 +167,9 @@ class M4bController:
                 break
             for d, pl in packed["plan"].items():
                 task["cands"][d], task["lines"][d] = pl["items"], pl["lines"]
-                if d == "layout":                           # v3.10（G19）：原句點名的元件與參數一定進候選
-                    named = []
-                    for x in list(task.get("layout_items") or []) + list(task.get("layout_unclear") or []) + \
-                            list(task.get("layout_conflicts") or []):
-                        named += [i for i in x[:2] if i]
-                    add = [i for i in dict.fromkeys(named) if i in self.graph.nodes and i not in task["cands"][d]]
-                    if add:
-                        task["cands"][d] = add + task["cands"][d]
-                        task["lines"][d] = [line_of(self.graph.nodes, self.graph.nodes[i]) for i in add] + task["lines"][d]
-                        task.setdefault("reserved_cands", []).extend(add)
-                        task["notes"].append("原句點名的版面對象補進候選：" + "、".join(add))
+                if d == "layout" and packed["log"].get("must", {}).get(d):
+                    task.setdefault("reserved_cands", []).extend(packed["log"]["must"][d])
+                    task["notes"].append("原句點名的版面對象列為必要候選：" + "、".join(packed["log"]["must"][d]))
                 if d == "plan" and task.get("area_fixed"):  # v3.7：原句唯一指定的區域 → 候選只剩它
                     fx = task["area_fixed"]
                     task["cands"][d] = [fx]
@@ -283,9 +282,17 @@ class M4bController:
                  for w in [n["name"]] + list(n.get("aliases") or []) if len(w) >= 2]
         return any(w in c for w in names) or bool(re.search(r"(文字|字體|字型|字級|字)", c))
 
+    HOME_PUT = ("放到", "放在", "放上", "放首頁", "顯示在", "顯示到", "加到", "加入", "釘到", "送到", "推到", "貼到", "移到", "擺到")
+    HOME_ASK = ("是否", "有沒有", "有無", "是不是", "了沒", "沒有")
+
     def _home_plan_clause(self, c):
-        """把規劃成果放首頁的子句：含首頁，且同句有航線／巡檢／規劃／結果或區域名稱。"""
-        if "首頁" not in c or any(w in c for w in self.NEG) or any(w in c for w in ("嗎", "怎麼", "如何")):
+        """把規劃成果放首頁的子句：含首頁與放置動詞（放到、顯示在…），且同句有航線／巡檢／規劃／結果或區域名稱。
+        v3.10：詢問（是否、嗎、？…）、否定與手冊查詢都不算。"""
+        if "首頁" not in c or any(w in c for w in self.NEG) or any(w in c for w in self.ASK) or \
+                any(w in c for w in self.HOME_ASK) or any(w in c for w in self.MANUAL_WORDS) or \
+                re.search(r"(?i)\b(qgc|px4)\b", c):
+            return False
+        if not any(w in c for w in self.HOME_PUT):
             return False
         return any(w in c for w in ("航線", "巡檢", "規劃", "結果", "路線")) or self._names_route_text(c)
 
