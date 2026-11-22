@@ -122,6 +122,8 @@ class M4bController:
             task["notes"].append(f"方向 {len(dirs)} 個超過上限 {self.cap}，請分批")
             return self._finish(task, "PARKED", ask=f"這句話包含 {len(dirs)} 件事，請先選最多 {self.cap} 件")
         task["directions"] = dirs
+        if "layout" in dirs:                                 # v3.9 §3：必要版面項目（只用於驗收與退回）
+            task["layout_items"] = self.parse_layout_items(raw)
         if "plan" in dirs:
             task["area_fixed"], task["area_status"] = self.resolve_area(task)
         qv = self.tools["embed_query"](raw) if "embed_query" in self.tools else None   # 第 1 段之後，1 次
@@ -163,11 +165,16 @@ class M4bController:
             task["artifacts"]["flight_notice"] = {"kind": "flight_notice", "by": "program"}
             task["notes"].append("程式補上飛控說明（模型未選 flight_request）")
         st = task["dir_status"]
+        if st.get("layout") not in (None, "DONE", "NEEDS_USER") and task.get("layout_items") and \
+                any(p["direction"] == "layout" for p in task["proposals"]):
+            st["layout"] = "PARTIAL"                         # v3.9：只開了部分版面項目
+            task["notes"].append("版面還缺：" + "；".join(f"{c or ''}{'＋' if c else ''}{pp}＝{v}"
+                                                           for c, pp, v in self.have(task).get("_layout_missing", [])))
         if any(s == "NEEDS_USER" for s in st.values()):
             status = "PARKED"
         elif all(s == "DONE" for s in st.values()) and st:
             status = "DONE"
-        elif any(s == "DONE" for s in st.values()):
+        elif any(s in ("DONE", "PARTIAL") for s in st.values()):
             status = "PARTIAL"
         else:
             status = "INCOMPLETE"
@@ -245,7 +252,7 @@ class M4bController:
         """版面子句：版面動詞＋命中元件名稱／別名或文字大小詞；對象是首頁、否定或詢問的不算。"""
         if "首頁" in c or any(w in c for w in self.NEG) or any(w in c for w in self.ASK):
             return False
-        if not any(v in c for v in self.LAYOUT_VERBS) and not re.search(r"[字文].{0,3}[大小]", c):
+        if not any(v in c for v in self.LAYOUT_VERBS) and not re.search(r"[字文].{0,4}[大小]", c):
             return False
         names = [w for n in self.graph.nodes.values() if n["cat"] == "C"
                  for w in [n["name"]] + list(n.get("aliases") or []) if len(w) >= 2]
@@ -336,7 +343,46 @@ class M4bController:
 
     # ---------- 方向內逐步 ----------
     def have(self, task):
-        return OC.have_from(task["artifacts"], task["proposals"])
+        return OC.have_from(task["artifacts"], task["proposals"], task.get("layout_items"))
+
+    POS = ("左上", "右上", "左下", "右下", "中央")
+
+    def parse_layout_items(self, text):
+        """v3.9 §3：從原句的「動作＋對象」解析必要版面項目 (元件或 None, 參數, 值)。只用於驗收與退回；
+        目標或值不明 → 值為 None（該項需要使用者補充）；解析不出任何項目 → 回 []（沿用「至少一張」的判定）。"""
+        items = []
+        comps = sorted(((w, n["id"]) for n in self.graph.nodes.values() if n["cat"] == "C"
+                        for w in [n["name"]] + list(n.get("aliases") or []) if len(w) >= 2), key=lambda x: -len(x[0]))
+        for c in self._clauses(text):
+            if not self._layout_clause(c):
+                continue
+            hit = next(((w, i) for w, i in comps if w in c), None)
+            cid = hit[1] if hit else None
+            if hit:                                        # 元件名稱本身含動詞字（例：高度顯示）→ 判斷動作時先去掉名稱
+                c = c.replace(hit[0], "")
+            if cid and self.graph.nodes[cid].get("locked") and any(v in c for v in ("隱藏", "關掉", "收起")):
+                continue                                   # 鎖定元件不可隱藏：不列為必要項目（程式照舊擋下）
+            if cid is None and re.search(r"(文字|字體|字型|字級|字)", c):
+                val = "特大" if "特大" in c else ("大" if re.search(r"大", c) else ("小" if "小" in c else ("中" if "中" in c else None)))
+                items.append((None, "P001", val))
+                continue
+            if cid is None:
+                continue
+            if any(v in c for v in ("顯示", "打開", "展開")):
+                items.append((cid, "P004", "顯示"))
+            elif any(v in c for v in ("隱藏", "關掉", "收起")):
+                items.append((cid, "P004", "隱藏"))
+            elif any(v in c for v in ("放大", "調大")):
+                items.append((cid, "P002", "放大"))
+            elif any(v in c for v in ("縮小", "調小")):
+                items.append((cid, "P002", "縮小"))
+            elif any(v in c for v in ("移到", "移動")):
+                items.append((cid, "P003", next((x for x in self.POS if x in c), None)))
+        out = []
+        for x in items:                                   # 同一改動重複提只算一項
+            if x not in out:
+                out.append(x)
+        return out
 
     def _run_direction(self, task, d, qv):
         if d == "plan" and task.get("area_status") in ("MANY", "NONE") and "area_record" not in task["artifacts"]:
@@ -475,6 +521,12 @@ class M4bController:
             for i in ids:
                 vals += [v for v in self.graph.nodes[i].get("allowed") or [] if v in task["text"]]
             return {"value": max(vals, key=len)} if vals else {}
+        if d == "layout" and task.get("layout_items"):         # v3.9：規則備援按缺項逐一補
+            miss = [x for x in self.have(task).get("_layout_missing", []) if x[2]]
+            if not miss:
+                return {"action": "FINISH", "ids": [], "params": {}}
+            c, pp, v = miss[0]
+            return {"action": "UI_LAYOUT_PROPOSE", "ids": ([c] if c else []) + [pp], "params": {"value": v}}
         if d == "plan":
             if "area_record" not in A:
                 ids = []
@@ -600,6 +652,8 @@ class M4bController:
         A = task["artifacts"]
         if d == "plan":
             return bool(A.get("route_preview") and A["route_preview"].get("verdict") == "pass")
+        if d == "layout" and task.get("layout_items"):
+            return "layout_proposal" in self.have(task)
         if d in ("ui", "layout", "color", "model"):
             return any(p["direction"] == d for p in task["proposals"])
         if d == "manual":

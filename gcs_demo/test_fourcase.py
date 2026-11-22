@@ -83,5 +83,75 @@ class ManualSearch(unittest.TestCase):
         self.assertEqual(man["glossary_hash"], RI.sha(json.dumps(RI.GLOSSARY, sort_keys=True)))   # 既有詞表沒動
 
 
+HIDE = '{"action":"UI_LAYOUT_PROPOSE","ids":["C016","P004"],"params":{"value":"隱藏"}}'
+BIG = '{"action":"UI_LAYOUT_PROPOSE","ids":["P001"],"params":{"value":"大"}}'
+F23 = "隱藏小地圖並把字體調大"
+
+
+class MultiLayoutA(unittest.TestCase):
+    def run_a(self, replies, text=F23):
+        m = scripted(['{"directions":["layout"]}'] + replies)
+        _, T = tools3(["C016", "P004", "P001"])
+        return M4bController(T, m, GRAPH, COUNTER).request(text)
+
+    def test_parse_items(self):
+        _, T = tools3([])
+        c = M4bController(T, None, GRAPH, COUNTER)
+        self.assertEqual(c.parse_layout_items(F23), [("C016", "P004", "隱藏"), (None, "P001", "大")])
+        self.assertEqual(c.parse_layout_items("把高度顯示縮小"), [("C012", "P002", "縮小")])
+        self.assertEqual(c.parse_layout_items("隱藏小地圖，隱藏小地圖"), [("C016", "P004", "隱藏")])
+
+    def test_both_items_done(self):
+        r = self.run_a([HIDE, BIG])
+        self.assertEqual(r["status"], "DONE")
+        self.assertEqual(len(r["proposals"]), 2)
+
+    def test_reversed_order_done(self):
+        r = self.run_a([BIG, HIDE])
+        self.assertEqual(r["status"], "DONE")
+
+    def test_only_one_then_finish_is_partial(self):
+        r = self.run_a([HIDE, '{"action":"FINISH","ids":[],"params":{}}'])
+        self.assertEqual(r["status"], "PARTIAL")
+        self.assertEqual(len(r["proposals"]), 1)
+        self.assertTrue(any("版面還缺" in n and "P001" in n for n in r["notes"]))
+
+    def test_repeat_same_change_rejected_then_rule_fills(self):
+        r = self.run_a([HIDE, HIDE, HIDE])
+        self.assertEqual(sorted(tuple(p["ids"]) for p in r["proposals"]), [("C016", "P004"), ("P001",)])
+        self.assertEqual(r["status"], "DONE")
+
+    def test_single_item_exactly_one(self):
+        m = scripted(['{"directions":["layout"]}', HIDE, HIDE])
+        _, T = tools3(["C016", "P004"])
+        r = M4bController(T, m, GRAPH, COUNTER).request("隱藏小地圖")
+        self.assertEqual((r["status"], len(r["proposals"])), ("DONE", 1))
+
+    def test_rule_fallback_opens_both(self):
+        _, T = tools3(["C016", "P004", "P001"])
+        r = M4bController(T, None, GRAPH, COUNTER).request(F23)
+        self.assertEqual((r["status"], len(r["proposals"])), ("DONE", 2))
+
+
+class MultiLayoutB(unittest.TestCase):
+    def test_plan_missing_one_item_rejected(self):
+        from .agent_planb import PlanBController
+        from .test_planb import plan, st
+        one = plan(st("s1", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P004"], {"value": "隱藏"}))
+        two = plan(st("s1", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P004"], {"value": "隱藏"}),
+                   st("s2", "layout", "UI_LAYOUT_PROPOSE", ["P001"], {"value": "大"}))
+        m = scripted(['{"directions":["layout"]}', one, two])
+        _, T = tools3(["C016", "P004", "P001"])
+        r = PlanBController(T, m, GRAPH, COUNTER).request(F23)
+        self.assertTrue(any("版面還缺" in e.get("reason", "") for e in r["plan_log"]))
+        self.assertEqual((r["status"], len(r["proposals"])), ("DONE", 2))
+
+    def test_rule_plan_builds_each_missing_item(self):
+        from .agent_planb import PlanBController
+        _, T = tools3(["C016", "P004", "P001"])
+        r = PlanBController(T, None, GRAPH, COUNTER).request(F23)
+        self.assertEqual((r["status"], len(r["proposals"])), ("DONE", 2))
+
+
 if __name__ == "__main__":
     unittest.main()

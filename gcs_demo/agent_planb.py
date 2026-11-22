@@ -98,6 +98,8 @@ class PlanBController(M4bController):
                 task["dir_status"][d] = "WAITING"
             elif ss and all(x in TERMINAL_OK for x in st) and self._dir_done(task, d):
                 task["dir_status"][d] = "DONE"
+            elif d == "layout" and task.get("layout_items") and any(p["direction"] == "layout" for p in task["proposals"]):
+                task["dir_status"][d] = "PARTIAL"            # v3.9：只開了部分版面項目
             else:
                 task["dir_status"][d] = "INCOMPLETE"
 
@@ -300,6 +302,13 @@ class PlanBController(M4bController):
             for k in prod.get(x["id"], set()):
                 sim[k] = "（計畫中）"
         gaps = {d: OC.missing(d, sim) for d in dirs if OC.missing(d, sim)}
+        if "layout" in dirs and task.get("layout_items"):     # v3.9 §3：逐項檢查版面步驟有沒有涵蓋每個必要項目
+            planned = {OC.layout_key(x) for x in pend + out if x["action"] == "UI_LAYOUT_PROPOSE"} |                 {OC.layout_key(p) for p in task.get("proposals") or [] if p.get("direction") == "layout"}
+            miss = [x for x in task["layout_items"] if x[1] and x[2] and tuple(x) not in planned]
+            gaps.pop("layout", None)
+            if miss:
+                return False, None, "計畫不完整：版面還缺 " + "；".join(
+                    f"{c + '＋' if c else ''}{pp}，value＝{v}" for c, pp, v in miss)
         if gaps:
             return False, None, "計畫不完整：" + "；".join(f"{d} 還缺 {'→'.join(OC.ZH[k] for k in m)}" for d, m in gaps.items())
         return True, out, ""
@@ -364,6 +373,15 @@ class PlanBController(M4bController):
                 n += 1
                 st = {"id": sid, "direction": d, "action": a, "ids": [], "params": {}, "after": [], "bind": {},
                       "when": None, "require": {}}
+                if a == "UI_LAYOUT_PROPOSE" and task.get("layout_items"):   # v3.9：按缺項各建一步
+                    miss = [x for x in self.have(task).get("_layout_missing", []) if x[2]]
+                    for k, (c, pp, v) in enumerate(miss):
+                        if k:
+                            sid = f"s{n}"
+                            n += 1
+                        steps.append({"id": sid, "direction": d, "action": a, "ids": ([c] if c else []) + [pp],
+                                      "params": {"value": v}, "after": [], "bind": {}, "when": None, "require": {}})
+                    continue
                 if a == "QUERY_AREA" or a in ID_INPUT:          # 方向內第一個動作：規則腳本選 ID 與允許值
                     rs = self._rule_step(task, d)
                     st["ids"], st["params"] = rs["ids"], rs["params"]

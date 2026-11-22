@@ -32,8 +32,16 @@ ACTION_ZH = {"QUERY_AREA": "查詢巡檢區域（需要：區域 ID；產生：�
              "REPORT_DRAFT": "產生報告草稿（不需要 ID）", "DECLINE_FLIGHT": "回覆飛控需用指令區的固定說明（不需要 ID）"}
 
 
-def have_from(artifacts, proposals):
-    """由實際成果算出 {成果: 摘要}。"""
+def layout_key(p):
+    """提案的版面鍵：(元件或 None, 參數, 值)。"""
+    cs = [i for i in p["ids"] if i.startswith("C")]
+    ps = [i for i in p["ids"] if i.startswith("P")]
+    return (cs[0] if cs else None, ps[0] if ps else None, p["params"].get("value"))
+
+
+def have_from(artifacts, proposals, layout_items=None):
+    """由實際成果算出 {成果: 摘要}。layout_items（v3.9 §3）＝原句解析出的必要版面項目；
+    有項目時，全部項目都有 PROPOSED 提案才算「版面提案」已產生，缺項記在 _layout_missing。"""
     A = artifacts or {}
     h = {}
     if "area_record" in A:
@@ -52,6 +60,15 @@ def have_from(artifacts, proposals):
                "model": "model_proposal"}.get(p.get("direction"))
         if key:
             h[key] = f"{p['action']} {'、'.join(p['ids'])} {''.join(p['params'].values())}".strip()
+    items = [tuple(x) for x in (layout_items or []) if x[1] and x[2]]
+    if items:
+        got = {layout_key(p) for p in proposals or [] if p.get("direction") == "layout" and p.get("state") == "PROPOSED"}
+        miss = [x for x in items if x not in got]
+        h.pop("layout_proposal", None)
+        if miss:
+            h["_layout_missing"] = miss
+        else:
+            h["layout_proposal"] = "、".join(f"{c or ''}{'＋' if c else ''}{pp}＝{v}" for c, pp, v in items)
     for k in ("manual_claims", "qa_claims", "report_draft", "flight_notice"):
         if k in A:
             v = A[k].get("verdict")
@@ -86,14 +103,17 @@ def executable(direction, actions, have):
 def summary(directions, have, statuses=None):
     """白話成果摘要（同時給提示與紀錄）。"""
     lines = []
-    done = [f"{ZH[k]}：{v}" for k, v in have.items() if k != "route_preview_pass"]
+    done = [f"{ZH[k]}：{v}" for k, v in have.items() if k not in ("route_preview_pass", "_layout_missing")]
     lines.append("已有：" + ("；".join(done) if done else "（還沒有任何成果）"))
     for d in directions:
         if legit_skip(d, have):
             lines.append(f"{d}：預覽不合格，依規則不放首頁（合法略過）")
             continue
         m = missing(d, have)
-        if m:
+        if d == "layout" and have.get("_layout_missing"):
+            lines.append("layout 還缺這些版面提案：" + "；".join(
+                f"{c + '＋' if c else ''}{pp}，value＝{v}" for c, pp, v in have["_layout_missing"]))
+        elif m:
             lines.append(f"{d} 還缺：" + "→".join(ZH[k] for k in m))
         else:
             lines.append(f"{d}：必要成果已齊")
