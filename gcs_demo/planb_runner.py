@@ -69,6 +69,7 @@ def controller(*a, **kw):
 
 R4.M4bController = controller
 R4.HARNESS["name"] = "planb-v9"
+R4.RUN_PROBE = False                         # v3.9：B 不重做混合檢索探測，引用 A 同包的紀錄（見 RUN_INFO.shared_from_a）
 _run_case = R4.run_case
 
 

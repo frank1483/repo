@@ -211,5 +211,88 @@ class CounterExamples(unittest.TestCase):
         self.assertIn("版面還缺（尚未開窗）", r["reply_zh"])
 
 
+class Review0429(unittest.TestCase):
+    """CODEX-APP-0429 的四個阻擋。"""
+
+    def test_question_with_wrong_layout_direction_opens_nothing(self):
+        from .agent_planb import PlanBController
+        from .test_planb import plan, st
+        q = "小地圖怎麼隱藏？"
+        self.assertEqual(corr(q, ["layout"])[0], [])
+        _, T = tools3(["C016", "P004"])
+        c = M4bController(T, None, GRAPH, COUNTER)
+        self.assertEqual(c.parse_layout_items(q, negated=True), [("C016", "P004", "隱藏")])
+        ra = M4bController(T, scripted(['{"directions":["layout"]}', HIDE, HIDE]), GRAPH, COUNTER).request(q)
+        _, T2 = tools3(["C016", "P004"])
+        bad = plan(st("s1", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P004"], {"value": "隱藏"}))
+        rb = PlanBController(T2, scripted(['{"directions":["layout"]}', bad, bad, bad]), GRAPH, COUNTER).request(q)
+        for r in (ra, rb):
+            self.assertEqual(r["proposals"], [])
+
+    def test_question_plus_positive_operation_keeps_positive(self):
+        m = scripted(['{"directions":["layout"]}', HIDE, BIG])
+        _, T = tools3(["C016", "P004", "P001"])
+        r = M4bController(T, m, GRAPH, COUNTER).request("小地圖怎麼隱藏？先把字體調大")
+        self.assertEqual([tuple(p["ids"]) for p in r["proposals"]], [("P001",)])
+
+    def test_manual_source_by_document_phrase(self):
+        src = M4bController._manual_source
+        self.assertEqual(src(None, "查 QGC 手冊中怎麼連 PX4"), "qgc")
+        self.assertEqual(src(None, "PX4 的文件裡怎麼用 QGC 校正"), "px4")
+        self.assertEqual(src(None, "不要查 QGC 手冊，查 PX4 手冊的返航參數"), "px4")
+
+    def test_manual_negation(self):
+        self.assertNotIn("manual", corr("不要查 QGC 手冊", ["chat"])[0])
+        self.assertIn("manual", corr("不要查 QGC 手冊，查 PX4 手冊的返航參數", ["chat"])[0])
+
+    def test_probe_gate(self):
+        from .m4b_runner import probe_blocked
+        ok = {"rows": [{"mode": "rrf", "degraded": False}] * 8}
+        self.assertFalse(probe_blocked(ok))
+        self.assertTrue(probe_blocked({"rows": ok["rows"][:7] + [{"mode": "lexical_only", "degraded": True}]}))
+
+    def test_b_does_not_rerun_probe(self):
+        from . import planb_runner  # noqa: F401  匯入即設定
+        from . import m4b_runner as R4m
+        self.assertFalse(R4m.RUN_PROBE)
+        R4m.RUN_PROBE = True
+
+    def test_new_a_entry_uses_strict_params(self):
+        import tempfile
+        from . import m4b_runner as R4m
+        seen = []
+
+        def factory(log):
+            def model(call):
+                seen.append(call.get("schema"))
+                return '{"directions":["color"]}' if call.get("purpose") == "stage1" else                     '{"action":"UI_THEME_PROPOSE","ids":["T001"],"params":{}}'
+            return model
+        case = {"id": "X", "text": "換成深色主題", "gold_dirs": ["color"], "expect_status": "DONE",
+                "expect_proposals": [], "expect_artifacts": {}}
+        cond = {"id": "A-s6-b30", "group": "A", "steps": 6, "budget": 30}
+        import sys
+        from . import agent_m4b
+        pb = sys.modules.get("gcs_demo.planb_runner")       # 其他測試匯入 planb_runner 會改寫執行器；這裡用 A 的原始入口
+        run = getattr(pb, "_run_case", R4m.run_case) if pb else R4m.run_case
+        saved = R4m.M4bController
+        R4m.M4bController = agent_m4b.M4bController
+        try:
+            run(case, cond, factory, GRAPH, COUNTER, tempfile.mkdtemp())
+        finally:
+            R4m.M4bController = saved
+        steps = [sc for sc in seen if sc and "anyOf" in sc]
+        self.assertTrue(steps)
+        p = steps[0]["anyOf"][0]["properties"]["params"]
+        self.assertEqual((p.get("properties"), p.get("additionalProperties")), ({}, False))
+
+    def test_b_terminal_carries_corrections(self):
+        from .agent_planb import PlanBController
+        pre = {"directions": ["layout"], "stage1_calls": 1, "stage1_raw": ["ui"], "stage1_augmented": None,
+               "stage1_corrections": [{"op": "add", "dir": "layout"}], "stage1_source": "model",
+               "terminal": {"status": "PARKED", "reply_zh": "x", "reason": "y"}}
+        rb = PlanBController({}, scripted([]), GRAPH, COUNTER, preset=pre).request("x")
+        self.assertEqual(rb["stage1_corrections"], pre["stage1_corrections"])
+
+
 if __name__ == "__main__":
     unittest.main()

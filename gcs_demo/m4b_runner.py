@@ -52,6 +52,8 @@ def deadline_for(purpose):
     return DEADLINE_S.get(purpose.split(":")[0], 60.0)
 
 
+STRICT_PARAMS_A = True     # v3.9（CODEX-APP-0429 第 4 點）：A 的逐步 schema 不收參數的動作 params 必須為空物件
+RUN_PROBE = True           # v3.9：smoke 開頭做混合檢索探測；B 引用 A 同包的探測紀錄，不重做
 EXTRA_INFO = None          # 可呼叫物件：回傳要併入 RUN_INFO 的欄位；None＝不加（A、B 的正式執行都不設）
 MAX_TOKENS = {"summary": 256, "plan": 512, "replan": 512}
 HARNESS = {"name": "m4b-v5"}
@@ -188,6 +190,8 @@ def run_case(case, cond, model_factory, graph, counter, work):
     model = None if cond["group"] == "B0" else model_factory(calls)
     c = M4bController(tools, model, graph, counter, ledger_cfg={"per_sentence": cond["budget"]}, steps_max=cond["steps"],
                       summary_llm=False)            # v3：整理回覆固定用模板（CODEX-APP-0406 第 1 點）
+    if STRICT_PARAMS_A and type(c) is M4bController:  # v3.9：新版 A 保留第四輪的空參數約束（B 的計畫 schema 不受影響）
+        c.strict_params = True
     t0 = time.monotonic()
     err = tb = None
     try:
@@ -239,6 +243,11 @@ def _timing(rs):
 
 
 PROBE_QUERIES = [("F20", "查 QGC 文件：怎麼校正羅盤"), ("C24", "PX4 文件中任務模式的航點接受半徑")]
+
+
+def probe_blocked(probe):
+    """任何一列不是 rrf 或有降級 → 擋下生成。"""
+    return any(r["mode"] != "rrf" or r["degraded"] for r in probe["rows"])
 
 
 def retrieval_probe():
@@ -373,8 +382,11 @@ def main(argv=None):
         info["token_counter"] = {"impl": "gcs_demo/gemma4_tokenizer.py（llama.cpp gemma4 規則，曾與伺服器 token ID 比對 12/12）",
                                  "blob_digest": tok["blob_digest"], "vocab_merges_types_sha256": tok["vocab_merges_types_sha256"],
                                  "n_tokens": tok["n_tokens"], "n_merges": tok["n_merges"]}
-        if a.phase == "smoke":                                  # v3.9：混合檢索前五（F20、C24），用正式索引與查詢向量
+        if a.phase == "smoke" and RUN_PROBE:                    # v3.9：混合檢索前五（F20、C24），用正式索引與查詢向量
             info["retrieval_probe"] = retrieval_probe()
+            if probe_blocked(info["retrieval_probe"]) and not a.fake:                          # 沒有真的完成混合檢索 → 不進生成（CODEX-APP-0429 第 3 點）
+                info["retrieval_probe"]["blocked"] = True
+                raise SystemExit("混合檢索探測沒有完成（降級或不是 rrf），不進入生成案例；見 RUN_INFO.retrieval_probe")
         sampler.start()
         with open(os.path.join(a.out, "results.jsonl"), "a", encoding="utf-8") as f:
             for cond in CONDITIONS[a.phase]:

@@ -52,6 +52,7 @@ class PlanBController(M4bController):
             return {"status": t["status"], "reply_zh": t["reply_zh"], "reply_source": "shared_from_A", "proposals": [],
                     "directions": list(self.preset.get("directions") or []), "stage1_raw": self.preset.get("stage1_raw"),
                     "stage1_augmented": self.preset.get("stage1_augmented"), "stage1_source": self.preset.get("stage1_source"),
+                    "stage1_corrections": self.preset.get("stage1_corrections"),
                     "dir_status": {}, "steps": [], "notes": ["第 1 段結果沿用方案 A：" + t["reason"]],
                     "calls_used": n, "traces": [{"purpose": "stage1_shared", "replies": [], "calls": n}],
                     "retrieval": None, "packing": None, "artifacts": {}, "qv_ok": None, "t_pre_summary_s": 0.0,

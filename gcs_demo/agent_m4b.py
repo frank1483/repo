@@ -250,11 +250,13 @@ class M4bController:
     ASK = ("嗎", "怎麼", "如何", "是什麼", "什麼是", "多少", "？", "?")
 
     def _clauses(self, text):
-        return [c.strip() for c in re.split(r"[，,。；;、]|然後|並且|並|另外|再|接著|和|跟|以及", text) if c.strip()]
+        # 問號、驚嘆號跟著前一個子句（保留詢問語氣），其他分隔符號與連接詞直接切開
+        return [c.strip() for c in re.split(r"(?<=[？?！!])|[，,。；;、]|然後|並且|並|另外|再|接著|和|跟|以及", text) if c.strip()]
 
     def _layout_clause(self, c, allow_neg=False):
-        """版面子句：版面動詞＋命中元件名稱／別名或文字大小詞；對象是首頁、否定或詢問的不算（allow_neg＝只看否定以外的條件）。"""
-        if "首頁" in c or (not allow_neg and any(w in c for w in self.NEG)) or any(w in c for w in self.ASK):
+        """版面子句：版面動詞＋命中元件名稱／別名或文字大小詞；對象是首頁、否定或詢問的不算
+        （allow_neg＝不看否定與詢問，只看其他條件；用來找出「不要…」「…怎麼…？」這類不該開提案的版面子句）。"""
+        if "首頁" in c or (not allow_neg and (any(w in c for w in self.NEG) or any(w in c for w in self.ASK))):
             return False
         if not any(v in c for v in self.LAYOUT_VERBS) and not re.search(r"[字文].{0,4}[大小]", c):
             return False
@@ -283,10 +285,10 @@ class M4bController:
         if lay and not home and "ui" in out:
             out.remove("ui")
             fix.append({"op": "remove", "dir": "ui", "why": "只有版面要求，沒有把規劃成果放首頁"})
-        neg = [c for c in cl if any(w in c for w in self.NEG) and self._layout_clause(c, allow_neg=True)]
-        if neg and not lay and "layout" in out:            # v3.9 修正：只有「不要…」的版面子句 → 不留 layout
+        neg = [c for c in cl if self._blocked_clause(c) and self._layout_clause(c, allow_neg=True)]
+        if neg and not lay and "layout" in out:            # v3.9 修正：只有否定或詢問的版面子句 → 不留 layout
             out.remove("layout")
-            fix.append({"op": "remove", "dir": "layout", "why": "版面要求是否定句：" + "／".join(neg)})
+            fix.append({"op": "remove", "dir": "layout", "why": "版面子句是否定或詢問：" + "／".join(neg)})
         if home and not lay and "layout" in out:
             out.remove("layout")
             fix.append({"op": "remove", "dir": "layout", "why": "只有把規劃成果放首頁，沒有版面子句：" + "／".join(home)})
@@ -302,14 +304,35 @@ class M4bController:
             task["notes"].append("第 1 段方向經程式校正：" + "；".join(f"{f['op']} {f['dir']}" for f in fix))
         return out
 
+    def _blocked_clause(self, c):
+        return any(w in c for w in self.NEG) or any(w in c for w in self.ASK)
+
+    MANUAL_WORDS = ("手冊", "文件", "文檔", "說明書")
+
     def _manual_explicit(self, text):
-        return any(w in text for w in ("手冊", "文件", "文檔", "說明書")) or bool(re.search(r"(?i)\b(qgc|px4)\b.*(怎麼|如何|設定|參數|哪裡)", text))
+        """v3.9 修正：逐子句判斷；「不要查…手冊」這類否定子句不算指定手冊。"""
+        for c in self._clauses(text):
+            if any(w in c for w in self.NEG):
+                continue
+            if any(w in c for w in self.MANUAL_WORDS) or re.search(r"(?i)\b(qgc|px4)\b.*(怎麼|如何|設定|參數|哪裡)", c):
+                return True
+        return False
 
     def _is_question(self, c):
         return any(w in c for w in self.ASK)
 
     def _manual_source(self, text):
-        q, p = bool(re.search(r"(?i)qgc|qgroundcontrol", text)), bool(re.search(r"(?i)px4", text))
+        """v3.9 修正：文件來源看「產品名＋（的）手冊／文件」的組合；沒有這種組合時，只出現一個產品名才限定。
+        例：「查 QGC 手冊中怎麼連 PX4」→ qgc（PX4 是內容對象，不是文件來源）。否定子句不算。"""
+        pos = [c for c in re.split(r"[，,。；;]", text) if not any(w in c for w in M4bController.NEG)]
+        joined = "，".join(pos)
+        m = re.findall(r"(?i)(qgc|qgroundcontrol|px4)\s*的?\s*(?:手冊|文件|文檔|說明書)", joined)
+        srcs = {("px4" if x.lower() == "px4" else "qgc") for x in m}
+        if len(srcs) == 1:
+            return srcs.pop()
+        if srcs:
+            return None
+        q, p = bool(re.search(r"(?i)qgc|qgroundcontrol", joined)), bool(re.search(r"(?i)px4", joined))
         return "qgc" if q and not p else ("px4" if p and not q else None)
 
     def _names_route(self, task):
@@ -362,8 +385,8 @@ class M4bController:
         comps = sorted(((w, n["id"]) for n in self.graph.nodes.values() if n["cat"] == "C"
                         for w in [n["name"]] + list(n.get("aliases") or []) if len(w) >= 2), key=lambda x: -len(x[0]))
         for c in self._clauses(text):
-            if negated:                                    # 只看「不要…」的版面子句（用來擋下相反的提案）
-                if not (any(w in c for w in self.NEG) and self._layout_clause(c, allow_neg=True)):
+            if negated:                                    # 只看否定或詢問的版面子句（用來擋下不該開的提案）
+                if not (self._blocked_clause(c) and self._layout_clause(c, allow_neg=True)):
                     continue
             elif not self._layout_clause(c):
                 continue
