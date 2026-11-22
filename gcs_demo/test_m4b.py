@@ -34,7 +34,7 @@ def tools(targets):
         "verify_preview": lambda ref: log.append(("verify", ref)) or {"result": "pass", "preview_ref": "PV1",
                                                                        "est_end_pct": 61.5},
         "propose_home_route": lambda ref: log.append(("home", ref)) or {"shown_hash": "h1"},
-        "manual_search": lambda text, qv: {"results": [], "degraded": False},
+        "manual_search": lambda text, qv, **kw: {"results": [], "degraded": False},
     }
 
 

@@ -31,6 +31,10 @@ GLOSSARY = {"返航": ["rtl", "return"], "起飛": ["takeoff"], "降落": ["land
             "電池": ["battery"], "電量": ["battery"], "禁航區": ["geofence", "no-fly"], "航點": ["waypoint"],
             "參數": ["parameter"], "任務": ["mission"], "校準": ["calibration"], "感測器": ["sensor"],
             "飛行模式": ["flight mode"], "地理圍欄": ["geofence"], "遙控器": ["rc", "radio"]}
+# v3.9 §2：查詢端詞表 v2（只在手冊查詢的關鍵字端使用；不改 GLOSSARY，它的雜湊已記在凍結索引的 manifest）
+QUERY_GLOSSARY_V2 = {"羅盤": ["compass"], "指南針": ["compass"], "校正": ["calibration", "calibrate"],
+                     "校準": ["calibration", "calibrate"], "感測器": ["sensor", "sensors"], "圍欄": ["geofence"]}
+HEADING_BOOST = 0.0      # v3.9：標題詞加權倍數。離線關鍵字對照：0.25～1.0 讓 F20 進前五但 C24 掉出，取捨未定前關閉（0＝不加權）
 TOKEN_RE = re.compile(r"[a-z0-9_]+")
 
 
@@ -176,15 +180,22 @@ class Index:
         lex = json.load(open(os.path.join(index_dir, "lexical.json"), encoding="utf-8"))
         self.N, self.avgdl, self.df = lex["N"], lex["avgdl"], lex["df"]
         self.toks = [tokens(c["text"]) for c in self.chunks]
+        self.htoks = [set(tokens((c.get("heading_path") or "").split(">")[-1])) for c in self.chunks]
         self.calls = []        # 每次 embedding 請求：端點、延遲、成功與否（與 LLM 呼叫分開記）
 
-    def _bm25(self, q, top=50, k1=1.2, b=0.75):
+    def _allowed(self, manual):
+        return None if manual is None else {i for i, c in enumerate(self.chunks) if c["manual"] == manual}
+
+    def _bm25(self, q, top=50, k1=1.2, b=0.75, manual=None, extra=None, heading_boost=0.0):
         qt = tokens(q)
-        for zh, en in GLOSSARY.items():
+        for zh, en in list(GLOSSARY.items()) + list((extra or {}).items()):
             if zh in q:
                 qt += [t for e in en for t in tokens(e)]
+        allowed = self._allowed(manual)                 # 限定來源：在取前 top 名之前過濾
         scores = []
         for i, toks in enumerate(self.toks):
+            if allowed is not None and i not in allowed:
+                continue
             tf = Counter(toks)
             s = 0.0
             for t in set(qt):
@@ -192,12 +203,16 @@ class Index:
                     n = self.df.get(t, 0)
                     idf = math.log(1 + (self.N - n + 0.5) / (n + 0.5))
                     s += idf * tf[t] * (k1 + 1) / (tf[t] + k1 * (1 - b + b * len(toks) / self.avgdl))
+            if heading_boost and s > 0:                 # v3.9：標題詞加權（只在手冊查詢帶查詢端詞表時啟用）
+                ht = self.htoks[i]
+                s += heading_boost * sum(math.log(1 + (self.N - self.df.get(t, 0) + 0.5) / (self.df.get(t, 0) + 0.5))
+                                         for t in set(qt) if t in ht)
             if s > 0:
                 scores.append((s, i))
         scores.sort(key=lambda x: -x[0])
         return [i for _, i in scores[:top]]
 
-    def _vector(self, q, top=50, vector=None):
+    def _vector(self, q, top=50, vector=None, manual=None):
         t0 = time.monotonic()
         try:
             qv = vector or embed([PREFIX_QUERY.format(query=q)], self.url)[0]
@@ -212,7 +227,10 @@ class Index:
         d = self.dim
         scores = []
         v = self.vec
+        allowed = self._allowed(manual)
         for i in range(len(self.chunks)):
+            if allowed is not None and i not in allowed:
+                continue
             off = i * d
             s = 0.0
             for j in range(d):
@@ -236,8 +254,8 @@ class Index:
                                "stage": "pre_llm", "error": repr(e)})
             return None
 
-    def search(self, q, k=5, use_vector=True, vector=None, require_pre=False):
-        lex = self._bm25(q)
+    def search(self, q, k=5, use_vector=True, vector=None, require_pre=False, manual=None, extra=None):
+        lex = self._bm25(q, manual=manual, extra=extra, heading_boost=HEADING_BOOST if extra else 0.0)
         reason = None
         try:
             if not use_vector:
@@ -245,9 +263,9 @@ class Index:
             elif vector is None and require_pre:
                 vec, reason = [], "no_query_vector"
             elif vector is None:
-                vec = self._vector(q)
+                vec = self._vector(q, manual=manual)
             else:
-                vec = self._vector(q, vector=vector)
+                vec = self._vector(q, vector=vector, manual=manual)
         except Exception as e:  # noqa: BLE001 - 向量不可用時只用關鍵字並標降級
             vec, reason = [], "vector_error:" + repr(e)[:80]
         degraded = reason is not None

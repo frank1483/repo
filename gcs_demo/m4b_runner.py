@@ -175,8 +175,9 @@ def run_case(case, cond, model_factory, graph, counter, work):
     n_embed_before = len(idx.calls) if idx else 0
     if idx is not None:
         tools["embed_query"] = lambda text: idx.query_vector(text) if R._INDEX["use_vector"] else None
-        tools["manual_search"] = lambda text, qv: idx.search(text, use_vector=R._INDEX["use_vector"], vector=qv,
-                                                            require_pre=R._INDEX["use_vector"])
+        tools["manual_search"] = lambda text, qv, manual=None, extra=None: idx.search(
+            text, use_vector=R._INDEX["use_vector"], vector=qv, require_pre=R._INDEX["use_vector"], manual=manual,
+            extra=extra)
     calls = []
     model = None if cond["group"] == "B0" else model_factory(calls)
     c = M4bController(tools, model, graph, counter, ledger_cfg={"per_sentence": cond["budget"]}, steps_max=cond["steps"],
@@ -303,6 +304,9 @@ def main(argv=None):
     global CASES
     CASES = CASES_BY_PHASE[a.phase]
     info["cases_file"] = os.path.basename(CASES)
+    from .rag_index import QUERY_GLOSSARY_V2
+    info["query_glossary_v2_sha256"] = R.hashlib.sha256(json.dumps(QUERY_GLOSSARY_V2, ensure_ascii=False,
+                                                                   sort_keys=True).encode("utf-8")).hexdigest()
     cases = json.load(open(CASES, encoding="utf-8"))["cases"]
     proc = gw = None
     sampler = R.RamSampler()

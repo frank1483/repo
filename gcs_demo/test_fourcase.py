@@ -48,5 +48,40 @@ class DirectionCorrection(unittest.TestCase):
         self.assertEqual([(p["ids"], p["params"]) for p in r["proposals"]], [(["C007", "P004"], {"value": "顯示"})])
 
 
+class ManualSearch(unittest.TestCase):
+    def test_f20_direction_manual_only(self):
+        self.assertEqual(corr("查 QGC 文件：怎麼校正羅盤", ["manual", "qa"])[0], ["manual"])
+
+    def test_manual_plus_separate_question_keeps_qa(self):
+        out, _ = corr("查 QGC 文件的羅盤校正，另外現在電量多少？", ["manual", "qa"])
+        self.assertEqual(set(out), {"manual", "qa"})
+
+    def test_source_and_glossary_passed(self):
+        seen = {}
+        m = scripted(['{"directions":["manual"]}', '{"action":"MANUAL_SEARCH","ids":[],"params":{}}'])
+        _, T = tools3([])
+        T["manual_search"] = lambda text, qv, **kw: seen.update(kw) or {"results": [], "degraded": False}
+        r = M4bController(T, m, GRAPH, COUNTER).request("查 QGC 文件：怎麼校正羅盤")
+        self.assertEqual(seen["manual"], "qgc")
+        self.assertEqual(seen["extra"]["羅盤"], ["compass"])
+        self.assertTrue(any("查無可用出處" in n for n in r["notes"]))
+
+    def test_unspecified_source_is_none(self):
+        self.assertIsNone(M4bController._manual_source(None, "手冊裡怎麼設定任務航點"))
+        self.assertEqual(M4bController._manual_source(None, "PX4 手冊的參數"), "px4")
+
+    def test_real_index_filter_and_glossary_unchanged(self):
+        import os
+        from . import rag_index as RI
+        d = r"C:/Users/Administrator/Documents/碩士論文/adr0002_rag_v1/index_v1"
+        if not os.path.exists(os.path.join(d, "INDEX_MANIFEST.json")):
+            self.skipTest("缺凍結索引")
+        idx = RI.Index(d)
+        r = idx.search("查 QGC 文件：怎麼校正羅盤", k=10, use_vector=False, manual="qgc", extra=RI.QUERY_GLOSSARY_V2)
+        self.assertTrue(r["results"] and all(x["manual"] == "qgc" for x in r["results"]))
+        man = json.load(open(os.path.join(d, "INDEX_MANIFEST.json"), encoding="utf-8"))
+        self.assertEqual(man["glossary_hash"], RI.sha(json.dumps(RI.GLOSSARY, sort_keys=True)))   # 既有詞表沒動
+
+
 if __name__ == "__main__":
     unittest.main()

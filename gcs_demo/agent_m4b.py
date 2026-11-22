@@ -275,10 +275,27 @@ class M4bController:
         if home and not lay and "layout" in out:
             out.remove("layout")
             fix.append({"op": "remove", "dir": "layout", "why": "只有把規劃成果放首頁，沒有版面子句：" + "／".join(home)})
+        if self._manual_explicit(task["text"]):           # v3.9 §2：明確指定手冊 → manual；沒有獨立問答子句就不留 qa
+            if "manual" not in out:
+                out.append("manual")
+                fix.append({"op": "add", "dir": "manual", "why": "明確指定手冊或文件"})
+            if "qa" in out and not any(self._is_question(c) and not self._manual_explicit(c) for c in cl):
+                out.remove("qa")
+                fix.append({"op": "remove", "dir": "qa", "why": "手冊查詢不重複分到問答"})
         if fix:
             task["stage1_corrections"] = fix
             task["notes"].append("第 1 段方向經程式校正：" + "；".join(f"{f['op']} {f['dir']}" for f in fix))
         return out
+
+    def _manual_explicit(self, text):
+        return any(w in text for w in ("手冊", "文件", "文檔", "說明書")) or bool(re.search(r"(?i)\b(qgc|px4)\b.*(怎麼|如何|設定|參數|哪裡)", text))
+
+    def _is_question(self, c):
+        return any(w in c for w in self.ASK)
+
+    def _manual_source(self, text):
+        q, p = bool(re.search(r"(?i)qgc|qgroundcontrol", text)), bool(re.search(r"(?i)px4", text))
+        return "qgc" if q and not p else ("px4" if p and not q else None)
 
     def _names_route(self, task):
         """原句明確指向某條航線：提到區域名稱／別名，或含規劃關鍵字。"""
@@ -552,7 +569,12 @@ class M4bController:
             self._propose(task, d, a, xs, {}, None)
             return "OK"
         if a == "MANUAL_SEARCH":
-            r = T["manual_search"](task["text"], qv) if "manual_search" in T else {"results": [], "status": "NOT_LOADED"}
+            src = self._manual_source(task["text"])         # v3.9 §2：指定 QGC／PX4 時限定來源，查詢端詞表 v2
+            from .rag_index import QUERY_GLOSSARY_V2
+            r = T["manual_search"](task["text"], qv, manual=src, extra=QUERY_GLOSSARY_V2) if "manual_search" in T \
+                else {"results": [], "status": "NOT_LOADED"}
+            if src and not r.get("results"):
+                task["notes"].append(f"指定的 {src.upper()} 手冊查無可用出處")
             A["manual_claims"] = {"kind": "manual_claims", "verdict": "ok" if r.get("results") else "not_found",
                                   "refs": [{k: x[k] for k in ("manual", "path", "heading_path", "version", "chunk_id")}
                                            | {"excerpt": x["text"][:400]} for x in r.get("results", [])],
