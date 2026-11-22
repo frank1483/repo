@@ -28,7 +28,8 @@ from .route_recheck import make_route_recheck
 
 TW = timezone(timedelta(hours=8))
 TEST_VALUES = {"lock_wait_s": 0.2, "header_cap": 8192, "max_area_vertices": 50, "max_area_diameter_m": 5000.0,
-               "max_home_distance_m": 20000.0, "max_redisplay": 2, "label_max": 40}
+               "max_home_distance_m": 20000.0, "max_redisplay": 2, "label_max": 40,
+               "confirm_token_ttl_s": 600.0}    # G0-11：確認權杖期限（測試值 10 分鐘，待凍結）
 BODY_CAP = {"/api/session/open": 1024, "/api/area/submit": 16384, "/api/preview/generate": 65536,
             "/api/preview/verify": 16384, "/api/preview/get": 4096, "/api/preview/apply_check": 8192,
             "/api/preview/presented": 8192, "/api/preview/commit": 8192,
@@ -179,7 +180,11 @@ class PreviewService:
         self.routes = {}          # route_ref → generate output
         self.previews = {}        # artifact_id → record
         self.shown = {}           # shown_hash → {check, preview, slot, intent, draft}
-        self.tokens = {}          # confirm_token → {shown_hash, slot, intent, used}
+        self.tokens = {}          # confirm_token → {shown_hash, slot, intent, state, expires, preview}
+        self.tok_lock = threading.Lock()   # G0-9／G0-11：權杖狀態只在這把小鎖內改（不經 self.lock，生產端可直接撤銷）
+        self.now = time.monotonic          # 服務端單調時鐘（測試可替換）
+        self.current_preview = {}  # (principal, slot, draft_id) → (preview_ref, draft_rev)
+        self.superseded = {}       # preview_ref → reason
         self.intents = {}         # apply_intent_id → {redisplays}
         self.idem = {}            # (principal, boot, slot, nonce) → result
         self.seq = 0
@@ -324,10 +329,33 @@ class PreviewService:
     def _vehicle(self, snap):
         return Vehicle(**{k: v for k, v in snap["vehicle"].items() if k != "airframe_profile"})
 
+    # --- G0-9：預覽被取代
+    def supersede_preview(self, preview_ref, reason="superseded", mark=True):
+        """把舊預覽標為 SUPERSEDED：綁定它的權杖（已發出或提交中、尚未生效）全部撤銷。已生效的提交不受影響。
+        mark=False：只撤銷權杖、不標預覽（同一預覽換新草稿版本時用）。"""
+        with self.tok_lock:
+            if mark:
+                self.superseded[preview_ref] = reason
+            n = 0
+            for t in self.tokens.values():
+                if t["preview"] == preview_ref and t["state"] in ("ISSUED", "INFLIGHT"):
+                    t["state"], t["revoked"] = "REVOKED", reason
+                    n += 1
+            return n
+
     def apply_check(self, principal, sid, b):
         rec = self.previews.get(b["preview_ref"])
         if rec is None:
             raise ApiError("NOT_FOUND", ["preview_ref"])
+        if b["preview_ref"] in self.superseded:
+            raise ApiError("CONFIRM_TOKEN_STALE", ["preview_superseded"])
+        k = (principal, b["target_slot_id"], b["draft_id"])
+        old = self.current_preview.get(k)
+        if old and old[0] != b["preview_ref"]:            # 同一草稿改用新預覽 → 舊預覽 SUPERSEDED
+            self.supersede_preview(old[0], "new_preview_same_draft")
+        elif old and b["draft_rev"] > old[1]:            # 同一預覽、新草稿版本 → 撤銷舊版本的權杖（預覽本身仍有效）
+            self.supersede_preview(old[0], "new_draft_rev", mark=False)
+        self.current_preview[k] = (b["preview_ref"], b["draft_rev"])
         if b["target_generation"] != self.c.word.current().root_gen:
             raise ApiError("TARGET_STALE")
         snap = self.feeder.poll()
@@ -354,15 +382,20 @@ class PreviewService:
         sh = self.shown.get(b["shown_hash"])
         if sh is None or sh["intent"] != b["apply_intent_id"] or sh["slot"] != b["target_slot_id"]:
             raise ApiError("CONFIRM_TOKEN_STALE")
+        if sh["preview"]["artifact_id"] in self.superseded:
+            raise ApiError("CONFIRM_TOKEN_STALE", ["preview_superseded"])
         if sh["check"]["decision"] == "BLOCK":
             raise ApiError("BLOCK", [r["code"] for r in sh["check"]["reasons"]])
-        for t, v in self.tokens.items():          # 同一槽同時只有一個未消耗權杖
-            if v["slot"] == b["target_slot_id"] and not v["used"]:
-                v["used"] = "revoked"
+        ttl = TEST_VALUES["confirm_token_ttl_s"]
         tok = "ct-" + secrets.token_hex(12)
-        self.tokens[tok] = {"shown_hash": b["shown_hash"], "slot": b["target_slot_id"],
-                            "intent": b["apply_intent_id"], "used": False, "principal": principal}
-        return {"confirm_token": tok, "expires_at": (datetime.now(TW) + timedelta(minutes=10)).isoformat()}
+        with self.tok_lock:
+            for t, v in self.tokens.items():          # 同一槽同時只有一個未消耗權杖
+                if v["slot"] == b["target_slot_id"] and v["state"] == "ISSUED":
+                    v["state"], v["revoked"] = "REVOKED", "new_window"
+            self.tokens[tok] = {"shown_hash": b["shown_hash"], "slot": b["target_slot_id"],
+                                "intent": b["apply_intent_id"], "state": "ISSUED", "principal": principal,
+                                "expires": self.now() + ttl, "preview": sh["preview"]["artifact_id"]}
+        return {"confirm_token": tok, "expires_at": (datetime.now(TW) + timedelta(seconds=ttl)).isoformat()}
 
     def commit(self, principal, sid, b):
         key = (principal, self.boot_epoch, b["target_slot_id"], b["nonce"])
@@ -372,18 +405,38 @@ class PreviewService:
             if prev_fp != fp:
                 raise ApiError("NONCE_CONFLICT")
             return res
-        t = self.tokens.get(b["confirm_token"])
-        if t is None or t["used"] or t["shown_hash"] != b["shown_hash"] or t["slot"] != b["target_slot_id"] \
-                or t["intent"] != b["apply_intent_id"] or t["principal"] != principal:
-            raise ApiError("CONFIRM_TOKEN_STALE")
-        t["used"] = True
+        with self.tok_lock:                       # G0-11：受理時核對期限；G0-9：已撤銷就拒絕
+            t = self.tokens.get(b["confirm_token"])
+            if t is None or t["state"] != "ISSUED" or t["shown_hash"] != b["shown_hash"] \
+                    or t["slot"] != b["target_slot_id"] or t["intent"] != b["apply_intent_id"] \
+                    or t["principal"] != principal:
+                raise ApiError("CONFIRM_TOKEN_STALE")
+            if self.now() > t["expires"]:
+                t["state"] = "EXPIRED"
+                raise ApiError("CONFIRM_TOKEN_STALE", ["expired"])
+            t["state"] = "INFLIGHT"
+
+        def guard(publish):                      # 生效前（P 的 CAS 之前）在權杖鎖內再核對一次
+            with self.tok_lock:
+                if t["state"] != "INFLIGHT":
+                    return "CONFIRM_TOKEN_STALE", False
+                if self.now() > t["expires"]:
+                    t["state"] = "EXPIRED"
+                    return "CONFIRM_TOKEN_STALE", False
+                ok = publish()
+                if ok:
+                    t["state"] = "CONSUMED"
+                return None, ok
         sh = self.shown[b["shown_hash"]]
         rec = sh["preview"]
         snap = self.feeder.poll()
         rc = make_route_recheck(rec, self._vehicle(snap), sh["base"], shown=sh["check"])
         tx = "tx-" + _sha({"k": list(key)})[:16]
         r = self.c.route_apply(tx, b["target_slot_id"], rec["route_id"], rec["route"], sh["draft_id"],
-                               sh["draft_rev"], rc)
+                               sh["draft_rev"], rc, guard=guard)
+        with self.tok_lock:
+            if t["state"] == "INFLIGHT":            # 沒有生效（重顯、擋下等）：權杖用掉，不能再用
+                t["state"] = "CONSUMED"
         out = {"transaction": dict(r, transaction_id=tx)}
         if r["action"] == "REDISPLAY":
             it = self.intents[sh["intent"]]

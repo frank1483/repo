@@ -149,9 +149,15 @@ class SafetyIngest:
     def __init__(self, word: PublishWord, eps=None):
         self.word = word
         self.eps = dict(TEST_VALUES["eps"], **(eps or {}))
-        self._state = {s: {"value": None, "ready": True, "ref": None}
+        self._lk = threading.Lock()     # G0-2：只保護 O(1) 的計數與序號（G0-1）
+        self._state = {s: {"value": None, "ready": True, "ref": None, "pending": 0, "next_seq": 0,
+                           "applied_seq": 0, "stale": False, "stale_seq": 0}
                        for s in DISCRETE_SOURCES + CONTINUOUS_SOURCES}
         self.events = 0
+
+    @staticmethod
+    def _refresh(st):
+        st["ready"] = st["pending"] == 0 and not st["stale"]
 
     def _beyond_eps(self, src, new, ref):
         if ref is None or new is None:
@@ -167,16 +173,35 @@ class SafetyIngest:
         return True
 
     def event(self, src, value, hooks: Hooks | None = None):
-        """安全事件：先宣告、再寫值、再 ready。"""
+        """安全事件（G0-2）：宣告（pending+1、取來源序號、遞增 safety_seq）→ 寫值（舊序號不覆蓋新值）
+        → 結束（pending−1；異常結束標 stale，直到之後更新的寫入成功）。pending＝0 且非 stale 才就緒。"""
         st = self._state[src]
-        st["ready"] = False
-        self.word.announce()
-        self.events += 1
-        if hooks:
-            hooks.point(f"ingest:{src}:announced")
-        st["value"] = copy.deepcopy(value)
-        st["ref"] = copy.deepcopy(value)
-        st["ready"] = True
+        with self._lk:
+            st["pending"] += 1
+            st["next_seq"] += 1
+            seq = st["next_seq"]
+            st["ready"] = False
+            self.word.announce()
+            self.events += 1
+        ok = False
+        try:
+            if hooks:
+                hooks.point(f"ingest:{src}:announced")
+            v = copy.deepcopy(value)
+            if hooks:
+                hooks.point(f"ingest:{src}:before_write")
+            with self._lk:
+                if seq > st["applied_seq"]:
+                    st["value"], st["ref"], st["applied_seq"] = v, copy.deepcopy(v), seq
+                    if st["stale"] and seq > st["stale_seq"]:
+                        st["stale"] = False
+            ok = True
+        finally:
+            with self._lk:
+                st["pending"] -= 1
+                if not ok and seq > st["applied_seq"]:
+                    st["stale"], st["stale_seq"] = True, max(st["stale_seq"], seq)
+                self._refresh(st)
 
     def sample(self, src, value, hooks: Hooks | None = None):
         """連續來源的一般樣本：超出 ε 才算事件；ε 內只更新數值。"""
@@ -184,7 +209,11 @@ class SafetyIngest:
         if src in DISCRETE_SOURCES or self._beyond_eps(src, value, st["ref"]):
             self.event(src, value, hooks)
         else:
-            st["value"] = copy.deepcopy(value)
+            v = copy.deepcopy(value)
+            with self._lk:                       # ε 內：不宣告事件，但同樣遵守「舊值不覆蓋新值」
+                st["next_seq"] += 1
+                if st["next_seq"] > st["applied_seq"]:
+                    st["value"], st["applied_seq"] = v, st["next_seq"]
 
     def snapshot(self, timeout_ms=None):
         """seqlock 讀法：前後讀 safety_seq 相同且全部 ready 才成立。"""
@@ -193,7 +222,8 @@ class SafetyIngest:
         while True:
             _, s0 = self.word.read()
             if all(v["ready"] for v in self._state.values()):
-                vals = {k: copy.deepcopy(v["value"]) for k, v in self._state.items()}
+                with self._lk:
+                    vals = {k: copy.deepcopy(v["value"]) for k, v in self._state.items()}
                 _, s1 = self.word.read()
                 if s0 == s1 and all(v["ready"] for v in self._state.values()):
                     return s0, vals
@@ -417,7 +447,9 @@ def _same_route(a, b):
 
 
 class Coordinator:
-    def __init__(self, store: ActiveStore, ingest_eps=None, hooks: Hooks | None = None, boot_state=None):
+    def __init__(self, store: ActiveStore, ingest_eps=None, hooks: Hooks | None = None, boot_state=None,
+                 read_only=False):
+        self.read_only = read_only      # G0-6：受限唯讀模式，所有交易回 STORE_READ_ONLY、不寫任何檔
         self.store = store
         self.hooks = hooks or store.hooks
         self.lease = threading.Lock()
@@ -456,19 +488,23 @@ class Coordinator:
 
     # --- route_apply
     def route_apply(self, tx_id, slot_id, route_id, points, draft_id, draft_rev,
-                    recheck: Callable[[dict], dict]):
-        """recheck(S) → {'action': 'WRITE'|'REDISPLAY'|'BLOCK', 'reasons': [...]}（純函式，鎖外執行）。"""
+                    recheck: Callable[[dict], dict], guard=None):
+        """recheck(S) → {'action': 'WRITE'|'REDISPLAY'|'BLOCK', 'reasons': [...]}（純函式，鎖外執行）。
+        guard(publish) → (code, ok)（G0-9／G0-11）：呼叫端在自己的鎖內核對授權仍有效，有效才呼叫 publish()（＝P 的 CAS）；
+        code 非 None 表示授權已失效，交易 ABORTED、零切換。"""
         if tx_id in self.results:
             return self.results[tx_id]
+        if self.read_only:
+            return {"action": "BLOCK", "code": "STORE_READ_ONLY", "reasons": ["restricted_read_only"]}
         if self.slot_state.get(slot_id, {}).get("state") == "FROZEN":
             return {"action": "BLOCK", "code": "COMMIT_FROZEN", "reasons": [self.slot_state[slot_id]["reason"]]}
         self._acquire()
         try:
-            return self._route_apply_locked(tx_id, slot_id, route_id, points, draft_id, draft_rev, recheck)
+            return self._route_apply_locked(tx_id, slot_id, route_id, points, draft_id, draft_rev, recheck, guard)
         finally:
             self.lease.release()
 
-    def _route_apply_locked(self, tx_id, slot_id, route_id, points, draft_id, draft_rev, recheck):
+    def _route_apply_locked(self, tx_id, slot_id, route_id, points, draft_id, draft_rev, recheck, guard=None):
         h = self.hooks
         d0 = self.word.current()
         before = d0.route(slot_id)
@@ -509,7 +545,14 @@ class Coordinator:
             d1 = Descriptor(root_gen=d0.root_gen + 1, global_seq=gs, ui_root=d0.ui_root,
                             route_roots=d0.with_route(slot_id, after), undo_head=UndoNode(entry, d0.undo_head))
             h.point("tx:before_cas")
-            if self.word.cas_route(d0.root_gen, seq0, d1):
+            if guard is None:
+                ok = self.word.cas_route(d0.root_gen, seq0, d1)
+            else:
+                code, ok = guard(lambda: self.word.cas_route(d0.root_gen, seq0, d1))
+                if code:
+                    h.point("tx:guard_rejected")
+                    return self._abort(gs, tx_id, slot_id, d0, "BLOCK", [code], code=code)
+            if ok:
                 h.point("tx:after_cas")
                 return self._finish(gs, tx_id, slot_id, d0, d1, before, seq0, recheck)
             h.point("tx:cas_failed")
@@ -581,6 +624,8 @@ class Coordinator:
 
     # --- UI 替身（ADR-0001 §5 的 GenUI 交易尚未實作；只模擬 ② 生效後的發布）
     def ui_apply(self, tx_id, new_ui_root):
+        if self.read_only:
+            return {"action": "BLOCK", "code": "STORE_READ_ONLY"}
         self._acquire()
         try:
             d0 = self.word.current()
@@ -598,6 +643,8 @@ class Coordinator:
 
     # --- undo（共用 LIFO）
     def undo(self, tx_id):
+        if self.read_only:
+            return {"action": "BLOCK", "code": "STORE_READ_ONLY"}
         self._acquire()
         try:
             d0 = self.word.current()
@@ -655,7 +702,7 @@ def boot(root, hooks=None, eps=None):
     best = st.best_ptr()
     report = {"recovery": [], "frozen": []}
     if best is None:
-        raise CommitError("STORE_READ_ONLY", "沒有有效的啟用指標")
+        return _restricted_boot(st, eps, hooks, report)
     seg = best[1]["segment_id"]
     state = st.read_checkpoint(seg, best[1]["checkpoint_hash"])
     if state.get("prev_segment_id") is not None:
@@ -693,7 +740,12 @@ def boot(root, hooks=None, eps=None):
                 slot_state[slot] = {"state": "FROZEN", "reason": "committed_without_end", "terminal_ref": tx}
                 report["frozen"].append(tx)
             else:
-                report["recovery"].append({"tx": tx, "action": "use_before"})
+                report["recovery"].append({"tx": tx, "action": "use_before", "why": "begin_without_end"})
+            continue
+        if end.get("tx_id") != tx:                      # G0-4：交易身分矛盾 → 凍結
+            if slot is not None:
+                slot_state[slot] = {"state": "FROZEN", "reason": "tx_identity_mismatch", "terminal_ref": tx}
+            report["frozen"].append(tx)
             continue
         oc = end["outcome"]
         term = next((r for r in reversed(recs) if r["kind"] in ("COMMITTED", "ABORTED", "ROLLED_BACK")), None)
@@ -706,9 +758,27 @@ def boot(root, hooks=None, eps=None):
                 roots.pop(slot, None)
             else:
                 roots[slot] = after
-        elif oc == "ABORTED":
-            if term is not None and term["kind"] != "ABORTED":
-                slot_state[slot] = {"state": "FROZEN", "reason": "aborted_mismatch", "terminal_ref": tx}
+        elif oc == "ABORTED":                            # G0-4
+            claimed = end.get("kind_terminal_sha")
+            why = None
+            if term is not None:
+                if term["kind"] != "ABORTED" or term["sha256"] != claimed:
+                    why = "aborted_mismatch"
+            elif claimed is not None:
+                why = "aborted_terminal_missing"
+            elif "COMMITTED" in kinds:
+                why = "aborted_but_committed"
+            else:
+                bsnap = next((r for r in recs if r["kind"] == "SNAPSHOT" and r["role"] == "BEFORE"), None)
+                prep = next((r for r in recs if r["kind"] == "PREPARED"), None)
+                if bsnap is not None and prep is not None and _sha({"r": bsnap["root"]}) != prep["before_sha"]:
+                    why = "before_snapshot_mismatch"
+                else:
+                    report["recovery"].append({"tx": tx, "action": "use_before",
+                                               "why": "aborted_without_kind_terminal"})
+            if why:
+                if slot is not None:
+                    slot_state[slot] = {"state": "FROZEN", "reason": why, "terminal_ref": tx}
                 report["frozen"].append(tx)
         elif oc == "ROLLED_BACK":
             if term is None or term["kind"] != "ROLLED_BACK":
@@ -727,5 +797,39 @@ def boot(root, hooks=None, eps=None):
     st.write_ptr(new_seg, h)
     c = Coordinator(st, eps, hooks, boot_state={"global_seq": gmax, "route_roots": roots, "slot_state": slot_state,
                                                 "ui_root": ui_root, "segment": new_seg, "root_gen": 0})
+    for x in report["recovery"]:                        # G0-4：採用 before 的交易寫 RECOVERY（新分段的協調器日誌）
+        if x.get("action") == "use_before":
+            c.cj.append({"kind": "RECOVERY", "tx_id": x["tx"], "action": "use_before", "why": x.get("why"),
+                         "from_segment": seg})
     report["segment"] = new_seg
+    return c, report
+
+
+def _restricted_boot(st: ActiveStore, eps, hooks, report):
+    """G0-6：兩份啟用指標都無法驗證。活動區有任何指標檔或分段 → 受限唯讀（不寫檔、停用全部槽、回報診斷）；
+    完全空白 → STORE_UNINITIALIZED（要先 init_store）。"""
+    base = os.path.join(st.root, "active")
+    names = sorted(os.listdir(base)) if os.path.isdir(base) else []
+    ptr_files = [n for n in names if n.startswith("ptr-")]
+    segs = [n for n in names if n.startswith("seg-")]
+    if not ptr_files and not segs:
+        raise CommitError("STORE_UNINITIALIZED", "活動區是空白的，請先初始化")
+    diag = []
+    for ab in "AB":
+        p = st._ptr_path(ab)
+        if not os.path.exists(p):
+            diag.append({"pointer": ab, "result": "missing"})
+            continue
+        try:
+            with open(p, "rb") as f:
+                raw = f.read()
+            rec = json.loads(raw.decode("utf-8"))
+            okh = rec.get("sha256") == _sha({k: v for k, v in rec.items() if k != "sha256"})
+            diag.append({"pointer": ab, "result": "hash_mismatch" if not okh else "ok", "bytes": len(raw)})
+        except (OSError, ValueError) as e:
+            diag.append({"pointer": ab, "result": "unreadable", "error": repr(e)[:120]})
+    report.update(mode="RESTRICTED_READ_ONLY", diagnostics={"pointers": diag, "segments": segs, "files": names})
+    report["frozen"].append("all_slots_restricted_read_only")
+    c = Coordinator(st, eps, hooks, boot_state={"global_seq": 0, "route_roots": {}, "slot_state": {},
+                                                "ui_root": None, "segment": -1, "root_gen": 0}, read_only=True)
     return c, report
