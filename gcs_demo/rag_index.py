@@ -39,7 +39,18 @@ QUERY_GLOSSARY_V3 = dict(QUERY_GLOSSARY_V2, **{"接受半徑": ["acceptance radi
 TOC_FILES = ("SUMMARY.md", "_sidebar.md")   # R1：只排除已知目錄檔（連結密度規則只當診斷，不排除）
 TOPIC_ACTION = {"calibration", "calibrate", "setup", "setting", "settings", "parameter", "configure", "configuration"}
 # 每條規則獨立開關；跑次把這組設定記進 RUN_INFO（V5＝topic_head 關、V7＝全開）
-RAG_SETTINGS = {"exclude_toc": True, "section_dedupe": True, "topic_head": True}
+RAG_SETTINGS = {"exclude_toc": True, "section_dedupe": True, "topic_head": True,
+                "manual_clause": True, "vector_en": True}   # v3.11：手冊子句、向量查詢附英文詞（代理端使用）
+
+
+def vector_query_text(q, extra=None):
+    """v3.11：手冊向量查詢＝手冊子句＋既有詞表（GLOSSARY＋查詢端詞表）命中的英文詞（去重、依詞表順序）。
+    沒有命中就回原字串。BM25 不用這個字串。"""
+    terms = []
+    for zh, en in list(GLOSSARY.items()) + list((extra or {}).items()):
+        if zh in q:
+            terms += [e for e in en if e not in terms]
+    return (q + " " + " ".join(terms)) if terms else q
 HEADING_BOOST = 0.0      # v3.9：標題詞加權倍數。離線關鍵字對照：0.25～1.0 讓 F20 進前五但 C24 掉出，取捨未定前關閉（0＝不加權）
 TOKEN_RE = re.compile(r"[a-z0-9_]+")
 

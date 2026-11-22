@@ -145,7 +145,8 @@ class ManualRetrievalV7(unittest.TestCase):
 
     def test_defaults_and_heading_boost_zero(self):
         self.assertEqual(self.RI.HEADING_BOOST, 0.0)
-        self.assertEqual(self.RI.RAG_SETTINGS, {"exclude_toc": True, "section_dedupe": True, "topic_head": True})
+        self.assertEqual({k: self.RI.RAG_SETTINGS[k] for k in ("exclude_toc", "section_dedupe", "topic_head")},
+                         {"exclude_toc": True, "section_dedupe": True, "topic_head": True})   # v3.11 另加兩個開關
         self.assertEqual(self.RI.QUERY_GLOSSARY_V3["接受半徑"], ["acceptance radius", "nav_acc_rad"])
         self.assertEqual(self.RI.QUERY_GLOSSARY_V3["羅盤"], self.RI.QUERY_GLOSSARY_V2["羅盤"])
 

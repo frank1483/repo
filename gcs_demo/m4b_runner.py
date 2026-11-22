@@ -52,6 +52,7 @@ def deadline_for(purpose):
     return DEADLINE_S.get(purpose.split(":")[0], 60.0)
 
 
+PROBE_V311 = True          # v3.11：smoke 探測改用三種查詢（原全句／手冊子句／子句＋英文詞）
 STRICT_PARAMS_A = True     # v3.9（CODEX-APP-0429 第 4 點）：A 的逐步 schema 不收參數的動作 params 必須為空物件
 RUN_PROBE = True           # v3.9：smoke 開頭做混合檢索探測；B 引用 A 同包的探測紀錄，不重做
 EXTRA_INFO = None          # 可呼叫物件：回傳要併入 RUN_INFO 的欄位；None＝不加（A、B 的正式執行都不設）
@@ -305,6 +306,66 @@ def retrieval_probe():
     return out
 
 
+PROBE_VARIANTS = ("full", "clause", "clause_en")
+PROBE_MUST_HIT_V311 = ("F20", "G11")         # v3.11 驗收：clause_en 下混合前五命中；C24、G08 與 full 已命中者要保住
+
+
+def retrieval_probe_v311(graph):
+    """v3.11（使用者 2026-11-23 00:22）：12 題手冊題 × 三種查詢，全部用 V7 設定：
+    full＝原全句；clause＝只取手冊子句（BM25 與向量都用子句）；clause_en＝BM25 用子句、向量用子句＋英文詞。
+    相同查詢文字共用同一個查詢向量（快取）。逐列記錄關鍵字、向量、混合三種排序的前五與首命中名次（看前 50）。"""
+    from .agent_m4b import M4bController
+    from .rag_index import HEADING_BOOST, QUERY_GLOSSARY_V3, vector_query_text
+    idx = R.manual_index()
+    by_id = {c["chunk_id"]: c for c in idx.chunks}
+    ctl = M4bController({}, None, graph, None)
+    vec_cache = {}
+
+    def qvec(t):
+        if not R._INDEX["use_vector"]:
+            return None
+        if t not in vec_cache:
+            vec_cache[t] = idx.query_vector(t)
+        return vec_cache[t]
+
+    def ref(c):
+        return {k: c[k] for k in ("manual", "path", "heading_path", "version", "chunk_id")} | {"excerpt": c["text"][:400]}
+
+    def show(c):
+        return [c["manual"], c["path"], c["heading_path"]]
+    st = {"exclude_toc": True, "section_dedupe": True, "topic_head": True}
+    out = {"heading_boost": HEADING_BOOST, "settings": st, "rows": [], "variants": list(PROBE_VARIANTS)}
+    for case in probe_cases():
+        full = case["text"]
+        src = M4bController._manual_source(None, full)
+        mq, dropped = ctl.manual_query(full)
+        texts = {"full": (full, full), "clause": (mq, mq), "clause_en": (mq, vector_query_text(mq, QUERY_GLOSSARY_V3))}
+        for name in PROBE_VARIANTS:
+            lt, vt = texts[name]
+            qv = qvec(vt)
+            r = idx.search(lt, k=50, use_vector=R._INDEX["use_vector"], vector=qv, require_pre=R._INDEX["use_vector"],
+                           manual=src, extra=QUERY_GLOSSARY_V3, settings=st, channels=True)
+            lists = {"lexical": [by_id[i] for i in r["lexical_ids"]], "vector": [by_id[i] for i in r["vector_ids"]],
+                     "hybrid": [by_id[x["chunk_id"]] for x in r["results"]]}
+            row = {"case": case["id"], "variant": name, "lexical_query": lt, "vector_query": vt, "dropped": dropped,
+                   "manual": src, "mode": r.get("mode"), "degraded": r.get("degraded"), "query_vector_ok": qv is not None}
+            for ch, xs in lists.items():
+                row[ch + "_top5"] = [show(c) for c in xs[:5]]
+                row[ch + "_first_hit"] = next((k + 1 for k, c in enumerate(xs) if _ref_hit(case, ref(c))), None)
+            row["hit_top5"] = bool(row["hybrid_first_hit"] and row["hybrid_first_hit"] <= 5)
+            out["rows"].append(row)
+    out["embed_texts"] = len(vec_cache)
+    hy = {(x["case"], x["variant"]): x["hit_top5"] for x in out["rows"]}
+    keep = [c for (c, v), ok in hy.items() if v == "full" and ok] + ["C24", "G08"]
+    out["acceptance"] = {}
+    for v in ("clause", "clause_en"):
+        acc = {"must_hit": {c: hy.get((c, v)) for c in PROBE_MUST_HIT_V311},
+               "kept": {c: hy.get((c, v)) for c in dict.fromkeys(keep)}}
+        acc["pass"] = all(acc["must_hit"].values()) and all(acc["kept"].values())
+        out["acceptance"][v] = acc
+    return out
+
+
 def summarize(recs):
     """主表（v3.5 §7 比較口徑）：正確提案完成率（分母＝應提案案例）、提案就緒 P95（只算提案全對的案例，旁列納入數）、
     每案例 LLM 呼叫次數；另列誤開率、未達終點／錯誤數、整理前與含整理的 P95，以及各組都答對的相同案例 P95。"""
@@ -359,6 +420,7 @@ def main(argv=None):
     ap.add_argument("--ollama-port", type=int, default=11555)
     ap.add_argument("--bundle", default="")
     ap.add_argument("--consent-hash8", default="")
+    ap.add_argument("--probe-only", action="store_true", help="v3.11：smoke 只做手冊檢索探測（embedding），不跑生成案例")
     a = ap.parse_args(argv)
     if os.path.exists(a.out):
         raise SystemExit("輸出目錄已存在。依「只跑一次」規則不重跑；要修正請開新目錄。")
@@ -420,14 +482,17 @@ def main(argv=None):
         info["token_counter"] = {"impl": "gcs_demo/gemma4_tokenizer.py（llama.cpp gemma4 規則，曾與伺服器 token ID 比對 12/12）",
                                  "blob_digest": tok["blob_digest"], "vocab_merges_types_sha256": tok["vocab_merges_types_sha256"],
                                  "n_tokens": tok["n_tokens"], "n_merges": tok["n_merges"]}
+        if a.probe_only and a.phase != "smoke":
+            raise SystemExit("--probe-only 只能配 --phase smoke")
         if a.phase == "smoke" and RUN_PROBE:                    # v3.9：混合檢索前五（F20、C24），用正式索引與查詢向量
-            info["retrieval_probe"] = retrieval_probe()
+            info["retrieval_probe"] = retrieval_probe_v311(graph) if PROBE_V311 else retrieval_probe()
             if probe_blocked(info["retrieval_probe"]) and not a.fake:                          # 沒有真的完成混合檢索 → 不進生成（CODEX-APP-0429 第 3 點）
                 info["retrieval_probe"]["blocked"] = True
                 raise SystemExit("混合檢索探測沒有完成（降級或不是 rrf），不進入生成案例；見 RUN_INFO.retrieval_probe")
         sampler.start()
         with open(os.path.join(a.out, "results.jsonl"), "a", encoding="utf-8") as f:
-            for cond in CONDITIONS[a.phase]:
+            info["probe_only"] = bool(a.probe_only)
+            for cond in ([] if a.probe_only else CONDITIONS[a.phase]):   # v3.11：--probe-only 不跑生成案例
                 for case in cases:
                     if proc is not None:
                         R.check_owner(proc, a.ollama_port)

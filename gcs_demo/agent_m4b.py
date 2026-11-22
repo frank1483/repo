@@ -378,6 +378,28 @@ class M4bController:
                 return True
         return False
 
+    SEG_SPLIT = r"(?<=[？?！!])|[，,。；;]|另外|然後|接著|並且"
+
+    def manual_query(self, text):
+        """v3.11：手冊檢索只取手冊子句。用強分隔（標點、另外、然後、接著、並且）切段：
+        - 段內明確指定手冊或 QGC／PX4 的技術問法 → 保留；
+        - 段內沒有手冊指定，且能明確判定為獨立需求（詢問、版面、規劃、首頁子句）→ 切開，交給其他方向；
+        - 其他段落保留（不確定就不切）。只有一段、或切完沒有手冊段時，回原句。回傳 (查詢字串, 切掉的段)。"""
+        segs = [x.strip() for x in re.split(self.SEG_SPLIT, str(text or "")) if x and x.strip()]
+        if len(segs) <= 1:
+            return text, []
+        keep, drop = [], []
+        for x in segs:
+            if self._manual_explicit(x):
+                keep.append(x)
+            elif self._is_question(x) or self._layout_clause(x) or self._plan_clause(x) or self._home_plan_clause(x):
+                drop.append(x)
+            else:
+                keep.append(x)
+        if not drop or not any(self._manual_explicit(x) for x in keep):
+            return text, []
+        return "，".join(keep), drop
+
     def _is_question(self, c):
         return any(w in c for w in self.ASK)
 
@@ -768,15 +790,20 @@ class M4bController:
             return "OK"
         if a == "MANUAL_SEARCH":
             src = self._manual_source(task["text"])         # v3.9 §2：指定 QGC／PX4 時限定來源，查詢端詞表 v2
-            from .rag_index import QUERY_GLOSSARY_V3          # v3.10：詞表 v3（R1～R3 的開關見 rag_index.RAG_SETTINGS）
-            r = T["manual_search"](task["text"], qv, manual=src, extra=QUERY_GLOSSARY_V3) if "manual_search" in T \
+            from .rag_index import QUERY_GLOSSARY_V3, RAG_SETTINGS, vector_query_text   # v3.10 詞表 v3；v3.11 子句與英文詞
+            mq, dropped = self.manual_query(task["text"]) if RAG_SETTINGS.get("manual_clause") else (task["text"], [])
+            vt = vector_query_text(mq, QUERY_GLOSSARY_V3) if RAG_SETTINGS.get("vector_en") else mq
+            vv = qv if vt == task["text"] else (T["embed_query"](vt) if "embed_query" in T else None)
+            task["manual_query"] = {"lexical": mq, "vector": vt, "dropped": dropped, "vector_reused": vt == task["text"]}
+            r = T["manual_search"](mq, vv, manual=src, extra=QUERY_GLOSSARY_V3) if "manual_search" in T \
                 else {"results": [], "status": "NOT_LOADED"}
             if src and not r.get("results"):
                 task["notes"].append(f"指定的 {src.upper()} 手冊查無可用出處")
             A["manual_claims"] = {"kind": "manual_claims", "verdict": "ok" if r.get("results") else "not_found",
                                   "refs": [{k: x[k] for k in ("manual", "path", "heading_path", "version", "chunk_id")}
                                            | {"excerpt": x["text"][:400]} for x in r.get("results", [])],
-                                  "degraded": r.get("degraded"), "degraded_reason": r.get("degraded_reason")}
+                                  "degraded": r.get("degraded"), "degraded_reason": r.get("degraded_reason"),
+                                  "query": task["manual_query"]}
             return "OK"
         if a == "QA_LOOKUP":
             A["qa_claims"] = {"kind": "qa_claims", "verdict": "none", "note": "問答工具尚未接上"}
