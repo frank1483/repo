@@ -294,5 +294,29 @@ class Review0429(unittest.TestCase):
         self.assertEqual(rb["stage1_corrections"], pre["stage1_corrections"])
 
 
+class Review0430(unittest.TestCase):
+    """CODEX-APP-0430 的兩個反例。"""
+
+    def test_question_without_value_blocks_any_value(self):
+        from .agent_planb import PlanBController
+        from .test_planb import plan, st
+        text = "小地圖怎麼移動？把字體調大"
+        mv = '{"action":"UI_LAYOUT_PROPOSE","ids":["C016","P003"],"params":{"value":"左上"}}'
+        _, T = tools3(["C016", "P003", "P001"])
+        ra = M4bController(T, scripted(['{"directions":["layout"]}', mv, BIG]), GRAPH, COUNTER).request(text)
+        _, T2 = tools3(["C016", "P003", "P001"])
+        both = plan(st("s1", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P003"], {"value": "左上"}),
+                    st("s2", "layout", "UI_LAYOUT_PROPOSE", ["P001"], {"value": "大"}))
+        rb = PlanBController(T2, scripted(['{"directions":["layout"]}', both, both, both]), GRAPH, COUNTER).request(text)
+        for r in (ra, rb):
+            self.assertEqual([tuple(p["ids"]) for p in r["proposals"]], [("P001",)])
+
+    def test_manual_source_without_punctuation(self):
+        src = M4bController._manual_source
+        self.assertEqual(src(None, "不要查 QGC 手冊再查 PX4 手冊"), "px4")
+        self.assertEqual(src(None, "不要查 QGC 手冊，查 PX4 手冊"), "px4")
+        self.assertIn("manual", corr("不要查 QGC 手冊再查 PX4 手冊", ["chat"])[0])
+
+
 if __name__ == "__main__":
     unittest.main()

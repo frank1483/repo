@@ -304,6 +304,13 @@ class M4bController:
             task["notes"].append("第 1 段方向經程式校正：" + "；".join(f"{f['op']} {f['dir']}" for f in fix))
         return out
 
+    def _blocked_layout(self, task, c, p, v):
+        """否定或詢問的版面子句擋下的改動：值寫明時比完整 (元件, 參數, 值)；值沒寫（例：怎麼移動？）時同元件同參數的任何值都擋。"""
+        for bc, bp, bv in task.get("layout_negated") or []:
+            if (bc, bp) == (c, p) and (bv is None or bv == v):
+                return True
+        return False
+
     def _blocked_clause(self, c):
         return any(w in c for w in self.NEG) or any(w in c for w in self.ASK)
 
@@ -324,7 +331,7 @@ class M4bController:
     def _manual_source(self, text):
         """v3.9 修正：文件來源看「產品名＋（的）手冊／文件」的組合；沒有這種組合時，只出現一個產品名才限定。
         例：「查 QGC 手冊中怎麼連 PX4」→ qgc（PX4 是內容對象，不是文件來源）。否定子句不算。"""
-        pos = [c for c in re.split(r"[，,。；;]", text) if not any(w in c for w in M4bController.NEG)]
+        pos = [c for c in M4bController._clauses(None, text) if not any(w in c for w in M4bController.NEG)]   # 與 _manual_explicit 同一套切法
         joined = "，".join(pos)
         m = re.findall(r"(?i)(qgc|qgroundcontrol|px4)\s*的?\s*(?:手冊|文件|文檔|說明書)", joined)
         srcs = {("px4" if x.lower() == "px4" else "qgc") for x in m}
@@ -511,7 +518,7 @@ class M4bController:
         if a == "UI_LAYOUT_PROPOSE":                       # v3.9 修正：否定、缺值、衝突的項目在解析時就退回，讓其他項目可以繼續
             c0 = ([i for i in ids if i.startswith("C")] or [None])[0]
             p0 = ([i for i in ids if i.startswith("P")] or [None])[0]
-            if (c0, p0, params.get("value")) in [tuple(x) for x in task.get("layout_negated") or []]:
+            if self._blocked_layout(task, c0, p0, params.get("value")):
                 return False, None, "原句說不要這個改動，不可開提案；請做其他還缺的項目或 FINISH"
             if (c0, p0) in [(x[0], x[1]) for x in (task.get("layout_unclear") or [])] or                     (c0, p0) in [tuple(x) for x in task.get("layout_conflicts") or []]:
                 return False, None, "這一項原句沒講清楚或互相衝突，要請使用者補充，不可自己決定；請做其他還缺的項目或 FINISH"
@@ -665,7 +672,7 @@ class M4bController:
                 task["notes"].append("鎖定元件不可隱藏")
                 return "BLOCKED"
             ck = (cs[0] if cs else None, ps[0])
-            if (ck[0], ck[1], params.get("value")) in [tuple(x) for x in task.get("layout_negated") or []]:
+            if self._blocked_layout(task, ck[0], ck[1], params.get("value")):
                 task["notes"].append("原句說不要這個版面改動，不開確認視窗")
                 return "BLOCKED"
             if ck in [tuple(x) for x in task.get("layout_conflicts") or []]:
