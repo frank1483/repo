@@ -21,6 +21,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import shutil
 import threading
 import time
 from typing import Any, Callable
@@ -38,7 +39,54 @@ TEST_VALUES = {
     "disk_budget_bytes": 2 * 1024 ** 3,
     "terminal_reserve_bytes": 16 * 1024 ** 2,
     "lease_timeout_s": 5.0,
+    # G0 第 5 節（Codex 上限計算 v1）的桌面容量候選，仍是測試用值、待凍結
+    "max_route_slots": 32,              # 持久化航線槽數 S
+    "max_route_points": 480,            # 單條航線點數
+    "point_cap_bytes": 512,             # 單點編碼上限（canonical JSON）
+    "route_overhead_cap_bytes": 1024,   # 航線根去掉 points 後的編碼上限
+    "tx_id_max_chars": 128,             # 附件 C.1 的 ID 上限
+    "recovery_line_cap_bytes": 512,     # 單筆 RECOVERY 完整編碼行上限
+    "recovery_max_records": 4096,
+    "terminal_lines_reserved": 16,      # 一次受控收尾預留的終態行數
+    "pointer_reserve_bytes": 256 * 1024,
+    "boot_scan_bytes": 32 * 1024 * 1024,   # 整次 BOOT 累計掃描（不是每檔）
+    "boot_scan_lines": 4096,
+    "boot_scan_seconds": 2.0,           # 待完整 BOOT 實測
+    "root_gen_bits": 24,
+    "safety_seq_bits": 40,
 }
+
+
+def reserve_plan(v=None):
+    """終態預留的分配（Codex 上限計算 v1 §1）：一份新檢查點＋BOOT 恢復紀錄＋其他終態＋指標與暫存。"""
+    v = v or TEST_VALUES
+    L = v["line_cap_bytes"]
+    parts = {"checkpoint": (v["max_route_slots"] + 3) * L,
+             "recovery": v["recovery_max_records"] * v["recovery_line_cap_bytes"],
+             "terminals": v["terminal_lines_reserved"] * L,
+             "pointers": v["pointer_reserve_bytes"]}
+    return {"parts": parts, "total": sum(parts.values()), "reserve": v["terminal_reserve_bytes"]}
+
+
+class ScanBudget:
+    """整次 BOOT 共用的掃描帳本：累計 bytes、行數與時間，超過就丟 BOOT_SCAN_LIMIT（呼叫端進受限唯讀）。"""
+
+    def __init__(self, max_bytes=None, max_lines=None, max_seconds=None):
+        self.max_bytes = TEST_VALUES["boot_scan_bytes"] if max_bytes is None else max_bytes
+        self.max_lines = TEST_VALUES["boot_scan_lines"] if max_lines is None else max_lines
+        self.max_seconds = TEST_VALUES["boot_scan_seconds"] if max_seconds is None else max_seconds
+        self.bytes = self.lines = 0
+        self.t0 = time.monotonic()
+
+    def consume(self, nbytes, nlines=0):
+        self.bytes += nbytes
+        self.lines += nlines
+        if self.bytes > self.max_bytes or self.lines > self.max_lines or \
+                time.monotonic() - self.t0 > self.max_seconds:
+            raise CommitError("BOOT_SCAN_LIMIT", f"bytes={self.bytes} lines={self.lines}")
+
+    def report(self):
+        return {"bytes": self.bytes, "lines": self.lines, "seconds": round(time.monotonic() - self.t0, 4)}
 
 DISCRETE_SOURCES = ("no_fly", "policy", "limits", "area", "vehicle")
 CONTINUOUS_SOURCES = ("battery", "wind", "position")
@@ -71,6 +119,11 @@ class Hooks:
 
 def _sha(obj) -> str:
     return hashlib.sha256(_canonical(obj).encode("ascii")).hexdigest()
+
+
+def _jsonb(obj) -> bytes:
+    """與 Journal.append 相同的序列化（不含 sha 與換行），用來量單點與固定開銷。"""
+    return json.dumps(_plain(obj), ensure_ascii=False, sort_keys=True).encode("utf-8")
 
 
 def _plain(obj):
@@ -122,8 +175,14 @@ class PublishWord:
 
     def announce(self):
         with self._lock:
+            if self.safety_seq + 1 >= 2 ** TEST_VALUES["safety_seq_bits"]:   # 低欄位不可溢位、不可進位到 root_gen
+                raise CommitError("W_EPOCH_EXHAUSTED", "safety_seq 用盡，須重啟新 boot epoch")
             self.safety_seq += 1
             return self.safety_seq
+
+    def gen_exhausted(self):
+        with self._lock:
+            return self.root_gen + 1 >= 2 ** TEST_VALUES["root_gen_bits"]
 
     def cas_route(self, expect_gen, expect_seq, new: Descriptor) -> bool:
         with self._lock:
@@ -247,12 +306,12 @@ class Journal:
         self.hooks = hooks or Hooks()
         self.budget = budget
 
-    def append(self, rec: dict):
+    def append(self, rec: dict, max_bytes=None):
         body = _plain(rec)
         body["sha256"] = _sha({k: v for k, v in body.items() if k != "sha256"})
         line = json.dumps(body, ensure_ascii=False, sort_keys=True) + "\n"
         data = line.encode("utf-8")
-        if len(data) > TEST_VALUES["line_cap_bytes"]:
+        if len(data) > min(TEST_VALUES["line_cap_bytes"], max_bytes or TEST_VALUES["line_cap_bytes"]):
             raise CommitError("LIMIT_EXCEEDED", "單行超過上限")
         if self.budget:
             self.budget.admit(len(data))
@@ -268,7 +327,7 @@ class Journal:
         return body
 
     @staticmethod
-    def read(path, max_bytes=None, max_lines=None):
+    def read(path, max_bytes=None, max_lines=None, scan: "ScanBudget | None" = None):
         good, bad = [], []
         if not os.path.exists(path):
             return good, bad
@@ -279,6 +338,8 @@ class Journal:
         with open(path, "rb") as f:
             for n, raw in enumerate(iter(lambda: f.readline(cap + 1), b"")):
                 total += len(raw)
+                if scan is not None:
+                    scan.consume(len(raw), 1)
                 if n >= max_lines or total > max_bytes:
                     raise CommitError("STORE_READ_ONLY", "恢復掃描超過上限")
                 if len(raw) > cap or not raw.endswith(b"\n"):
@@ -316,6 +377,13 @@ class StorageBudget:
         limit = self.disk_budget - (0 if self.terminal_mode else self.reserve)
         if self.used() + nbytes > limit:
             raise CommitError("STORE_READ_ONLY", "儲存總量不足")
+        need_free = nbytes + (0 if self.terminal_mode else self.reserve)   # 檔案系統另須留住預留
+        try:
+            free = shutil.disk_usage(self.root).free
+        except OSError:
+            free = None
+        if free is not None and free < need_free:
+            raise CommitError("STORE_READ_ONLY", "檔案系統剩餘空間不足")
 
 
 # ---------------- 活動區 ----------------
@@ -356,15 +424,19 @@ class ActiveStore:
             return None
         return max(ptrs, key=lambda x: x[1]["seq"])
 
-    def best_valid(self):
+    def best_valid(self, scan=None):
         """補件 G0-6：依 seq 由大到小，取第一份「結構與自身 hash 正確、且引用的檢查點可核證」的指標。
         回傳 (ab, rec, checkpoint_state, rejected)；都不行時 (None, None, None, rejected)。"""
         rejected = []
         for ab, rec in sorted(self.read_ptrs(), key=lambda x: -x[1]["seq"]):
             try:
-                state = self.read_checkpoint(rec["segment_id"], rec["checkpoint_hash"])
+                state = self.read_checkpoint(rec["segment_id"], rec["checkpoint_hash"], scan)
                 return ab, rec, state, rejected
-            except (CommitError, OSError, ValueError, KeyError, TypeError) as e:
+            except CommitError as e:
+                if e.code == "BOOT_SCAN_LIMIT":
+                    raise
+                rejected.append({"pointer": ab, "segment_id": rec["segment_id"], "reason": e.code})
+            except (OSError, ValueError, KeyError, TypeError) as e:
                 rejected.append({"pointer": ab, "segment_id": rec["segment_id"],
                                  "reason": getattr(e, "code", type(e).__name__)})
         return None, None, None, rejected
@@ -410,8 +482,8 @@ class ActiveStore:
                         "prev_segment_id": prev_segment_id})
         return man["sha256"]
 
-    def read_checkpoint(self, n, expect_hash):
-        recs, bad = Journal.read(os.path.join(self.seg_dir(n), "checkpoint.jsonl"))
+    def read_checkpoint(self, n, expect_hash, scan=None):
+        recs, bad = Journal.read(os.path.join(self.seg_dir(n), "checkpoint.jsonl"), scan=scan)
         if bad or not recs or recs[-1].get("kind") != "CHECKPOINT_MANIFEST":
             raise CommitError("CHECKPOINT_INVALID", "檢查點不完整")
         man = recs[-1]
@@ -429,7 +501,7 @@ class ActiveStore:
                 state["route_roots"][r["part"].split(":", 1)[1]] = r["data"]
         return state
 
-    def tail_hash(self, n):
+    def tail_hash(self, n, scan=None):
         """上一段最後一筆的 sha（只讀各檔最後一行，有界）。"""
         out = {}
         for name in ("checkpoint.jsonl", "coordinator.jsonl", "route.jsonl"):
@@ -439,7 +511,10 @@ class ActiveStore:
             with open(p, "rb") as f:
                 size = os.path.getsize(p)
                 f.seek(max(0, size - TEST_VALUES["line_cap_bytes"]))
-                lines = f.read().splitlines()
+                data = f.read()
+                if scan is not None:
+                    scan.consume(len(data), 0)
+                lines = data.splitlines()
             if lines:
                 try:
                     out[name] = json.loads(lines[-1].decode("utf-8")).get("sha256")
@@ -524,6 +599,11 @@ class Coordinator:
             return self.results[tx_id]
         if self.read_only:
             return {"action": "BLOCK", "code": "STORE_READ_ONLY", "reasons": ["restricted_read_only"]}
+        lim = self._limits(tx_id, slot_id, route_id, points, draft_id, draft_rev)
+        if lim:
+            return {"action": "BLOCK", "code": "LIMIT_EXCEEDED", "reasons": [lim]}
+        if self.word.gen_exhausted():
+            return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED", "reasons": ["root_gen"]}
         if self.slot_state.get(slot_id, {}).get("state") == "FROZEN":
             return {"action": "BLOCK", "code": "COMMIT_FROZEN", "reasons": [self.slot_state[slot_id]["reason"]]}
         self._acquire()
@@ -531,6 +611,25 @@ class Coordinator:
             return self._route_apply_locked(tx_id, slot_id, route_id, points, draft_id, draft_rev, recheck, guard)
         finally:
             self.lease.release()
+
+    def _limits(self, tx_id, slot_id, route_id, points, draft_id, draft_rev):
+        """G0 第 5 節：交易 ID、槽數、點數、單點與航線固定開銷的准入上限（受理時就拒絕，不寫檔）。"""
+        v = TEST_VALUES
+        for name, x in (("tx_id", tx_id), ("slot_id", slot_id), ("route_id", route_id), ("draft_id", draft_id)):
+            if not isinstance(x, str) or len(x) > v["tx_id_max_chars"]:
+                return f"{name}_length"
+        slots = {s for s, _ in self.word.current().route_roots} | set(self.slot_state)
+        if slot_id not in slots and len(slots) >= v["max_route_slots"]:
+            return "route_slots"
+        if len(points) > v["max_route_points"]:
+            return "route_points"
+        for p in points:                                 # 與 Journal 同一序列化格式（JSON、sort_keys、UTF-8）
+            if len(_jsonb(p)) > v["point_cap_bytes"]:
+                return "point_size"
+        head = _route_root(route_id, [], draft_id, draft_rev, False, tx_id)
+        if len(_jsonb(head)) > v["route_overhead_cap_bytes"]:
+            return "route_overhead"
+        return None
 
     def _route_apply_locked(self, tx_id, slot_id, route_id, points, draft_id, draft_rev, recheck, guard=None):
         h = self.hooks
@@ -654,6 +753,8 @@ class Coordinator:
     def ui_apply(self, tx_id, new_ui_root):
         if self.read_only:
             return {"action": "BLOCK", "code": "STORE_READ_ONLY"}
+        if self.word.gen_exhausted():
+            return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
         self._acquire()
         try:
             d0 = self.word.current()
@@ -673,6 +774,8 @@ class Coordinator:
     def undo(self, tx_id):
         if self.read_only:
             return {"action": "BLOCK", "code": "STORE_READ_ONLY"}
+        if self.word.gen_exhausted():
+            return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
         self._acquire()
         try:
             d0 = self.word.current()
@@ -728,14 +831,28 @@ def boot(root, hooks=None, eps=None):
     """依 ptr-A／ptr-B 與最新分段恢復，寫新分段並切換指標，回傳 (Coordinator, report)。"""
     st = ActiveStore(root, hooks)
     report = {"recovery": [], "frozen": []}
-    ab, best_rec, state, rejected = st.best_valid()
+    plan = reserve_plan()
+    if plan["total"] > plan["reserve"]:
+        raise CommitError("RESERVE_TOO_SMALL", f"預留 {plan['reserve']} < 分配 {plan['total']}")
+    scan = ScanBudget()
+    try:
+        return _boot_scan(st, eps, hooks, report, scan)
+    except CommitError as e:
+        if e.code not in ("BOOT_SCAN_LIMIT", "STORE_READ_ONLY"):
+            raise
+        report["scan_limit"] = {"code": e.code, "detail": e.detail, **scan.report()}
+        return _restricted_boot(st, eps, hooks, report, force=True)
+
+
+def _boot_scan(st, eps, hooks, report, scan):
+    ab, best_rec, state, rejected = st.best_valid(scan)
     if rejected:
         report["pointer_rejected"] = rejected
     if best_rec is None:
         return _restricted_boot(st, eps, hooks, report)
     seg = best_rec["segment_id"]
     if state.get("prev_segment_id") is not None:
-        prev_tail = st.tail_hash(state["prev_segment_id"])
+        prev_tail = st.tail_hash(state["prev_segment_id"], scan)
         if state["prev_segment_tail_hash"] != prev_tail:
             for s in state["route_roots"]:
                 state["slot_state"][s] = {"state": "FROZEN", "reason": "checkpoint_tail_hash_mismatch"}
@@ -743,8 +860,8 @@ def boot(root, hooks=None, eps=None):
     roots = dict(state["route_roots"])
     slot_state = dict(state["slot_state"])
     ui_root = state["ui_root"]
-    coord, cbad = Journal.read(os.path.join(st.seg_dir(seg), "coordinator.jsonl"))
-    route, rbad = Journal.read(os.path.join(st.seg_dir(seg), "route.jsonl"))
+    coord, cbad = Journal.read(os.path.join(st.seg_dir(seg), "coordinator.jsonl"), scan=scan)
+    route, rbad = Journal.read(os.path.join(st.seg_dir(seg), "route.jsonl"), scan=scan)
     if cbad or rbad:
         report["recovery"].append({"bad_lines": {"coordinator": cbad, "route": rbad}})
     by_tx: dict[str, list] = {}
@@ -820,29 +937,38 @@ def boot(root, hooks=None, eps=None):
         if roots[s] is not None:
             roots[s] = dict(roots[s], needs_reverify=True)
     new_seg = st.next_segment_id()
-    tail = st.tail_hash(seg)
-    h = st.write_checkpoint(new_seg, {"global_seq": gmax, "route_roots": roots, "slot_state": slot_state,
-                                      "ui_root": ui_root}, tail, seg)
-    rj = st.journal(new_seg, "coordinator.jsonl")      # 補件 G0-4：RECOVERY 先持久化，再啟用新指標
-    for x in report["recovery"]:
-        if x.get("action") == "use_before":
-            rj.append({"kind": "RECOVERY", "tx_id": x["tx"], "action": "use_before", "why": x.get("why"),
-                       "from_segment": seg})
-    st.write_ptr(new_seg, h)
+    tail = st.tail_hash(seg, scan)
+    report["scan"] = scan.report()
+    st.budget.terminal_mode = True                     # G0 第 5 節：BOOT 的檢查點、RECOVERY 與指標動用終態預留
+    try:
+        h = st.write_checkpoint(new_seg, {"global_seq": gmax, "route_roots": roots, "slot_state": slot_state,
+                                          "ui_root": ui_root}, tail, seg)
+        rj = st.journal(new_seg, "coordinator.jsonl")  # 補件 G0-4：RECOVERY 先持久化，再啟用新指標
+        n_rec = 0
+        for x in report["recovery"]:
+            if x.get("action") == "use_before":
+                n_rec += 1
+                if n_rec > TEST_VALUES["recovery_max_records"]:
+                    raise CommitError("STORE_READ_ONLY", "RECOVERY 筆數超過預留")
+                rj.append({"kind": "RECOVERY", "tx_id": x["tx"], "action": "use_before", "why": x.get("why"),
+                           "from_segment": seg}, max_bytes=TEST_VALUES["recovery_line_cap_bytes"])
+        st.write_ptr(new_seg, h)
+    finally:
+        st.budget.terminal_mode = False
     c = Coordinator(st, eps, hooks, boot_state={"global_seq": gmax, "route_roots": roots, "slot_state": slot_state,
                                                 "ui_root": ui_root, "segment": new_seg, "root_gen": 0})
     report["segment"] = new_seg
     return c, report
 
 
-def _restricted_boot(st: ActiveStore, eps, hooks, report):
+def _restricted_boot(st: ActiveStore, eps, hooks, report, force=False):
     """G0-6：兩份啟用指標都無法驗證。活動區有任何指標檔或分段 → 受限唯讀（不寫檔、停用全部槽、回報診斷）；
     完全空白 → STORE_UNINITIALIZED（要先 init_store）。"""
     base = os.path.join(st.root, "active")
     names = sorted(os.listdir(base)) if os.path.isdir(base) else []
     ptr_files = [n for n in names if n.startswith("ptr-")]
     segs = [n for n in names if n.startswith("seg-")]
-    if not ptr_files and not segs:
+    if not ptr_files and not segs and not force:
         raise CommitError("STORE_UNINITIALIZED", "活動區是空白的，請先初始化")
     diag = []
     for ab in "AB":
@@ -859,7 +985,7 @@ def _restricted_boot(st: ActiveStore, eps, hooks, report):
             elif rec["sha256"] != _sha({k: v for k, v in rec.items() if k != "sha256"}):
                 res = "hash_mismatch"
             else:
-                res = "checkpoint_unverifiable"
+                res = "scan_limit" if force else "checkpoint_unverifiable"
             diag.append({"pointer": ab, "result": res, "bytes": len(raw)})
         except (OSError, ValueError) as e:
             diag.append({"pointer": ab, "result": "unreadable", "error": repr(e)[:120]})
