@@ -130,3 +130,66 @@ class G19Candidates(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ManualRetrievalV7(unittest.TestCase):
+    """v3.10 第二批（使用者 23:47 採用 V7）：R1 只排除已知目錄檔、R2 章節去重、R3 對象主題詞在標題優先、詞表 v3。"""
+    @classmethod
+    def setUpClass(cls):
+        import os
+        from . import rag_index as RI
+        d = r"C:/Users/Administrator/Documents/碩士論文/adr0002_rag_v1/index_v1"
+        if not os.path.exists(os.path.join(d, "INDEX_MANIFEST.json")):
+            raise unittest.SkipTest("缺凍結索引")
+        cls.RI, cls.idx = RI, RI.Index(d)
+
+    def test_defaults_and_heading_boost_zero(self):
+        self.assertEqual(self.RI.HEADING_BOOST, 0.0)
+        self.assertEqual(self.RI.RAG_SETTINGS, {"exclude_toc": True, "section_dedupe": True, "topic_head": True})
+        self.assertEqual(self.RI.QUERY_GLOSSARY_V3["接受半徑"], ["acceptance radius", "nav_acc_rad"])
+        self.assertEqual(self.RI.QUERY_GLOSSARY_V3["羅盤"], self.RI.QUERY_GLOSSARY_V2["羅盤"])
+
+    def test_toc_only_known_files(self):
+        import os
+        paths = {os.path.basename(self.idx.chunks[i]["path"]) for i in self.idx.toc}
+        self.assertEqual(paths, {"SUMMARY.md", "_sidebar.md"})
+        r = self.idx.search("查 QGC 文件：怎麼校正羅盤", k=20, use_vector=False, manual="qgc",
+                            extra=self.RI.QUERY_GLOSSARY_V3)
+        self.assertFalse(any(os.path.basename(x["path"]) in ("SUMMARY.md", "_sidebar.md") for x in r["results"]))
+
+    def test_section_dedupe(self):
+        r = self.idx.search("PX4 文件中任務模式的航點接受半徑", k=30, use_vector=False, manual="px4",
+                            extra=self.RI.QUERY_GLOSSARY_V3)
+        keys = [(x["manual"], x["path"], x["heading_path"]) for x in r["results"]]
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_topic_term_skips_action_words(self):
+        self.assertEqual(self.idx.topic_term("查 QGC 文件：怎麼校正羅盤", self.RI.QUERY_GLOSSARY_V3), frozenset({"compass"}))
+        self.assertIsNone(self.idx.topic_term("怎麼校正", self.RI.QUERY_GLOSSARY_V3))
+
+    def test_v5_v7_lexical_first_hit(self):
+        """離線關鍵字（正式計分）：V5 9/12、V7 12/12；F20 8→1、C23 1→3。"""
+        from . import m4b_runner as R4
+        from .agent_m4b import M4bController
+        ranks = {}
+        for name, st in R4.PROBE_SETTINGS:
+            for c in R4.probe_cases():
+                r = self.idx.search(c["text"], k=50, use_vector=False, manual=M4bController._manual_source(None, c["text"]),
+                                    extra=self.RI.QUERY_GLOSSARY_V3, settings=st)
+                refs = [{k: x[k] for k in ("manual", "path", "heading_path")} | {"excerpt": x["text"][:400]}
+                        for x in r["results"]]
+                ranks[(name, c["id"])] = next((k + 1 for k, x in enumerate(refs) if R4._ref_hit(c, x)), None)
+        top5 = {n: sum(1 for (m, _), v in ranks.items() if m == n and v and v <= 5) for n in ("V5", "V7")}
+        self.assertEqual(top5, {"V5": 9, "V7": 12})
+        self.assertEqual((ranks[("V5", "F20")], ranks[("V7", "F20")]), (8, 1))
+        self.assertEqual((ranks[("V5", "C23")], ranks[("V7", "C23")]), (1, 3))
+
+    def test_probe_rows_and_gate(self):
+        from . import m4b_runner as R4
+        R4.R.set_manual_index(R4.R.DEFAULT_INDEX_DIR, "http://127.0.0.1:1", use_vector=False)
+        p = R4.retrieval_probe()
+        self.assertEqual(len(p["rows"]), 24)                       # 12 題 × V5／V7
+        self.assertEqual({r["setting"] for r in p["rows"]}, {"V5", "V7"})
+        for k in ("lexical_top5", "vector_top5", "hybrid_top5", "lexical_first_hit", "vector_first_hit", "hybrid_first_hit"):
+            self.assertIn(k, p["rows"][0])
+        self.assertTrue(R4.probe_blocked(p))                       # 沒有查詢向量 → 不是 rrf → live 會擋下

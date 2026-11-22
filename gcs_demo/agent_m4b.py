@@ -768,8 +768,8 @@ class M4bController:
             return "OK"
         if a == "MANUAL_SEARCH":
             src = self._manual_source(task["text"])         # v3.9 §2：指定 QGC／PX4 時限定來源，查詢端詞表 v2
-            from .rag_index import QUERY_GLOSSARY_V2
-            r = T["manual_search"](task["text"], qv, manual=src, extra=QUERY_GLOSSARY_V2) if "manual_search" in T \
+            from .rag_index import QUERY_GLOSSARY_V3          # v3.10：詞表 v3（R1～R3 的開關見 rag_index.RAG_SETTINGS）
+            r = T["manual_search"](task["text"], qv, manual=src, extra=QUERY_GLOSSARY_V3) if "manual_search" in T \
                 else {"results": [], "status": "NOT_LOADED"}
             if src and not r.get("results"):
                 task["notes"].append(f"指定的 {src.upper()} 手冊查無可用出處")

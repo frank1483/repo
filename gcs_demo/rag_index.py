@@ -34,6 +34,12 @@ GLOSSARY = {"返航": ["rtl", "return"], "起飛": ["takeoff"], "降落": ["land
 # v3.9 §2：查詢端詞表 v2（只在手冊查詢的關鍵字端使用；不改 GLOSSARY，它的雜湊已記在凍結索引的 manifest）
 QUERY_GLOSSARY_V2 = {"羅盤": ["compass"], "指南針": ["compass"], "校正": ["calibration", "calibrate"],
                      "校準": ["calibration", "calibrate"], "感測器": ["sensor", "sensors"], "圍欄": ["geofence"]}
+# v3.10 第二批（使用者 2026-11-22 23:47 採用 V7）：查詢端詞表 v3＝v2＋接受半徑／半徑
+QUERY_GLOSSARY_V3 = dict(QUERY_GLOSSARY_V2, **{"接受半徑": ["acceptance radius", "nav_acc_rad"], "半徑": ["radius"]})
+TOC_FILES = ("SUMMARY.md", "_sidebar.md")   # R1：只排除已知目錄檔（連結密度規則只當診斷，不排除）
+TOPIC_ACTION = {"calibration", "calibrate", "setup", "setting", "settings", "parameter", "configure", "configuration"}
+# 每條規則獨立開關；跑次把這組設定記進 RUN_INFO（V5＝topic_head 關、V7＝全開）
+RAG_SETTINGS = {"exclude_toc": True, "section_dedupe": True, "topic_head": True}
 HEADING_BOOST = 0.0      # v3.9：標題詞加權倍數。離線關鍵字對照：0.25～1.0 讓 F20 進前五但 C24 掉出，取捨未定前關閉（0＝不加權）
 TOKEN_RE = re.compile(r"[a-z0-9_]+")
 
@@ -181,17 +187,39 @@ class Index:
         self.N, self.avgdl, self.df = lex["N"], lex["avgdl"], lex["df"]
         self.toks = [tokens(c["text"]) for c in self.chunks]
         self.htoks = [set(tokens((c.get("heading_path") or "").split(">")[-1])) for c in self.chunks]
+        self.toc = {i for i, c in enumerate(self.chunks) if os.path.basename(c["path"]) in TOC_FILES}
         self.calls = []        # 每次 embedding 請求：端點、延遲、成功與否（與 LLM 呼叫分開記）
 
-    def _allowed(self, manual):
-        return None if manual is None else {i for i, c in enumerate(self.chunks) if c["manual"] == manual}
+    def _allowed(self, manual, exclude_toc=False):
+        """限定來源與（v3.10 R1）排除已知目錄檔；關鍵字與向量兩路在取前 top 名之前共用。"""
+        if manual is None and not exclude_toc:
+            return None
+        return {i for i, c in enumerate(self.chunks)
+                if (manual is None or c["manual"] == manual) and not (exclude_toc and i in self.toc)}
 
-    def _bm25(self, q, top=50, k1=1.2, b=0.75, manual=None, extra=None, heading_boost=0.0):
+    def topic_term(self, q, extra):
+        """v3.10 R3：查詢的「對象主題詞」＝去掉動作概念後、索引中最少見（idf 最高）的概念；沒有就回 None。"""
+        cs = []
+        for zh, en in list(GLOSSARY.items()) + list((extra or {}).items()):
+            if zh in q:
+                cs.append(frozenset(t for e in en for t in tokens(e)))
+        cs += [frozenset([t]) for t in tokens(q) if t not in ("qgc", "px4")]
+        cs = [c for c in dict.fromkeys(cs) if any(t in self.df for t in c) and not (c & TOPIC_ACTION)]
+        if not cs:
+            return None
+
+        def idf(t):
+            n = self.df.get(t, 0)
+            return math.log(1 + (self.N - n + 0.5) / (n + 0.5))
+        return max(cs, key=lambda c: max(idf(t) for t in c if t in self.df))
+
+    def _bm25(self, q, top=50, k1=1.2, b=0.75, manual=None, extra=None, heading_boost=0.0, exclude_toc=False,
+              topic_head=False):
         qt = tokens(q)
         for zh, en in list(GLOSSARY.items()) + list((extra or {}).items()):
             if zh in q:
                 qt += [t for e in en for t in tokens(e)]
-        allowed = self._allowed(manual)                 # 限定來源：在取前 top 名之前過濾
+        allowed = self._allowed(manual, exclude_toc)    # 限定來源：在取前 top 名之前過濾
         scores = []
         for i, toks in enumerate(self.toks):
             if allowed is not None and i not in allowed:
@@ -210,9 +238,14 @@ class Index:
             if s > 0:
                 scores.append((s, i))
         scores.sort(key=lambda x: -x[0])
-        return [i for _, i in scores[:top]]
+        out = [i for _, i in scores[:top]]
+        if topic_head:                                  # v3.10 R3：前 top 名內，末層標題含對象主題詞者穩定排前（不加分）
+            tt = self.topic_term(q, extra)
+            if tt:
+                out = [i for i in out if tt & self.htoks[i]] + [i for i in out if not (tt & self.htoks[i])]
+        return out
 
-    def _vector(self, q, top=50, vector=None, manual=None):
+    def _vector(self, q, top=50, vector=None, manual=None, exclude_toc=False):
         t0 = time.monotonic()
         try:
             qv = vector or embed([PREFIX_QUERY.format(query=q)], self.url)[0]
@@ -227,7 +260,7 @@ class Index:
         d = self.dim
         scores = []
         v = self.vec
-        allowed = self._allowed(manual)
+        allowed = self._allowed(manual, exclude_toc)
         for i in range(len(self.chunks)):
             if allowed is not None and i not in allowed:
                 continue
@@ -254,8 +287,13 @@ class Index:
                                "stage": "pre_llm", "error": repr(e)})
             return None
 
-    def search(self, q, k=5, use_vector=True, vector=None, require_pre=False, manual=None, extra=None):
-        lex = self._bm25(q, manual=manual, extra=extra, heading_boost=HEADING_BOOST if extra else 0.0)
+    def search(self, q, k=5, use_vector=True, vector=None, require_pre=False, manual=None, extra=None, settings=None,
+               channels=False):
+        """settings＝RAG_SETTINGS 的覆寫（探測用來配對比較 V5／V7）；channels＝True 時另回關鍵字與向量兩路的原始名次。"""
+        st = dict(RAG_SETTINGS, **(settings or {}))
+        toc = st["exclude_toc"]
+        lex = self._bm25(q, manual=manual, extra=extra, heading_boost=HEADING_BOOST if extra else 0.0, exclude_toc=toc,
+                         topic_head=st["topic_head"])
         reason = None
         try:
             if not use_vector:
@@ -263,9 +301,9 @@ class Index:
             elif vector is None and require_pre:
                 vec, reason = [], "no_query_vector"
             elif vector is None:
-                vec = self._vector(q, manual=manual)
+                vec = self._vector(q, manual=manual, exclude_toc=toc)
             else:
-                vec = self._vector(q, vector=vector, manual=manual)
+                vec = self._vector(q, vector=vector, manual=manual, exclude_toc=toc)
         except Exception as e:  # noqa: BLE001 - 向量不可用時只用關鍵字並標降級
             vec, reason = [], "vector_error:" + repr(e)[:80]
         degraded = reason is not None
@@ -279,10 +317,12 @@ class Index:
         for i in order:
             c = self.chunks[i]
             key2 = (c["doc_id"], c["text_sha256"])
-            if c["chunk_id"] in seen_id or key2 in seen_text:
+            key3 = (c["doc_id"], c["heading_path"]) if st["section_dedupe"] else key2   # v3.10 R2：同文件同章節只留最高分
+            if c["chunk_id"] in seen_id or key2 in seen_text or key3 in seen_text:
                 continue
             seen_id.add(c["chunk_id"])
             seen_text.add(key2)
+            seen_text.add(key3)
             out.append({k2: c[k2] for k2 in ("chunk_id", "manual", "path", "version", "heading_path", "text")}
                        | {"score": round(score[i], 6)})
             if len(out) >= k:
@@ -290,8 +330,12 @@ class Index:
         if not lex and reason is None:
             reason = "no_lexical_hits"
         mode = "rrf" if vec and lex else ("vector_only" if vec else ("lexical_only" if lex else "none"))
-        return {"results": out, "degraded": degraded or not vec or not lex, "degraded_reason": reason,
-                "mode": mode, "status": "OK" if out else "NOT_FOUND"}
+        res = {"results": out, "degraded": degraded or not vec or not lex, "degraded_reason": reason,
+               "mode": mode, "status": "OK" if out else "NOT_FOUND", "settings": st}
+        if channels:
+            res["lexical_ids"], res["vector_ids"] = [self.chunks[i]["chunk_id"] for i in lex], \
+                [self.chunks[i]["chunk_id"] for i in vec]
+        return res
 
 
 if __name__ == "__main__":

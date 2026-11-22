@@ -242,7 +242,10 @@ def _timing(rs):
         {"retries_total": sum((r.get("timing") or {}).get("retries", 0) for r in rs)}
 
 
-PROBE_QUERIES = [("F20", "查 QGC 文件：怎麼校正羅盤"), ("C24", "PX4 文件中任務模式的航點接受半徑")]
+PROBE_CASE_FILES = ("m4b_cases_dev_v3.json", "m4b_cases_eval_v2.json", "m4b_cases_eval_v3.json")
+PROBE_SETTINGS = (("V5", {"exclude_toc": True, "section_dedupe": True, "topic_head": False}),
+                  ("V7", {"exclude_toc": True, "section_dedupe": True, "topic_head": True}))
+PROBE_MUST_HIT = ("F20", "C24", "G08")      # v3.10 驗收：這三題在 V7 混合前五要命中；G11 同列；V5 已命中前五的題目要保住
 
 
 def probe_blocked(probe):
@@ -250,29 +253,55 @@ def probe_blocked(probe):
     return any(r["mode"] != "rrf" or r["degraded"] for r in probe["rows"])
 
 
+def probe_cases():
+    """手冊題：三個案例檔裡期望 manual_claims 的全部案例（v3.10：12 題）。"""
+    return [c for f in PROBE_CASE_FILES for c in json.load(open(os.path.join(HERE, f), encoding="utf-8"))["cases"]
+            if "manual_claims" in (c.get("expect_artifacts") or {})]
+
+
+def _ref_hit(case, ref):
+    c = dict(case, expect_status="DONE", expect_proposals=[], expect_artifacts={"manual_claims": "ok"})
+    return score(c, {"status": "DONE", "artifacts": {"manual_claims": {"verdict": "ok", "refs": [ref]}}})["artifacts_ok"]["manual_claims"]
+
+
 def retrieval_probe():
-    """v3.9 §2：同一索引比較四種設定在混合檢索（BM25＋向量 RRF）的前五：原句／只擴詞／只限來源／兩者；
-    記錄各自是否命中凍結計分標準。標題加權維持 0。"""
+    """v3.10（使用者 2026-11-22 23:47）：12 題手冊題，每題算一次查詢向量，用同一個向量配對比較 V5、V7。
+    逐題記錄關鍵字、向量、混合三種排序的前五與首命中名次（看前 50），計分標準與正式計分相同（摘錄取前 400 字）。
+    全域標題加權維持 0。"""
     from .agent_m4b import M4bController
-    from .rag_index import HEADING_BOOST, QUERY_GLOSSARY_V2
+    from .rag_index import HEADING_BOOST, QUERY_GLOSSARY_V3
     idx = R.manual_index()
-    allc = {c["id"]: c for f in ("m4b_cases_dev_v3.json", "m4b_cases_eval_v2.json")
-            for c in json.load(open(os.path.join(HERE, f), encoding="utf-8"))["cases"]}
-    out = {"heading_boost": HEADING_BOOST, "rows": []}
-    for cid, q in PROBE_QUERIES:
+    by_id = {c["chunk_id"]: c for c in idx.chunks}
+
+    def ref(c):
+        return {k: c[k] for k in ("manual", "path", "heading_path", "version", "chunk_id")} | {"excerpt": c["text"][:400]}
+
+    def show(c):
+        return [c["manual"], c["path"], c["heading_path"]]
+    out = {"heading_boost": HEADING_BOOST, "settings": dict(PROBE_SETTINGS), "rows": [], "must_hit": list(PROBE_MUST_HIT)}
+    for case in probe_cases():
+        q = case["text"]
         qv = idx.query_vector(q) if R._INDEX["use_vector"] else None
         src = M4bController._manual_source(None, q)
-        for name, man, extra in (("original", None, None), ("glossary_only", None, QUERY_GLOSSARY_V2),
-                                 ("source_only", src, None), ("both", src, QUERY_GLOSSARY_V2)):
-            r = idx.search(q, k=5, use_vector=R._INDEX["use_vector"], vector=qv, require_pre=R._INDEX["use_vector"],
-                           manual=man, extra=extra)
-            refs = [{k: y[k] for k in ("manual", "path", "heading_path", "version", "chunk_id")} | {"excerpt": y["text"][:400]}
-                    for y in r["results"]]
-            case = dict(allc[cid], expect_status="DONE", expect_proposals=[], expect_artifacts={"manual_claims": "ok"})
-            hit = score(case, {"status": "DONE", "artifacts": {"manual_claims": {"verdict": "ok" if refs else "not_found",
-                                                                                   "refs": refs}}})["artifacts_ok"]["manual_claims"]
-            out["rows"].append({"case": cid, "setting": name, "hit_top5": hit, "mode": r.get("mode"),
-                                "degraded": r.get("degraded"), "top5": [[x["manual"], x["path"], x["heading_path"]] for x in refs]})
+        for name, st in PROBE_SETTINGS:
+            r = idx.search(q, k=50, use_vector=R._INDEX["use_vector"], vector=qv, require_pre=R._INDEX["use_vector"],
+                           manual=src, extra=QUERY_GLOSSARY_V3, settings=st, channels=True)
+            lists = {"lexical": [by_id[i] for i in r["lexical_ids"]], "vector": [by_id[i] for i in r["vector_ids"]],
+                     "hybrid": [by_id[x["chunk_id"]] for x in r["results"]]}
+            row = {"case": case["id"], "setting": name, "query": q, "manual": src, "mode": r.get("mode"),
+                   "degraded": r.get("degraded"), "query_vector_ok": qv is not None}
+            for ch, xs in lists.items():
+                row[ch + "_top5"] = [show(c) for c in xs[:5]]
+                row[ch + "_first_hit"] = next((k + 1 for k, c in enumerate(xs) if _ref_hit(case, ref(c))), None)
+            row["hit_top5"] = bool(row["hybrid_first_hit"] and row["hybrid_first_hit"] <= 5)
+            out["rows"].append(row)
+    hy = {(x["case"], x["setting"]): x["hit_top5"] for x in out["rows"]}
+    out["acceptance"] = {
+        "must_hit_v7": {c: hy.get((c, "V7")) for c in PROBE_MUST_HIT + ("G11",)},
+        "kept_from_v5": {c: hy.get((c, "V7")) for (c, s), v in hy.items() if s == "V5" and v},
+    }
+    out["acceptance"]["pass"] = all(out["acceptance"]["must_hit_v7"][c] for c in PROBE_MUST_HIT) and \
+        all(out["acceptance"]["kept_from_v5"].values())
     return out
 
 
@@ -354,7 +383,10 @@ def main(argv=None):
     global CASES
     CASES = CASES_BY_PHASE[a.phase]
     info["cases_file"] = os.path.basename(CASES)
-    from .rag_index import QUERY_GLOSSARY_V2
+    from .rag_index import QUERY_GLOSSARY_V2, QUERY_GLOSSARY_V3, RAG_SETTINGS, TOC_FILES, HEADING_BOOST
+    info["rag_settings"] = {"settings": dict(RAG_SETTINGS), "toc_files": list(TOC_FILES), "heading_boost": HEADING_BOOST,
+                            "query_glossary_v3_sha256": R.hashlib.sha256(json.dumps(
+                                QUERY_GLOSSARY_V3, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()}
     info["query_glossary_v2_sha256"] = R.hashlib.sha256(json.dumps(QUERY_GLOSSARY_V2, ensure_ascii=False,
                                                                    sort_keys=True).encode("utf-8")).hexdigest()
     cases = json.load(open(CASES, encoding="utf-8"))["cases"]
