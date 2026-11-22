@@ -160,6 +160,17 @@ class M4bController:
                 break
             for d, pl in packed["plan"].items():
                 task["cands"][d], task["lines"][d] = pl["items"], pl["lines"]
+                if d == "layout":                           # v3.10（G19）：原句點名的元件與參數一定進候選
+                    named = []
+                    for x in list(task.get("layout_items") or []) + list(task.get("layout_unclear") or []) + \
+                            list(task.get("layout_conflicts") or []):
+                        named += [i for i in x[:2] if i]
+                    add = [i for i in dict.fromkeys(named) if i in self.graph.nodes and i not in task["cands"][d]]
+                    if add:
+                        task["cands"][d] = add + task["cands"][d]
+                        task["lines"][d] = [line_of(self.graph.nodes, self.graph.nodes[i]) for i in add] + task["lines"][d]
+                        task.setdefault("reserved_cands", []).extend(add)
+                        task["notes"].append("原句點名的版面對象補進候選：" + "、".join(add))
                 if d == "plan" and task.get("area_fixed"):  # v3.7：原句唯一指定的區域 → 候選只剩它
                     fx = task["area_fixed"]
                     task["cands"][d] = [fx]
@@ -278,6 +289,12 @@ class M4bController:
             return False
         return any(w in c for w in ("航線", "巡檢", "規劃", "結果", "路線")) or self._names_route_text(c)
 
+    def _plan_clause(self, c):
+        """v3.10：獨立的規劃子句：含規劃關鍵字（巡檢、航線、規劃、覆蓋）或區域名稱，且不是否定句。"""
+        if any(w in c for w in self.NEG):
+            return False
+        return any(w in c for w in KEYWORDS["plan"]) or self._names_route_text(c)
+
     def _names_route_text(self, text):
         return "query_area" in self.tools and self.tools["query_area"](text)["status"] != "NONE"
 
@@ -287,6 +304,9 @@ class M4bController:
         lay = [c for c in cl if self._layout_clause(c)]
         home = [c for c in cl if self._home_plan_clause(c)] or ([task["text"]] if self._home_plan_clause(task["text"]) else [])
         out, fix = list(ds), []
+        if home and "ui" not in out:                     # v3.10（G03）：明確把規劃成果放首頁 → 補 ui；缺預覽由既有 plan 前置補上
+            out.append("ui")
+            fix.append({"op": "add", "dir": "ui", "why": "把規劃成果放首頁：" + "／".join(home)})
         if lay and "layout" not in out:
             out.append("layout")
             fix.append({"op": "add", "dir": "layout", "why": "版面動詞＋元件／文字：" + "／".join(lay)})
@@ -300,6 +320,13 @@ class M4bController:
         if home and not lay and "layout" in out:
             out.remove("layout")
             fix.append({"op": "remove", "dir": "layout", "why": "只有把規劃成果放首頁，沒有版面子句：" + "／".join(home)})
+        plan_cl = [c for c in cl if c not in lay and self._plan_clause(c)]
+        if lay and not home and not plan_cl and "plan" in out:   # v3.10（G02）：只有版面要求、沒有獨立規劃子句 → 移除多選的 plan
+            out.remove("plan")
+            fix.append({"op": "remove", "dir": "plan", "why": "只有版面要求，沒有規劃子句：" + "／".join(lay)})
+        if (lay or home) and "chat" in out:                # v3.10（G02）：已有明確操作時，閒聊不算必要方向
+            out.remove("chat")
+            fix.append({"op": "remove", "dir": "chat", "why": "已有明確操作，閒聊不列為必要方向"})
         if self._manual_explicit(task["text"]):           # v3.9 §2：明確指定手冊 → manual；沒有獨立問答子句就不留 qa
             if "manual" not in out:
                 out.append("manual")
@@ -544,9 +571,27 @@ class M4bController:
                 return False, None, "原句說不要這個改動，不可開提案；請做其他還缺的項目或 FINISH"
             if (c0, p0) in [(x[0], x[1]) for x in (task.get("layout_unclear") or [])] or                     (c0, p0) in [tuple(x) for x in task.get("layout_conflicts") or []]:
                 return False, None, "這一項原句沒講清楚或互相衝突，要請使用者補充，不可自己決定；請做其他還缺的項目或 FINISH"
+            bad = self._layout_mismatch(task, c0, p0, params.get("value"))
+            if bad:
+                return False, None, bad
         if a not in ("FINISH", "HOLD") and self._sig(step, self.have(task)) in task.get("sigs", set()):
             return False, None, f"{a}（同一目標、參數與輸入）已經做過；請選下一個還缺的成果的動作"
         return True, step, ""
+
+    def _layout_mismatch(self, task, c, p, v):
+        """v3.10（G19）：開窗前核對元件、參數、值是否符合原句的明確需求，並按這三項去重。符合回空字串。"""
+        if (c, p, v) in [OC.layout_key(x) for x in task.get("proposals") or [] if x.get("direction") == "layout"]:
+            return "這個版面改動（同元件、參數、值）已經開過確認視窗；請做其他還缺的項目或 FINISH"
+        clear = [tuple(x) for x in task.get("layout_items") or []]
+        named = {(x[0], x[1]) for x in clear + [tuple(y) for y in task.get("layout_unclear") or []]} | \
+            {tuple(x) for x in task.get("layout_conflicts") or []}
+        if not named or (c, p) in {(x[0], x[1]) for x in task.get("layout_unclear") or []} or \
+                (c, p) in {tuple(x) for x in task.get("layout_conflicts") or []}:
+            return ""                                  # 原句沒解析出明確項目：沿用舊判定；缺值、衝突另有處理
+        if (c, p, v) in clear:
+            return ""
+        want = "；".join(f"{x[0] + '＋' if x[0] else ''}{x[1]}，value＝{x[2]}" for x in clear)
+        return f"不符合原句的明確需求（{c + '＋' if c else ''}{p}，value＝{v}）；原句要的是：{want}"
 
     def _sig(self, step, have):
         """去重鍵（v2，CODEX-APP-0413 第 2 點）：同一動作、同一目標與參數、同一輸入狀態。"""
@@ -700,6 +745,10 @@ class M4bController:
             if ck in [tuple(x) for x in task.get("layout_conflicts") or []]:
                 task["notes"].append(f"{ck[0] or ''}{'＋' if ck[0] else ''}{ck[1]}：原句要了互相衝突的值，請你確認")
                 return "NEEDS_USER"
+            bad = self._layout_mismatch(task, ck[0], ck[1], params.get("value"))
+            if bad:                                         # v3.10（G19）：開窗前最後一道核對
+                task["notes"].append("版面提案退回：" + bad)
+                return "BLOCKED"
             if ck in [(x[0], x[1]) for x in task.get("layout_unclear") or []]:
                 task["notes"].append(f"{ck[0] or ''}{'＋' if ck[0] else ''}{ck[1]}：原句沒有講清楚要調成什麼，請你補充")
                 return "NEEDS_USER"

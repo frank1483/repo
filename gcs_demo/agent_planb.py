@@ -287,6 +287,9 @@ class PlanBController(M4bController):
                 src = known.get(x) or next(s for s in out if s["id"] == x)
                 if src["action"] not in PROPOSE:
                     return False, None, f"{sid}：require 的步驟不會有 APPLIED 狀態"
+            if a == "UI_LAYOUT_PROPOSE" and OC.layout_key({"ids": ids, "params": params}) in \
+                    [OC.layout_key(x) for x in out if x["action"] == "UI_LAYOUT_PROPOSE"]:
+                return False, None, f"{sid}：和計畫中另一個版面步驟重複（同元件、參數、值）"   # v3.10（G19）
             seen.add(sid)
             out.append({"id": sid, "direction": d, "action": a, "ids": ids, "params": params, "after": after,
                         "bind": bind, "when": when, "require": req})
