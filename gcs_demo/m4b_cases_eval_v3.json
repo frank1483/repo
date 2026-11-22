@@ -1,0 +1,468 @@
+{
+ "version": "m4b-cases-eval-v3",
+ "annotation": "AI 共同決定（使用者委任）：Claude 2026-11-22 草擬的評估集 v3（v3.9 四題修正的泛化檢查），不是人工標註；句子沒有用來調提示，與開發集 v3、評估集 v2 沒有重複句。請使用者抽看。",
+ "fields": "同 m4b_cases_v2",
+ "cases": [
+  {
+   "id": "G01",
+   "text": "把小地圖顯示出來",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C016",
+      "P004"
+     ],
+     "values": [
+      "顯示"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "顯示元件＝版面"
+  },
+  {
+   "id": "G02",
+   "text": "風速計收起來",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C014",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "口語隱藏"
+  },
+  {
+   "id": "G03",
+   "text": "把南側巡檢航線放到首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "放首頁＝ui，不可多開版面",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "G04",
+   "text": "北側二巡檢完顯示在首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "「顯示在首頁」＝ui",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "G05",
+   "text": "把北側巡檢結果放到首頁，另外隱藏羅盤",
+   "gold_dirs": [
+    "plan",
+    "ui",
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    },
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C013",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "兩種操作都保留",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  },
+  {
+   "id": "G06",
+   "text": "不要隱藏小地圖",
+   "gold_dirs": [
+    "chat"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "否定不開提案"
+  },
+  {
+   "id": "G07",
+   "text": "小地圖要怎麼隱藏？",
+   "gold_dirs": [
+    "qa"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {},
+   "expect_status": "INCOMPLETE",
+   "note": "詢問不開提案"
+  },
+  {
+   "id": "G08",
+   "text": "查 QGC 手冊：羅盤怎麼校準",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "指定 QGC＋擴詞",
+   "manual_gold_ref": {
+    "manual": "qgc",
+    "paths": [
+     "docs/en/qgc-user-guide/setup_view/sensors_px4.md",
+     "docs/en/qgc-user-guide/setup_view/sensors_ardupilot.md"
+    ],
+    "heading_segment": "Compass {#compass}"
+   }
+  },
+  {
+   "id": "G09",
+   "text": "PX4 文件裡返航模式怎麼設定",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "指定 PX4",
+   "manual_gold_any": [
+    "return mode",
+    "rtl"
+   ]
+  },
+  {
+   "id": "G10",
+   "text": "手冊裡有沒有講地理圍欄",
+   "gold_dirs": [
+    "manual"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "DONE",
+   "note": "未指定來源",
+   "manual_gold_any": [
+    "geofence"
+   ]
+  },
+  {
+   "id": "G11",
+   "text": "查 QGC 手冊的羅盤校準，另外現在電量多少？",
+   "gold_dirs": [
+    "manual",
+    "qa"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "manual_claims": "ok"
+   },
+   "expect_status": "PARTIAL",
+   "note": "手冊＋獨立問答並存（問答工具未接）",
+   "manual_gold_ref": {
+    "manual": "qgc",
+    "paths": [
+     "docs/en/qgc-user-guide/setup_view/sensors_px4.md",
+     "docs/en/qgc-user-guide/setup_view/sensors_ardupilot.md"
+    ],
+    "heading_segment": "Compass {#compass}"
+   }
+  },
+  {
+   "id": "G12",
+   "text": "隱藏羅盤然後把文字調小",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C013",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    },
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "小"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "同方向兩項"
+  },
+  {
+   "id": "G13",
+   "text": "字體調成特大，再把風速計放大",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "特大"
+     ]
+    },
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C014",
+      "P002"
+     ],
+     "values": [
+      "放大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "同方向兩項（順序相反）"
+  },
+  {
+   "id": "G14",
+   "text": "把小地圖移到左下並隱藏風速計",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C016",
+      "P003"
+     ],
+     "values": [
+      "左下"
+     ]
+    },
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C014",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "移動＋隱藏"
+  },
+  {
+   "id": "G15",
+   "text": "隱藏羅盤，隱藏羅盤",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C013",
+      "P004"
+     ],
+     "values": [
+      "隱藏"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "重複只開一張"
+  },
+  {
+   "id": "G16",
+   "text": "南側巡檢留 96% 放到首頁",
+   "gold_dirs": [
+    "plan",
+    "ui"
+   ],
+   "expect_proposals": [],
+   "expect_artifacts": {
+    "route_preview": "fail"
+   },
+   "expect_status": "INCOMPLETE",
+   "note": "預覽不合格→首頁合法略過"
+  },
+  {
+   "id": "G17",
+   "text": "把指令區隱藏然後字體調大",
+   "gold_dirs": [
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "P001"
+     ],
+     "values": [
+      "大"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "鎖定元件不列入，只開字體"
+  },
+  {
+   "id": "G18",
+   "text": "切成深色主題並顯示任務進度",
+   "gold_dirs": [
+    "color",
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_THEME_PROPOSE",
+     "ids": [
+      "T001"
+     ],
+     "values": []
+    },
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C007",
+      "P004"
+     ],
+     "values": [
+      "顯示"
+     ]
+    }
+   ],
+   "expect_artifacts": {},
+   "expect_status": "DONE",
+   "note": "跨方向"
+  },
+  {
+   "id": "G19",
+   "text": "南區規劃航線，然後放大高度顯示",
+   "gold_dirs": [
+    "plan",
+    "layout"
+   ],
+   "expect_proposals": [
+    {
+     "action": "UI_LAYOUT_PROPOSE",
+     "ids": [
+      "C012",
+      "P002"
+     ],
+     "values": [
+      "放大"
+     ]
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass"
+   },
+   "expect_status": "DONE",
+   "note": "規劃＋版面，沒有放首頁"
+  },
+  {
+   "id": "G20",
+   "text": "把北側巡檢放到首頁然後起飛",
+   "gold_dirs": [
+    "plan",
+    "ui",
+    "flight_request"
+   ],
+   "expect_proposals": [
+    {
+     "action": "PROPOSE_HOME_ROUTE",
+     "ids": [
+      "U100"
+     ],
+     "values": []
+    }
+   ],
+   "expect_artifacts": {
+    "route_preview": "pass",
+    "flight_notice": null
+   },
+   "expect_status": "DONE",
+   "note": "首頁＋飛控固定說明",
+   "expect_dependency": {
+    "PROPOSE_HOME_ROUTE": "pass_preview"
+   }
+  }
+ ]
+}
