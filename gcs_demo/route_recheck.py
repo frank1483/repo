@@ -16,6 +16,35 @@ from . import coverage as cv
 from .commit_layer import TEST_VALUES
 
 
+def _finite(*xs):
+    return all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in xs)
+
+
+def domain_problem(vehicle, S, base):
+    """0437 #6：上界的適用域。不符合就回原因字串，呼叫端一律 BLOCK/JOINT_MARGIN_UNVERIFIED。"""
+    if getattr(vehicle, "airframe_profile", None) is not None or vehicle.type != "multirotor":
+        return "airframe_not_legacy_multirotor"
+    v = vehicle
+    if not _finite(v.battery_wh, v.usable_frac, v.p_hover_w, v.cda_m2, v.eta, v.cruise_mps, v.max_mps, v.calib,
+                   v.mass_kg, v.reserve_pct):
+        return "vehicle_nonfinite"
+    if not (v.battery_wh > 0 and 0 < v.usable_frac <= 1 and v.p_hover_w > 0 and v.cda_m2 >= 0 and v.eta > 0
+            and v.calib > 0 and 0 < v.cruise_mps <= v.max_mps):
+        return "vehicle_out_of_range"
+    g = base.get("speed_mps")
+    if g is not None and not (_finite(g) and 0 < g <= v.max_mps):
+        return "speed_out_of_range"
+    w = S.get("wind") or {}
+    if not _finite(S.get("battery"), w.get("speed_mps"), w.get("from_deg")):
+        return "snapshot_nonfinite"
+    if not (0 <= S["battery"] <= 100 and 0 <= w["speed_mps"] <= v.max_mps):
+        return "snapshot_out_of_range"
+    pos = S.get("position") or (0, 0)
+    if not _finite(*pos):
+        return "position_nonfinite"
+    return None
+
+
 def headwind_bound_end_pct(points, vehicle, wind_speed_max, takeoff_pct, reserve_eff, speed_mps=None,
                            hover_s_per_wp=5.0):
     """G0-3（補件）：方向無關的保守上界。多旋翼舊版能耗模型中，地速固定、時間＝距離／地速與風無關，
@@ -53,6 +82,9 @@ def make_route_recheck(record, vehicle, base, shown=None, eps=None, margin_pct=N
     margin = TEST_VALUES["joint_margin_battery_pct"] if margin_pct is None else margin_pct
 
     def recheck(S):
+        bad = domain_problem(vehicle, S, base)            # 0437 #6：適用域在任何估算之前判定
+        if bad:
+            return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_UNVERIFIED"], "domain": bad}
         cur = _current(vehicle, S, base)
         chk = cv.apply_check(record, **cur)
         if chk["decision"] == "BLOCK":
