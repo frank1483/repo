@@ -335,6 +335,12 @@ def main(argv=None):
         raise SystemExit("輸出目錄已存在。依「只跑一次」規則不重跑；要修正請開新目錄。")
     info = {"phase": a.phase, "fake": a.fake, "start": R.now(), "group_definitions": GROUP_NOTE,
             "qa_note": R.QA_TOOL_NOTE, "consent_hash8_input": a.consent_hash8 or None}
+    import subprocess                                    # v3.9：每次執行（含 fake）都綁定程式提交與工作樹狀態
+    h = subprocess.run(["git", "-C", R.REPO, "rev-parse", "HEAD"], capture_output=True, text=True)
+    st = subprocess.run(["git", "-C", R.REPO, "status", "--porcelain=v1", "--untracked-files=all"], capture_output=True, text=True)
+    info["source_commit"], info["worktree_dirty"] = h.stdout.strip(), bool(st.stdout.strip())
+    if a.fake and a.bundle:                              # fake 也可記錄對應的來源包清單雜湊（不做 live 核對）
+        info["bundle_sums_sha256"] = R.sha_file(os.path.join(a.bundle, "SHA256SUMS.txt"))
     if not a.fake:
         if not a.bundle:
             raise SystemExit("live 需要 --bundle")

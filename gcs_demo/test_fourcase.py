@@ -318,5 +318,34 @@ class Review0430(unittest.TestCase):
         self.assertIn("manual", corr("不要查 QGC 手冊再查 PX4 手冊", ["chat"])[0])
 
 
+class Review0431(unittest.TestCase):
+    def test_question_does_not_block_explicit_same_field(self):
+        from .agent_planb import PlanBController
+        from .test_planb import plan, st
+        text = "小地圖怎麼移動？把小地圖移到左上"
+        mv = '{"action":"UI_LAYOUT_PROPOSE","ids":["C016","P003"],"params":{"value":"左上"}}'
+        _, T = tools3(["C016", "P003"])
+        ra = M4bController(T, scripted(['{"directions":["layout"]}', mv]), GRAPH, COUNTER).request(text)
+        _, T2 = tools3(["C016", "P003"])
+        one = plan(st("s1", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P003"], {"value": "左上"}))
+        rb = PlanBController(T2, scripted(['{"directions":["layout"]}', one]), GRAPH, COUNTER).request(text)
+        for r in (ra, rb):
+            self.assertEqual([(tuple(p["ids"]), p["params"]["value"]) for p in r["proposals"]], [(("C016", "P003"), "左上")])
+            self.assertEqual(r["status"], "DONE")
+
+    def test_negation_still_blocks_same_value_but_not_other(self):
+        _, T = tools3(["C016", "P003"])
+        c = M4bController(T, None, GRAPH, COUNTER)
+        task = {"layout_items": [("C016", "P003", "右下")], "layout_negated": [("C016", "P003", "左上")]}
+        self.assertTrue(c._blocked_layout(task, "C016", "P003", "左上"))
+        self.assertFalse(c._blocked_layout(task, "C016", "P003", "右下"))
+
+    def test_question_alone_still_blocks_any_value(self):
+        _, T = tools3(["C016", "P003"])
+        c = M4bController(T, None, GRAPH, COUNTER)
+        task = {"layout_items": [], "layout_negated": [("C016", "P003", None)]}
+        self.assertTrue(c._blocked_layout(task, "C016", "P003", "左上"))
+
+
 if __name__ == "__main__":
     unittest.main()

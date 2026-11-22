@@ -306,6 +306,8 @@ class M4bController:
 
     def _blocked_layout(self, task, c, p, v):
         """否定或詢問的版面子句擋下的改動：值寫明時比完整 (元件, 參數, 值)；值沒寫（例：怎麼移動？）時同元件同參數的任何值都擋。"""
+        if (c, p, v) in [tuple(x) for x in task.get("layout_items") or []]:
+            return False                                   # 同句另有明確的正向要求（例：把小地圖移到左上）→ 不被詢問子句擋掉
         for bc, bp, bv in task.get("layout_negated") or []:
             if (bc, bp) == (c, p) and (bv is None or bv == v):
                 return True
