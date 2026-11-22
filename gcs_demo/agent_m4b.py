@@ -125,7 +125,15 @@ class M4bController:
         if "layout" in dirs:                                 # v3.9 §3：必要版面項目（只用於驗收與退回）
             clear, unclear, conflict = self.split_layout_items(self.parse_layout_items(raw))
             task["layout_items"], task["layout_unclear"], task["layout_conflicts"] = clear, unclear, conflict
-            task["layout_negated"] = self.parse_layout_items(raw, negated=True)
+            neg = self.parse_layout_items(raw, mode="neg")      # v3.9 v5（0432）：否定與詢問分開
+            ask = self.parse_layout_items(raw, mode="ask")
+            pos_conf = sorted({(c, p) for c, p, v in clear for nc, np_, nv in neg
+                               if (c, p) == (nc, np_) and (nv is None or nv == v)}, key=str)
+            if pos_conf:                                   # 同句同值正反都說 → 這一項先詢問、擋住；其他獨立項照常
+                task["layout_items"] = [x for x in clear if (x[0], x[1]) not in pos_conf]
+                task["layout_conflicts"] = sorted(set(map(tuple, conflict)) | set(pos_conf), key=str)
+            task["layout_neg"], task["layout_asked"] = neg, ask
+            task["layout_negated"] = neg + ask
         if "plan" in dirs:
             task["area_fixed"], task["area_status"] = self.resolve_area(task)
         qv = self.tools["embed_query"](raw) if "embed_query" in self.tools else None   # 第 1 段之後，1 次
@@ -305,10 +313,19 @@ class M4bController:
         return out
 
     def _blocked_layout(self, task, c, p, v):
-        """否定或詢問的版面子句擋下的改動：值寫明時比完整 (元件, 參數, 值)；值沒寫（例：怎麼移動？）時同元件同參數的任何值都擋。"""
+        """擋下不該開的版面改動（v3.9 v5，CODEX-APP-0432）：
+        - 否定子句（不要…）：值寫明時擋該值、沒寫時擋同元件同參數的任何值；**不會**因為同句有正向要求而放行（同值正反並存已在解析時改成衝突）。
+        - 詢問子句（…怎麼…？）：同句有明確的正向要求（同元件、同參數、同值）時放行，否則擋同元件同參數的任何值。"""
+        neg = task.get("layout_neg")
+        ask = task.get("layout_asked")
+        if neg is None and ask is None:                     # 舊欄位相容：只有 layout_negated 時視為詢問與否定合併
+            neg, ask = [], task.get("layout_negated") or []
+        for bc, bp, bv in neg:
+            if (bc, bp) == (c, p) and (bv is None or bv == v):
+                return True
         if (c, p, v) in [tuple(x) for x in task.get("layout_items") or []]:
-            return False                                   # 同句另有明確的正向要求（例：把小地圖移到左上）→ 不被詢問子句擋掉
-        for bc, bp, bv in task.get("layout_negated") or []:
+            return False
+        for bc, bp, bv in ask:
             if (bc, bp) == (c, p) and (bv is None or bv == v):
                 return True
         return False
@@ -387,15 +404,18 @@ class M4bController:
 
     POS = ("左上", "右上", "左下", "右下", "中央")
 
-    def parse_layout_items(self, text, negated=False):
+    def parse_layout_items(self, text, negated=False, mode=None):
         """v3.9 §3：從原句的「動作＋對象」解析必要版面項目 (元件或 None, 參數, 值)。只用於驗收與退回；
         目標或值不明 → 值為 None（該項需要使用者補充）；解析不出任何項目 → 回 []（沿用「至少一張」的判定）。"""
         items = []
         comps = sorted(((w, n["id"]) for n in self.graph.nodes.values() if n["cat"] == "C"
                         for w in [n["name"]] + list(n.get("aliases") or []) if len(w) >= 2), key=lambda x: -len(x[0]))
         for c in self._clauses(text):
-            if negated:                                    # 只看否定或詢問的版面子句（用來擋下不該開的提案）
-                if not (self._blocked_clause(c) and self._layout_clause(c, allow_neg=True)):
+            if negated or mode:                            # 只看否定（mode="neg"）或詢問（mode="ask"）的版面子句；negated＝兩者都看
+                kind = (any(w in c for w in self.NEG) if mode == "neg" else
+                        any(w in c for w in self.ASK) and not any(w in c for w in self.NEG) if mode == "ask" else
+                        self._blocked_clause(c))
+                if not (kind and self._layout_clause(c, allow_neg=True)):
                     continue
             elif not self._layout_clause(c):
                 continue

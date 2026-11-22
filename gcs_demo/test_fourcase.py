@@ -347,5 +347,36 @@ class Review0431(unittest.TestCase):
         self.assertTrue(c._blocked_layout(task, "C016", "P003", "左上"))
 
 
+class Review0432(unittest.TestCase):
+    def test_same_value_negation_and_positive_is_conflict(self):
+        from .agent_planb import PlanBController
+        from .test_planb import plan, st
+        text = "不要把小地圖移到左上，把小地圖移到左上，字體調大"
+        mv = '{"action":"UI_LAYOUT_PROPOSE","ids":["C016","P003"],"params":{"value":"左上"}}'
+        _, T = tools3(["C016", "P003", "P001"])
+        ra = M4bController(T, scripted(['{"directions":["layout"]}', mv, mv, BIG]), GRAPH, COUNTER).request(text)
+        _, T2 = tools3(["C016", "P003", "P001"])
+        both = plan(st("s1", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P003"], {"value": "左上"}),
+                    st("s2", "layout", "UI_LAYOUT_PROPOSE", ["P001"], {"value": "大"}))
+        rb = PlanBController(T2, scripted(['{"directions":["layout"]}', both, both, both]), GRAPH, COUNTER).request(text)
+        for r in (ra, rb):
+            self.assertEqual([tuple(p["ids"]) for p in r["proposals"]], [("P001",)])   # 衝突項擋住，獨立項照開
+            self.assertEqual(r["status"], "PARKED")
+            self.assertIn("要了不同的值", r["reply_zh"])
+
+    def test_negation_not_released_by_positive_same_value(self):
+        _, T = tools3([])
+        c = M4bController(T, None, GRAPH, COUNTER)
+        task = {"layout_items": [("C016", "P003", "左上")], "layout_neg": [("C016", "P003", "左上")], "layout_asked": []}
+        self.assertTrue(c._blocked_layout(task, "C016", "P003", "左上"))
+
+    def test_question_still_released_by_positive(self):
+        _, T = tools3([])
+        c = M4bController(T, None, GRAPH, COUNTER)
+        task = {"layout_items": [("C016", "P003", "左上")], "layout_neg": [], "layout_asked": [("C016", "P003", None)]}
+        self.assertFalse(c._blocked_layout(task, "C016", "P003", "左上"))
+        self.assertTrue(c._blocked_layout(task, "C016", "P003", "右下"))
+
+
 if __name__ == "__main__":
     unittest.main()
