@@ -69,6 +69,7 @@ class PlanBController(M4bController):
         task["notes"].append("第 1 段方向沿用同一案例在方案 A 的輸出")
         task["stage1_source"] = self.preset.get("stage1_source")
         task["stage1_raw"] = self.preset.get("stage1_raw")            # v3.7：補方向前後都隨 A 的輸入帶過來
+        task["stage1_corrections"] = self.preset.get("stage1_corrections")   # v3.9：A 的校正紀錄同筆帶過來
         if self.preset.get("stage1_augmented"):
             task["stage1_augmented"] = list(self.preset["stage1_augmented"])
         return list(self.preset["directions"])

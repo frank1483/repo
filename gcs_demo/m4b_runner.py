@@ -196,6 +196,7 @@ def run_case(case, cond, model_factory, graph, counter, work):
            "embed_calls": idx.calls[n_embed_before:] if idx else [],
            "model_calls_sent": len(calls), "scope": case.get("scope"),
            "stage1_augmented": (r or {}).get("stage1_augmented"), "stage1_raw": (r or {}).get("stage1_raw"),
+           "stage1_corrections": (r or {}).get("stage1_corrections"),
            "area_status": (r or {}).get("area_status"),
            "timing": _sum_timing(calls),
            "model_call_failures": sum(1 for x in calls if x.get("status") != 200),
@@ -271,6 +272,7 @@ def summarize(recs):
                   "dir_exact_rate": f"{sum(1 for r in rs if r.get('dirs_set_match'))}/{len(rs)}",          # 補方向後
                   "dir_exact_raw_rate": f"{sum(1 for r in rs if r.get('dirs_raw_match'))}/{len(rs)}",      # 補方向前（模型或關鍵字原輸出）
                   "dir_augmented": sum(1 for r in rs if r.get("stage1_augmented")),
+                  "dir_corrected": sum(1 for r in rs if r.get("stage1_corrections")),     # v3.9：程式校正次數
                   "area_fixed_cases": sum(1 for r in rs if r.get("area_status") == "ONE")}
     return out
 

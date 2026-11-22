@@ -18,9 +18,11 @@ from . import outcomes as OC
 from .id_graph import DIRECTION_CATS, line_of, pack
 
 KINDS = ("plan", "ui", "qa", "report", "chat", "manual", "layout", "color", "model", "flight_request")
-KIND_DEF = {"plan": "任務規劃：巡檢、航線、覆蓋", "ui": "放到首頁：把結果放到首頁",
-            "qa": "問答：問數值或原因", "report": "報告：產生摘要", "chat": "閒聊",
-            "manual": "手冊查詢：查 PX4／QGC 手冊", "layout": "版面：放大縮小、移動、顯示隱藏、文字大小",
+KIND_DEF = {"plan": "任務規劃：巡檢、航線、覆蓋（例：把東側巡一遍）",
+            "ui": "放到首頁：把規劃好的航線或結果放進首頁（例：把東側巡檢結果放到首頁）",
+            "qa": "問答：問數值或原因（沒有指定手冊時）", "report": "報告：產生摘要", "chat": "閒聊",
+            "manual": "手冊查詢：明確要查 PX4／QGC 手冊或文件",
+            "layout": "版面：對某個畫面元件做顯示、隱藏、放大縮小、移動，或調整文字大小（例：把圖例顯示出來）",
             "color": "顏色：主題、深色、淺色、高對比", "model": "模型切換：模型或辨識類別",
             "flight_request": "飛控要求：起飛、降落、返航、拍照等（只回固定說明）"}
 KIND_ZH = {"plan": "任務規劃", "ui": "放到首頁", "qa": "問答", "report": "報告", "chat": "閒聊", "manual": "手冊查詢",
@@ -194,6 +196,7 @@ class M4bController:
             ds = [k for k in KINDS if any(w in task["text"] for w in KEYWORDS.get(k, []))] or ["chat"]
             task["notes"].append("第 1 段無效或未呼叫模型，改用關鍵字表")
             task["stage1_raw"] = list(ds)
+        ds = self._correct_directions(task, ds)               # v3.9：動作＋對象的明確組合由程式校正（A、B 共用）
         if "ui" in ds and "plan" not in ds and "route_preview" not in task["artifacts"] and self._names_route(task):
             ds.insert(ds.index("ui"), "plan")                 # v3.7：要把航線放首頁但沒有預覽 → 程式補前置規劃
             task["stage1_augmented"] = ["plan"]
@@ -230,6 +233,52 @@ class M4bController:
                                               "enum": self._ids_of(task, d, "T" if a == "UI_THEME_PROPOSE" else "M") or ["T001"]},
                    "minItems": 1, "maxItems": 1}
         return ids, params
+
+    LAYOUT_VERBS = ("顯示", "隱藏", "放大", "縮小", "移到", "移動", "關掉", "打開", "調大", "調小", "收起", "展開")
+    NEG = ("不要", "別", "不用", "先不", "不必", "不想")
+    ASK = ("嗎", "怎麼", "如何", "是什麼", "什麼是", "多少", "？", "?")
+
+    def _clauses(self, text):
+        return [c.strip() for c in re.split(r"[，,。；;、]|然後|並且|並|另外|再|接著|和|跟|以及", text) if c.strip()]
+
+    def _layout_clause(self, c):
+        """版面子句：版面動詞＋命中元件名稱／別名或文字大小詞；對象是首頁、否定或詢問的不算。"""
+        if "首頁" in c or any(w in c for w in self.NEG) or any(w in c for w in self.ASK):
+            return False
+        if not any(v in c for v in self.LAYOUT_VERBS) and not re.search(r"[字文].{0,3}[大小]", c):
+            return False
+        names = [w for n in self.graph.nodes.values() if n["cat"] == "C"
+                 for w in [n["name"]] + list(n.get("aliases") or []) if len(w) >= 2]
+        return any(w in c for w in names) or bool(re.search(r"(文字|字體|字型|字級|字)", c))
+
+    def _home_plan_clause(self, c):
+        """把規劃成果放首頁的子句：含首頁，且同句有航線／巡檢／規劃／結果或區域名稱。"""
+        if "首頁" not in c or any(w in c for w in self.NEG) or any(w in c for w in ("嗎", "怎麼", "如何")):
+            return False
+        return any(w in c for w in ("航線", "巡檢", "規劃", "結果", "路線")) or self._names_route_text(c)
+
+    def _names_route_text(self, text):
+        return "query_area" in self.tools and self.tools["query_area"](text)["status"] != "NONE"
+
+    def _correct_directions(self, task, ds):
+        """v3.9 §1：明確的動作＋對象組合校正 layout／ui；記錄理由。只在有把握的組合動手。"""
+        cl = self._clauses(task["text"])
+        lay = [c for c in cl if self._layout_clause(c)]
+        home = [c for c in cl if self._home_plan_clause(c)] or ([task["text"]] if self._home_plan_clause(task["text"]) else [])
+        out, fix = list(ds), []
+        if lay and "layout" not in out:
+            out.append("layout")
+            fix.append({"op": "add", "dir": "layout", "why": "版面動詞＋元件／文字：" + "／".join(lay)})
+        if lay and not home and "ui" in out:
+            out.remove("ui")
+            fix.append({"op": "remove", "dir": "ui", "why": "只有版面要求，沒有把規劃成果放首頁"})
+        if home and not lay and "layout" in out:
+            out.remove("layout")
+            fix.append({"op": "remove", "dir": "layout", "why": "只有把規劃成果放首頁，沒有版面子句：" + "／".join(home)})
+        if fix:
+            task["stage1_corrections"] = fix
+            task["notes"].append("第 1 段方向經程式校正：" + "；".join(f"{f['op']} {f['dir']}" for f in fix))
+        return out
 
     def _names_route(self, task):
         """原句明確指向某條航線：提到區域名稱／別名，或含規劃關鍵字。"""
@@ -609,5 +658,6 @@ class M4bController:
                 "notes": task["notes"], "calls_used": task["ledger"].used, "traces": task["traces"],
                 "retrieval": task.get("retrieval"), "packing": task.get("packing"), "artifacts": task["artifacts"],
                 "qv_ok": task.get("qv_ok"), "t_pre_summary_s": t_pre, "stage1_source": task.get("stage1_source"), "stage1_augmented": task.get("stage1_augmented"), "stage1_raw": task.get("stage1_raw"),
+                "stage1_corrections": task.get("stage1_corrections"),
                 "area_status": task.get("area_status"), "area_fixed": task.get("area_fixed"),
                 "outcomes": OC.have_from(task["artifacts"], task["proposals"])}
