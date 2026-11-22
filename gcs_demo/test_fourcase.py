@@ -153,5 +153,63 @@ class MultiLayoutB(unittest.TestCase):
         self.assertEqual((r["status"], len(r["proposals"])), ("DONE", 2))
 
 
+class CounterExamples(unittest.TestCase):
+    """使用者 2026-11-22 18:16 額外測試發現的反例。A、B 都走正常入口 request。"""
+
+    def both(self, text, replies_a, plan_b, cands):
+        from .agent_planb import PlanBController
+        _, T = tools3(cands)
+        ra = M4bController(T, scripted(replies_a), GRAPH, COUNTER).request(text)
+        _, T2 = tools3(cands)
+        rb = PlanBController(T2, scripted([replies_a[0], plan_b, plan_b, plan_b]), GRAPH, COUNTER).request(text)
+        return ra, rb
+
+    def test_negated_hide_opens_nothing(self):
+        from .test_planb import plan, st
+        ra, rb = self.both("不要隱藏小地圖", ['{"directions":["layout"]}', HIDE, HIDE],
+                           plan(st("s1", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P004"], {"value": "隱藏"})), ["C016", "P004"])
+        for r in (ra, rb):
+            self.assertEqual(r["proposals"], [])
+            self.assertNotIn("layout", r["directions"])
+
+    def test_negated_clause_blocks_opposite_proposal(self):
+        m = scripted(['{"directions":["layout"]}', HIDE, BIG])
+        _, T = tools3(["C016", "P004", "P001"])
+        r = M4bController(T, m, GRAPH, COUNTER).request("不要隱藏小地圖，把字體調大")
+        self.assertEqual([tuple(p["ids"]) for p in r["proposals"]], [("P001",)])
+
+    def test_missing_position_not_done(self):
+        from .test_planb import plan, st
+        mv = '{"action":"UI_LAYOUT_PROPOSE","ids":["C014","P003"],"params":{"value":"左上"}}'
+        ra, rb = self.both("隱藏小地圖，然後把風速計移動", ['{"directions":["layout"]}', HIDE, mv, mv],
+                           plan(st("s1", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P004"], {"value": "隱藏"}),
+                                st("s2", "layout", "UI_LAYOUT_PROPOSE", ["C014", "P003"], {"value": "左上"})),
+                           ["C016", "P004", "C014", "P003"])
+        for r in (ra, rb):
+            self.assertNotEqual(r["status"], "DONE")
+            self.assertEqual(r["dir_status"]["layout"], "NEEDS_USER")
+            self.assertNotIn(["C014", "P003"], [p["ids"] for p in r["proposals"]])   # 不替使用者猜位置
+            self.assertIn("要調成什麼", r["reply_zh"])
+
+    def test_conflicting_changes_open_neither(self):
+        from .test_planb import plan, st
+        show = '{"action":"UI_LAYOUT_PROPOSE","ids":["C016","P004"],"params":{"value":"顯示"}}'
+        ra, rb = self.both("隱藏小地圖，然後顯示小地圖", ['{"directions":["layout"]}', HIDE, show, show],
+                           plan(st("s1", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P004"], {"value": "隱藏"}),
+                                st("s2", "layout", "UI_LAYOUT_PROPOSE", ["C016", "P004"], {"value": "顯示"})),
+                           ["C016", "P004"])
+        for r in (ra, rb):
+            self.assertEqual(r["proposals"], [])
+            self.assertEqual(r["status"], "PARKED")
+            self.assertIn("要了不同的值", r["reply_zh"])
+
+    def test_partial_missing_item_in_reply(self):
+        m = scripted(['{"directions":["layout"]}', HIDE, '{"action":"FINISH","ids":[],"params":{}}'])
+        _, T = tools3(["C016", "P004", "P001"])
+        r = M4bController(T, m, GRAPH, COUNTER).request(F23)
+        self.assertEqual(r["status"], "PARTIAL")
+        self.assertIn("版面還缺（尚未開窗）", r["reply_zh"])
+
+
 if __name__ == "__main__":
     unittest.main()

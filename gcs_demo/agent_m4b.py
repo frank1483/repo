@@ -123,7 +123,9 @@ class M4bController:
             return self._finish(task, "PARKED", ask=f"這句話包含 {len(dirs)} 件事，請先選最多 {self.cap} 件")
         task["directions"] = dirs
         if "layout" in dirs:                                 # v3.9 §3：必要版面項目（只用於驗收與退回）
-            task["layout_items"] = self.parse_layout_items(raw)
+            clear, unclear, conflict = self.split_layout_items(self.parse_layout_items(raw))
+            task["layout_items"], task["layout_unclear"], task["layout_conflicts"] = clear, unclear, conflict
+            task["layout_negated"] = self.parse_layout_items(raw, negated=True)
         if "plan" in dirs:
             task["area_fixed"], task["area_status"] = self.resolve_area(task)
         qv = self.tools["embed_query"](raw) if "embed_query" in self.tools else None   # 第 1 段之後，1 次
@@ -165,6 +167,8 @@ class M4bController:
             task["artifacts"]["flight_notice"] = {"kind": "flight_notice", "by": "program"}
             task["notes"].append("程式補上飛控說明（模型未選 flight_request）")
         st = task["dir_status"]
+        if "layout" in st and (task.get("layout_unclear") or task.get("layout_conflicts")):
+            st["layout"] = "NEEDS_USER"                      # v3.9 修正：缺值或衝突的項目要你補充，不可回 DONE
         if st.get("layout") not in (None, "DONE", "NEEDS_USER") and task.get("layout_items") and \
                 any(p["direction"] == "layout" for p in task["proposals"]):
             st["layout"] = "PARTIAL"                         # v3.9：只開了部分版面項目
@@ -248,9 +252,9 @@ class M4bController:
     def _clauses(self, text):
         return [c.strip() for c in re.split(r"[，,。；;、]|然後|並且|並|另外|再|接著|和|跟|以及", text) if c.strip()]
 
-    def _layout_clause(self, c):
-        """版面子句：版面動詞＋命中元件名稱／別名或文字大小詞；對象是首頁、否定或詢問的不算。"""
-        if "首頁" in c or any(w in c for w in self.NEG) or any(w in c for w in self.ASK):
+    def _layout_clause(self, c, allow_neg=False):
+        """版面子句：版面動詞＋命中元件名稱／別名或文字大小詞；對象是首頁、否定或詢問的不算（allow_neg＝只看否定以外的條件）。"""
+        if "首頁" in c or (not allow_neg and any(w in c for w in self.NEG)) or any(w in c for w in self.ASK):
             return False
         if not any(v in c for v in self.LAYOUT_VERBS) and not re.search(r"[字文].{0,4}[大小]", c):
             return False
@@ -279,6 +283,10 @@ class M4bController:
         if lay and not home and "ui" in out:
             out.remove("ui")
             fix.append({"op": "remove", "dir": "ui", "why": "只有版面要求，沒有把規劃成果放首頁"})
+        neg = [c for c in cl if any(w in c for w in self.NEG) and self._layout_clause(c, allow_neg=True)]
+        if neg and not lay and "layout" in out:            # v3.9 修正：只有「不要…」的版面子句 → 不留 layout
+            out.remove("layout")
+            fix.append({"op": "remove", "dir": "layout", "why": "版面要求是否定句：" + "／".join(neg)})
         if home and not lay and "layout" in out:
             out.remove("layout")
             fix.append({"op": "remove", "dir": "layout", "why": "只有把規劃成果放首頁，沒有版面子句：" + "／".join(home)})
@@ -347,14 +355,17 @@ class M4bController:
 
     POS = ("左上", "右上", "左下", "右下", "中央")
 
-    def parse_layout_items(self, text):
+    def parse_layout_items(self, text, negated=False):
         """v3.9 §3：從原句的「動作＋對象」解析必要版面項目 (元件或 None, 參數, 值)。只用於驗收與退回；
         目標或值不明 → 值為 None（該項需要使用者補充）；解析不出任何項目 → 回 []（沿用「至少一張」的判定）。"""
         items = []
         comps = sorted(((w, n["id"]) for n in self.graph.nodes.values() if n["cat"] == "C"
                         for w in [n["name"]] + list(n.get("aliases") or []) if len(w) >= 2), key=lambda x: -len(x[0]))
         for c in self._clauses(text):
-            if not self._layout_clause(c):
+            if negated:                                    # 只看「不要…」的版面子句（用來擋下相反的提案）
+                if not (any(w in c for w in self.NEG) and self._layout_clause(c, allow_neg=True)):
+                    continue
+            elif not self._layout_clause(c):
                 continue
             hit = next(((w, i) for w, i in comps if w in c), None)
             cid = hit[1] if hit else None
@@ -383,6 +394,16 @@ class M4bController:
             if x not in out:
                 out.append(x)
         return out
+
+    def split_layout_items(self, items):
+        """把解析結果分成：明確項目、缺值項目（目標或值不明）、衝突（同一元件同一參數要了不同的值）。"""
+        vals = {}
+        for c, pp, v in items:
+            vals.setdefault((c, pp), set()).add(v)
+        conflict = {k for k, vs in vals.items() if len({v for v in vs if v is not None}) > 1}
+        clear = [x for x in items if x[2] is not None and (x[0], x[1]) not in conflict]
+        unclear = [x for x in items if x[2] is None and (x[0], x[1]) not in conflict]
+        return clear, unclear, sorted(conflict, key=str)
 
     def _run_direction(self, task, d, qv):
         if d == "plan" and task.get("area_status") in ("MANY", "NONE") and "area_record" not in task["artifacts"]:
@@ -464,6 +485,13 @@ class M4bController:
         if err:
             return False, None, err
         step = {"action": a, "ids": ids, "params": params}
+        if a == "UI_LAYOUT_PROPOSE":                       # v3.9 修正：否定、缺值、衝突的項目在解析時就退回，讓其他項目可以繼續
+            c0 = ([i for i in ids if i.startswith("C")] or [None])[0]
+            p0 = ([i for i in ids if i.startswith("P")] or [None])[0]
+            if (c0, p0, params.get("value")) in [tuple(x) for x in task.get("layout_negated") or []]:
+                return False, None, "原句說不要這個改動，不可開提案；請做其他還缺的項目或 FINISH"
+            if (c0, p0) in [(x[0], x[1]) for x in (task.get("layout_unclear") or [])] or                     (c0, p0) in [tuple(x) for x in task.get("layout_conflicts") or []]:
+                return False, None, "這一項原句沒講清楚或互相衝突，要請使用者補充，不可自己決定；請做其他還缺的項目或 FINISH"
         if a not in ("FINISH", "HOLD") and self._sig(step, self.have(task)) in task.get("sigs", set()):
             return False, None, f"{a}（同一目標、參數與輸入）已經做過；請選下一個還缺的成果的動作"
         return True, step, ""
@@ -613,6 +641,16 @@ class M4bController:
             if ps[0] == "P004" and cs and self.graph.nodes[cs[0]].get("locked") and params.get("value") == "隱藏":
                 task["notes"].append("鎖定元件不可隱藏")
                 return "BLOCKED"
+            ck = (cs[0] if cs else None, ps[0])
+            if (ck[0], ck[1], params.get("value")) in [tuple(x) for x in task.get("layout_negated") or []]:
+                task["notes"].append("原句說不要這個版面改動，不開確認視窗")
+                return "BLOCKED"
+            if ck in [tuple(x) for x in task.get("layout_conflicts") or []]:
+                task["notes"].append(f"{ck[0] or ''}{'＋' if ck[0] else ''}{ck[1]}：原句要了互相衝突的值，請你確認")
+                return "NEEDS_USER"
+            if ck in [(x[0], x[1]) for x in task.get("layout_unclear") or []]:
+                task["notes"].append(f"{ck[0] or ''}{'＋' if ck[0] else ''}{ck[1]}：原句沒有講清楚要調成什麼，請你補充")
+                return "NEEDS_USER"
             self._propose(task, d, a, cs + ps, params, None)
             return "OK"
         if a in ("UI_THEME_PROPOSE", "MODEL_SWITCH_PROPOSE"):
@@ -699,6 +737,13 @@ class M4bController:
                 lines.append(f"手冊出處：{r['manual'].upper()} {r['path']}（{r['heading_path'] or '無標題'}）")
         if "flight_notice" in A:
             lines.append(FLIGHT_NOTICE)
+        nm = lambda c, pp: "、".join(self.graph.nodes[i]["name"] for i in (c, pp) if i)  # noqa: E731
+        for c, pp, v in self.have(task).get("_layout_missing", []):   # v3.9 修正：缺項寫進給操作員的回覆
+            lines.append(f"版面還缺（尚未開窗）：{nm(c, pp)} {v}")
+        for c, pp, _ in task.get("layout_unclear") or []:
+            lines.append(f"版面需要你補充：{nm(c, pp)} 要調成什麼？")
+        for c, pp in task.get("layout_conflicts") or []:
+            lines.append(f"版面需要你確認：{nm(c, pp)} 同一句裡要了不同的值")
         for d, s in task["dir_status"].items():
             if s not in ("DONE",):
                 lines.append(f"{KIND_ZH[d]}：{ {'PENDING_BATCH': '待處理（下一批）', 'NEEDS_USER': '需要你補充', 'WAITING': '等待前一步'}.get(s, '未完成') }")
