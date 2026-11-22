@@ -11,7 +11,10 @@ from __future__ import annotations
 import dataclasses
 import math
 
-from .energy import Wind, bearing_rad, leg_estimate
+from .energy import Vehicle, Wind, bearing_rad, leg_estimate
+
+_VEH_FIELDS = {"vehicle_id", "mass_kg", "battery_wh", "usable_frac", "p_hover_w", "cda_m2", "eta", "cruise_mps",
+               "max_mps", "reserve_pct", "calib"}
 from . import coverage as cv
 from .commit_layer import TEST_VALUES
 
@@ -39,9 +42,11 @@ def domain_problem(vehicle, S, base):
         return "snapshot_nonfinite"
     if not (0 <= S["battery"] <= 100 and 0 <= w["speed_mps"] <= v.max_mps):
         return "snapshot_out_of_range"
-    pos = S.get("position") or (0, 0)
-    if not _finite(*pos):
-        return "position_nonfinite"
+    pos = S.get("position")
+    if not isinstance(pos, (list, tuple)) or len(pos) != 2 or not _finite(*pos):
+        return "position_missing_or_nonfinite"          # 0438 #6：缺定位不以 (0,0) 放行
+    if not v.battery_wh * v.usable_frac > 0:
+        return "capacity_not_positive"
     return None
 
 
@@ -82,10 +87,22 @@ def make_route_recheck(record, vehicle, base, shown=None, eps=None, margin_pct=N
     margin = TEST_VALUES["joint_margin_battery_pct"] if margin_pct is None else margin_pct
 
     def recheck(S):
-        bad = domain_problem(vehicle, S, base)            # 0437 #6：適用域在任何估算之前判定
+        veh, sv = vehicle, S.get("vehicle")
+        if isinstance(sv, dict) and _VEH_FIELDS <= set(sv):   # 0438 #6：快照帶完整機型 → 以快照為準
+            try:
+                veh = Vehicle(**sv)
+            except TypeError:
+                return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_UNVERIFIED"], "domain": "vehicle_unparsable"}
+        elif isinstance(sv, dict):                        # 只帶身分 → 必須與重驗綁定的機型是同一台
+            if sv.get("vehicle_id", sv.get("id")) != vehicle.vehicle_id:
+                return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_UNVERIFIED"], "domain": "vehicle_mismatch"}
+        elif "vehicle" in S:                              # 快照有這個來源卻沒有值 → 不放行
+            return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_UNVERIFIED"], "domain": "vehicle_missing"}
+        # 呼叫端沒有提供機型來源（直接呼叫 helper）→ 沿用綁定的機型
+        bad = domain_problem(veh, S, base)                # 0437 #6：適用域在任何估算之前判定
         if bad:
             return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_UNVERIFIED"], "domain": bad}
-        cur = _current(vehicle, S, base)
+        cur = _current(veh, S, base)
         chk = cv.apply_check(record, **cur)
         if chk["decision"] == "BLOCK":
             return {"action": "BLOCK", "reasons": [r["code"] for r in chk["reasons"] if r["code"] != "HINT"],
@@ -98,10 +115,10 @@ def make_route_recheck(record, vehicle, base, shown=None, eps=None, margin_pct=N
         if wchk["evaluation"]["nfz_crossings"]:
             return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_NFZ"]}
         reserve_eff = chk["evaluation"]["reserve_eff_pct"]
-        worst_end = headwind_bound_end_pct(record["route"], vehicle, S["wind"]["speed_mps"] + e["wind_speed"],
+        worst_end = headwind_bound_end_pct(record["route"], veh, S["wind"]["speed_mps"] + e["wind_speed"],
                                            S["battery"] - e["battery"], reserve_eff, base.get("speed_mps"))
-        if worst_end is None:
-            return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_UNVERIFIED"]}
+        if worst_end is None or not math.isfinite(worst_end):   # 0438 #6：衍生結果也要有限
+            return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_UNVERIFIED"], "domain": "bound_not_finite"}
         if worst_end < reserve_eff + margin:
             return {"action": "BLOCK", "reasons": ["JOINT_MARGIN_BATTERY"], "worst_end_pct": worst_end}
         if shown is None:

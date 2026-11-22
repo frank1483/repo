@@ -148,9 +148,10 @@ class BootScanBudget(CLBase):
 class ReserveUse(CLBase):
     def test_boot_uses_reserve_when_normal_admission_full(self):
         used = self.c.store.budget.used()
-        with TV(disk_budget_bytes=used + 1024 * 1024, terminal_reserve_bytes=16 * 1024 ** 2):
-            # 一般寫入額度已經是負的（used＋1 MiB − 16 MiB），只有預留模式可以寫
-            self.c.store.budget.disk_budget = used + 1024 * 1024
+        B = used + 16 * 1024 ** 2 - 1024                  # 0438 修正後：剩餘空間要容得下 BOOT 的最壞寫入量（11 MiB）
+        with TV(disk_budget_bytes=B, terminal_reserve_bytes=16 * 1024 ** 2):
+            # 一般寫入額度已經是負的（B − 16 MiB ＜ used），只有預留模式可以寫
+            self.c.store.budget.disk_budget = B
             r = self.apply("t-full")
             self.assertEqual(r["code"], "STORE_READ_ONLY")
             c2, rep = cl.boot(self.root)                                    # BOOT 動用預留寫檢查點與指標

@@ -440,6 +440,7 @@ class ActiveStore:
         self.hooks = hooks or Hooks()
         self.budget = budget or StorageBudget(root)
         os.makedirs(os.path.join(root, "active"), exist_ok=True)
+        self._last_status = None
 
     def seg_dir(self, n):
         return os.path.join(self.root, "active", f"seg-{n}")
@@ -497,9 +498,10 @@ class ActiveStore:
     def best_valid(self, scan=None):
         """補件 G0-6：依 seq 由大到小，取第一份「結構與自身 hash 正確、且引用的檢查點可核證」的指標。
         回傳 (ab, rec, checkpoint_state, rejected)；都不行時 (None, None, None, rejected)。"""
-        rejected = [{"pointer": ab, "segment_id": None, "reason": s}
-                    for ab, s, _ in self.read_ptr_status(scan) if s not in ("ok", "missing")]
-        for ab, rec in sorted(self.read_ptrs(scan), key=lambda x: -x[1]["seq"]):
+        status = self.read_ptr_status(scan)              # 只讀一輪（0438 #2）
+        self._last_status = status
+        rejected = [{"pointer": ab, "segment_id": None, "reason": s} for ab, s, _ in status if s not in ("ok", "missing")]
+        for ab, rec in sorted([(a, r) for a, s, r in status if s == "ok"], key=lambda x: -x[1]["seq"]):
             try:
                 state = self.read_checkpoint(rec["segment_id"], rec["checkpoint_hash"], scan)
                 return ab, rec, state, rejected
@@ -512,10 +514,12 @@ class ActiveStore:
                                  "reason": getattr(e, "code", type(e).__name__)})
         return None, None, None, rejected
 
-    def write_ptr(self, segment_id, checkpoint_hash, keep=None, scan=None):
+    def write_ptr(self, segment_id, checkpoint_hash, keep=None, scan=None, rejected=(), status=None):
         """keep＝這次 BOOT 實際採用的那份指標（A 或 B）：新指標寫到另一份，**不覆蓋唯一可核證的那份**（0437 #1）。
-        被覆蓋的那份若不是 ok，先原樣另存一份 ptr-<ab>.rejected-<n>.json 再覆蓋，不刪除。"""
-        status = self.read_ptr_status(scan)
+        要被覆蓋的那份只要不是「可用」（自身不合法，或 BOOT 已判定它引用的檢查點無法核證＝rejected），
+        先把**整個原檔**改名保存為 ptr-<ab>.rejected-<n>.json（原子 rename，不複製、不截斷、不刪除），再寫新指標（0438 #1）。
+        status＝BOOT 已讀過的指標判定（重用，不重讀；0438 #2）。"""
+        status = status if status is not None else self.read_ptr_status(scan)
         seq = max([r["seq"] for _, s, r in status if s == "ok"], default=0) + 1
         if keep in ("A", "B"):
             ab = "B" if keep == "A" else "A"
@@ -524,17 +528,12 @@ class ActiveStore:
             ab = "A" if best is None or best[0] == "B" else "B"   # 輪流寫另一份
         old = dict((x, s) for x, s, _ in status).get(ab)
         p = self._ptr_path(ab)
-        if old not in (None, "ok", "missing") and os.path.exists(p):
+        if (old not in (None, "ok", "missing") or ab in rejected) and os.path.exists(p):
             n = 0
             while os.path.exists(f"{p[:-5]}.rejected-{n}.json"):
                 n += 1
-            with open(p, "rb") as f:
-                raw = f.read(TEST_VALUES["pointer_read_cap_bytes"] + 1)
-            self.budget.admit(len(raw))
-            with open(f"{p[:-5]}.rejected-{n}.json", "wb") as f:
-                f.write(raw)
-                f.flush()
-                os.fsync(f.fileno())
+            self.hooks.point("ptr:before_preserve")
+            os.replace(p, f"{p[:-5]}.rejected-{n}.json")    # 改名＝整檔原樣保留，不佔新空間
         rec = {"segment_id": segment_id, "checkpoint_hash": checkpoint_hash, "seq": seq}
         rec["sha256"] = _sha(rec)
         data = json.dumps(rec, sort_keys=True).encode("utf-8")
@@ -600,14 +599,16 @@ class ActiveStore:
                 continue
             with open(p, "rb") as f:
                 size = os.path.getsize(p)
-                f.seek(max(0, size - TEST_VALUES["line_cap_bytes"]))
-                data = f.read()
+                k = min(size, TEST_VALUES["line_cap_bytes"])
+                f.seek(size - k)
+                data = f.read(k)                         # 0438 #2：固定長度，不受並行增長影響
                 lines = data.splitlines()
                 if scan is not None:                     # 0437 #2：尾部讀取也計行數
                     scan.consume(len(data), len(lines))
             if lines:
                 try:
-                    out[name] = json.loads(lines[-1].decode("utf-8")).get("sha256")
+                    last = json.loads(lines[-1].decode("utf-8"))
+                    out[name] = last.get("sha256") if isinstance(last, dict) else None   # 0438 #1：非物件尾行
                 except ValueError:
                     out[name] = None
         return _sha(out)
@@ -693,6 +694,10 @@ class Coordinator:
             return {"action": "BLOCK", "code": "COMMIT_FROZEN", "reasons": [self.slot_state[slot_id]["reason"]]}
         self._acquire()
         try:
+            if tx_id in self.results:                    # 0438 #3：等待租約期間同一 tx 可能已完成（冪等）
+                return self.results[tx_id]
+            if self.slot_state.get(slot_id, {}).get("state") == "FROZEN":   # 等待期間可能已凍結
+                return {"action": "BLOCK", "code": "COMMIT_FROZEN", "reasons": [self.slot_state[slot_id]["reason"]]}
             # 0437 #3、#4：准入與世代預留在結構寫入租約內、任何持久寫入之前判定（不寫檔、不記結果）
             lim = self._limits(tx_id, slot_id, route_id, points, draft_id, draft_rev)
             if lim:
@@ -723,8 +728,12 @@ class Coordinator:
         if len(_jsonb(head)) > v["route_overhead_cap_bytes"]:
             return "route_overhead"
         after = _route_root(route_id, points, draft_id, draft_rev, True, tx_id)   # 完整編碼行（含封套）都要放得下
-        for rec in ({"kind": "SNAPSHOT", "tx_id": tx_id, "role": "AFTER", "slot_id": slot_id, "root": after},
-                    {"kind": "CHUNK", "part": f"route:{slot_id}", "data": after}):
+        before = self.word.current().route(slot_id)     # 0438 #3：既有根以新 tx_id 寫成 BEFORE，也要放得下
+        recs = [{"kind": "SNAPSHOT", "tx_id": tx_id, "role": "AFTER", "slot_id": slot_id, "root": after},
+                {"kind": "CHUNK", "part": f"route:{slot_id}", "data": after}]
+        if before is not None:
+            recs.append({"kind": "SNAPSHOT", "tx_id": tx_id, "role": "BEFORE", "slot_id": slot_id, "root": before})
+        for rec in recs:
             if _line_len(rec) > v["line_cap_bytes"]:
                 return "encoded_line"
         return None
@@ -814,7 +823,10 @@ class Coordinator:
         h.point("tx:after_end")
         res = {"action": "WRITE", "tx_id": tx_id, "global_seq": gs, "needs_reverify": False, "reasons": []}
         _, seq_now = self.word.read()
-        if seq_now != seq0:                     # P 之後有安全事件 → 重驗，必要時標不可用
+        if self.word.exhausted:                 # 0438 #4：P 之後序號耗盡 → 新安全事件進不來，結果不能當作已核對
+            res["needs_reverify"] = True
+            res["reasons"] = ["W_EPOCH_EXHAUSTED"]
+        elif seq_now != seq0:                   # P 之後有安全事件 → 重驗，必要時標不可用
             try:
                 _, S = self.ingest.snapshot()
                 v = recheck(S)
@@ -834,9 +846,11 @@ class Coordinator:
             rr = rr + ((slot_id, dict(before, needs_reverify=True)),)
         d2 = Descriptor(d1.root_gen + 1, gs, d0.ui_root, rr, d0.undo_head)
         self.hooks.point("tx:rollback_publish")
-        self.word.cas_gen(d1.root_gen, d2)
+        published = self.word.cas_gen(d1.root_gen, d2)  # 補償發布：耗盡後仍允許（只受位寬限制，已在租約內預留）
         self.store.budget.terminal_mode = True
         try:
+            if not published:                            # 0438 #4：補償發布失敗 → 不推定任一根，凍結
+                raise CommitError("ROLLBACK_PUBLISH_FAILED", "回滾描述元無法發布")
             term = self.rj.append({"kind": "ROLLED_BACK", "tx_id": tx_id, "slot_id": slot_id, "why": why})
             self._end(gs, tx_id, "ROLLED_BACK", self.word.current(), term)
             res = {"action": "BLOCK", "tx_id": tx_id, "code": "ROLLED_BACK", "reasons": [why]}
@@ -901,14 +915,20 @@ class Coordinator:
                     rr = rr + ((slot, restored),)
                 self.rj.append({"kind": "SNAPSHOT", "tx_id": tx_id, "role": "AFTER", "slot_id": slot, "root": restored})
                 d1 = Descriptor(d0.root_gen + 1, gs, d0.ui_root, rr, node.next)
-                term = self.rj.append({"kind": "COMMITTED", "tx_id": tx_id, "slot_id": slot,
-                                       "after_sha": _sha({"r": restored})})
+                term_rec = {"kind": "COMMITTED", "tx_id": tx_id, "slot_id": slot, "after_sha": _sha({"r": restored})}
             else:
                 d1 = Descriptor(d0.root_gen + 1, gs, e["before"], d0.route_roots, node.next)
-                term = None
+                term_rec = None
             self.hooks.point("undo:before_publish")
-            self.word.cas_gen(d0.root_gen, d1)
-            self._end(gs, tx_id, "COMMITTED", d1, term)
+            if not self.word.cas_gen(d0.root_gen, d1):   # 0438 #4：發布失敗就中止，不寫 COMMITTED
+                self._end(gs, tx_id, "ABORTED", d0, None)
+                return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
+            self.store.budget.terminal_mode = True       # 0438 #3：undo 的收尾（COMMITTED／END）屬終態，動用預留
+            try:
+                term = self.rj.append(term_rec) if term_rec else None
+                self._end(gs, tx_id, "COMMITTED", d1, term)
+            finally:
+                self.store.budget.terminal_mode = False
             return {"action": "WRITE", "tx_id": tx_id, "undid": e["tx_id"], "needs_reverify": True}
         finally:
             self.lease.release()
@@ -959,6 +979,7 @@ class _BootWriteFailure(Exception):
 
 def _boot_scan(st, eps, hooks, report, scan):
     ab, best_rec, state, rejected = st.best_valid(scan)
+    report["_ptr_status"] = st._last_status              # 0438 #2：診斷與寫指標都重用這份判定，不重讀
     if rejected:
         report["pointer_rejected"] = rejected
     if best_rec is None:
@@ -1056,7 +1077,10 @@ def _boot_scan(st, eps, hooks, report, scan):
     new_seg = st.next_segment_id()
     tail = st.tail_hash(seg, scan)
     scan.check()
-    report["scan"] = scan.report()
+    plan = reserve_plan()["parts"]                      # 0438 #3：開始寫之前，確認剩餘空間足夠這次 BOOT 的最壞寫入量
+    need = plan["checkpoint"] + plan["recovery"] + plan["pointers"]
+    if st.budget.used() + need > st.budget.disk_budget:
+        raise _BootWriteFailure("reserve_check", CommitError("STORE_READ_ONLY", "剩餘空間不足以完成 BOOT 寫入"))
     st.budget.terminal_mode = True                     # G0 第 5 節：BOOT 的檢查點、RECOVERY 與指標動用終態預留
     stage = "checkpoint"
     try:
@@ -1073,13 +1097,16 @@ def _boot_scan(st, eps, hooks, report, scan):
                 rj.append({"kind": "RECOVERY", "tx_id": x["tx"], "action": "use_before", "why": x.get("why"),
                            "from_segment": seg}, max_bytes=TEST_VALUES["recovery_line_cap_bytes"])
         stage = "pointer"
-        st.write_ptr(new_seg, h, keep=ab)               # 0437 #1：保留這次實際採用的可核證指標
+        rej_ab = {x["pointer"] for x in rejected}
+        st.write_ptr(new_seg, h, keep=ab, scan=scan, rejected=rej_ab, status=st._last_status)   # 0437／0438 #1
     except (CommitError, OSError) as e:
         if isinstance(e, CommitError) and e.code == "BOOT_SCAN_LIMIT":
             raise
         raise _BootWriteFailure(stage, e)
     finally:
         st.budget.terminal_mode = False
+    report["scan"] = scan.report()                      # 0438 #2：寫入階段的讀取也入帳之後才定稿
+    report.pop("_ptr_status", None)
     c = Coordinator(st, eps, hooks, boot_state={"global_seq": gmax, "route_roots": roots, "slot_state": slot_state,
                                                 "ui_root": ui_root, "segment": new_seg, "root_gen": 0})
     report["segment"] = new_seg
@@ -1096,7 +1123,8 @@ def _restricted_boot(st: ActiveStore, eps, hooks, report, force=False):
     if not ptr_files and not segs and not force:
         raise CommitError("STORE_UNINITIALIZED", "活動區是空白的，請先初始化")
     diag = []
-    for ab, s, rec in st.read_ptr_status():          # 有界讀取（每份 ≤ pointer_read_cap_bytes）
+    status = report.pop("_ptr_status", None) or st.read_ptr_status()   # 0438 #2：重用 BOOT 已讀的判定
+    for ab, s, rec in status:
         if s == "ok":
             s = ("write_failure" if "write_failure" in report else "scan_limit") if force else "checkpoint_unverifiable"
         diag.append({"pointer": ab, "result": s})

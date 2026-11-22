@@ -339,33 +339,38 @@ class PreviewService:
         """把舊預覽標為 SUPERSEDED：綁定它的權杖（已發出或提交中、尚未生效）全部撤銷。已生效的提交不受影響。
         mark=False：只撤銷權杖、不標預覽（同一預覽換新草稿版本時用）。"""
         with self.tok_lock:
-            if mark:
-                self.superseded[preview_ref] = reason
-            n = 0
-            for t in self.tokens.values():
-                if t["preview"] == preview_ref and t["state"] in ("ISSUED", "INFLIGHT"):
-                    t["state"], t["revoked"] = "REVOKED", reason
-                    n += 1
-            return n
+            return self._supersede_locked(preview_ref, reason, mark)
+
+    def _supersede_locked(self, preview_ref, reason, mark):
+        if mark:
+            self.superseded[preview_ref] = reason
+        n = 0
+        for t in self.tokens.values():
+            if t["preview"] == preview_ref and t["state"] in ("ISSUED", "INFLIGHT"):
+                t["state"], t["revoked"] = "REVOKED", reason
+                n += 1
+        return n
 
     def apply_check(self, principal, sid, b):
         rec = self.previews.get(b["preview_ref"])
         if rec is None:
             raise ApiError("NOT_FOUND", ["preview_ref"])
-        if b["preview_ref"] in self.superseded:
-            raise ApiError("CONFIRM_TOKEN_STALE", ["preview_superseded"])
-        k = (principal, b["target_slot_id"], b["draft_id"])
-        old = self.current_preview.get(k)
-        if old and old[0] == b["preview_ref"] and b["draft_rev"] < old[1]:
-            raise ApiError("CONFIRM_TOKEN_STALE", ["draft_rev_older_than_current"])
-        if old and old[0] != b["preview_ref"]:            # 同一草稿改用新預覽 → 舊預覽 SUPERSEDED
-            self.supersede_preview(old[0], "new_preview_same_draft")
-        elif old and b["draft_rev"] > old[1]:            # 同一預覽、新草稿版本 → 撤銷舊版本的權杖（預覽本身仍有效）
-            self.supersede_preview(old[0], "new_draft_rev", mark=False)
-        with self.tok_lock:
-            self.current_preview[k] = (b["preview_ref"], b["draft_rev"])
-        if b["target_generation"] != self.c.word.current().root_gen:
+        if b["target_generation"] != self.c.word.current().root_gen:   # 0438 #5：先拒絕過期請求，不留任何副作用
             raise ApiError("TARGET_STALE")
+        k = (principal, b["target_slot_id"], b["draft_id"])
+        with self.tok_lock:                               # 0438 #5：檢查、撤銷與版本更新是同一個狀態轉移
+            if b["preview_ref"] in self.superseded:
+                raise ApiError("CONFIRM_TOKEN_STALE", ["preview_superseded"])
+            old = self.current_preview.get(k)
+            if old and b["draft_rev"] < old[1]:          # 草稿版本只能前進（不論是不是同一預覽）
+                raise ApiError("CONFIRM_TOKEN_STALE", ["draft_rev_older_than_current"])
+            if old and old[0] != b["preview_ref"]:        # 同一草稿改用新預覽 → 舊預覽 SUPERSEDED
+                self._supersede_locked(old[0], "new_preview_same_draft", True)
+            elif old and b["draft_rev"] > old[1]:        # 同一預覽、新草稿版本 → 撤銷舊版本的權杖
+                self._supersede_locked(old[0], "new_draft_rev", False)
+            if hasattr(self, "_pause"):                  # 測試用暫停點（並行換版）
+                self._pause()
+            self.current_preview[k] = (b["preview_ref"], b["draft_rev"])
         snap = self.feeder.poll()
         m = snap["mission"]
         cur = dict(vehicle=self._vehicle(snap), wind=Wind(**snap["wind"]),
@@ -457,7 +462,16 @@ class PreviewService:
                 return None, ok
         sh = self.shown[b["shown_hash"]]
         rec = sh["preview"]
-        snap = self.feeder.poll()
+        try:
+            snap = self.feeder.poll()
+        except cl.CommitError as e:                       # 0438 #4：入站在服務入口就耗盡 → 權杖收尾、回拒絕碼
+            with self.tok_lock:
+                if t["state"] == "INFLIGHT":
+                    t["state"] = "CONSUMED"
+            out = {"transaction": {"action": "BLOCK", "code": e.code, "reasons": [e.code],
+                                   "transaction_id": None}}
+            self.idem[key] = (fp, out)
+            return out
         rc = make_route_recheck(rec, self._vehicle_full(snap), sh["base"], shown=sh["check"])
         tx = "tx-" + _sha({"k": list(key)})[:16]
         r = self.c.route_apply(tx, b["target_slot_id"], rec["route_id"], rec["route"], sh["draft_id"],
