@@ -900,6 +900,9 @@ class Coordinator:
             return {"action": "BLOCK", "code": "COMMIT_FROZEN", "reasons": [self.slot_state["ui"]["reason"]]}
         self._acquire()
         try:
+            # 0441 #1：拒絕的優先順序固定為 受限唯讀 ＞ 凍結 ＞ W 耗盡；在租約內、BEGIN 之前判定（不寫檔）
+            if self.slot_state.get("ui", {}).get("state") == "FROZEN":   # 等待租約期間可能已被凍結
+                return {"action": "BLOCK", "code": "COMMIT_FROZEN", "reasons": [self.slot_state["ui"]["reason"]]}
             if self.word.gen_exhausted():
                 return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
             d0 = self.word.current()
@@ -922,13 +925,16 @@ class Coordinator:
             return {"action": "BLOCK", "code": "STORE_READ_ONLY"}
         self._acquire()
         try:
-            if self.word.gen_exhausted(need=2):           # undo＋可能的補償，各需一個世代
-                return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
             d0 = self.word.current()
             node = d0.undo_head
             if node is None:
                 return {"action": "BLOCK", "code": "UNDO_EMPTY"}
             e = node.entry
+            fslot = e["slot_id"] if e["tx_kind"] == "route_apply" else "ui"
+            if self.slot_state.get(fslot, {}).get("state") == "FROZEN":   # 0441 #1：凍結在 BEGIN 之前判定
+                return {"action": "BLOCK", "code": "COMMIT_FROZEN", "reasons": [self.slot_state[fslot]["reason"]]}
+            if self.word.gen_exhausted(need=2):           # undo＋可能的補償，各需一個世代
+                return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
             gs = self._begin("route_undo" if e["tx_kind"] == "route_apply" else "genui_undo", tx_id, d0)
             if e["tx_kind"] == "route_apply":
                 slot = e["slot_id"]
@@ -1081,8 +1087,12 @@ def _boot_scan(st, eps, hooks, report, scan):
         if b["tx_kind"] in ("genui", "genui_undo"):
             continue   # 替身不持久化 UI 根；真的 GenUI 交易依 ADR-0001 E-3／E-4 恢復
         if end is None:
-            if "COMMITTED" in kinds:
+            if "COMMITTED" in kinds and not (b["tx_kind"] == "route_undo" and "ROLLED_BACK" in kinds):
                 slot_state[slot] = {"state": "FROZEN", "reason": "committed_without_end", "terminal_ref": tx}
+                report["frozen"].append(tx)
+            elif b["tx_kind"] == "route_undo" and "ROLLED_BACK" in kinds:
+                # 0441 #2：undo 的補償與 ROLLED_BACK 已持久化、但沒有可核證的 END → 重啟也凍結（獨立原因）
+                slot_state[slot] = {"state": "FROZEN", "reason": "rolled_back_without_end", "terminal_ref": tx}
                 report["frozen"].append(tx)
             elif b["tx_kind"] == "route_undo" and "SNAPSHOT" in kinds:
                 # 使用者 2026-11-23 10:13 裁決 E-1 A：undo 可能已在記憶體生效、但補償與終態都沒寫進磁碟
