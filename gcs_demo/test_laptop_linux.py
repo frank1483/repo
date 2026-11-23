@@ -53,5 +53,108 @@ class LaptopLinuxTest(unittest.TestCase):
         self.assertEqual(out.stdout.split(), ["/x/models", "/x/bin/ollama", "/x/models"], out.stderr)
 
 
+class FakeProc:
+    """替身子程序：記錄 terminate／kill／wait；hang=True 時第一次 wait 逾時。"""
+    def __init__(self, hang=False, exited=False):
+        self.pid = 424242
+        self.returncode = 0 if exited else None
+        self.hang = hang
+        self.calls = []
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.calls.append("terminate")
+
+    def kill(self):
+        self.calls.append("kill")
+
+    def wait(self, timeout=None):
+        self.calls.append("wait")
+        if self.hang and self.calls.count("wait") == 1:
+            raise subprocess.TimeoutExpired("ollama", timeout)
+        self.returncode = -15
+        return self.returncode
+
+
+class StartOllamaCleanupTest(unittest.TestCase):
+    """CODEX-APP-0450 第 1 點：Popen 之後、交回之前的失敗都要回收自己的子程序，並保留原本的錯誤。"""
+
+    def run_start(self, proc, listener_exc):
+        saved = (R.subprocess.Popen, R.listener_pids, R.port_free)
+        R.subprocess.Popen = lambda *a, **k: proc
+        R.port_free = lambda port: True
+
+        def boom(port):
+            raise listener_exc
+        R.listener_pids = boom
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                with self.assertRaises(BaseException) as cm:
+                    R.start_ollama(11555, os.path.join(d, "serve.log"))
+            return cm.exception
+        finally:
+            R.subprocess.Popen, R.listener_pids, R.port_free = saved
+
+    def test_listener_error_reaps_child_and_keeps_error(self):
+        err = SystemExit("看不到擁有者")
+        proc = FakeProc()
+        got = self.run_start(proc, err)
+        self.assertIs(got, err)
+        self.assertEqual(proc.calls, ["terminate", "wait"])
+        self.assertIsNotNone(proc.returncode)
+
+    def test_timeout_kills_only_own_child(self):
+        err = SystemExit("看不到擁有者")
+        proc = FakeProc(hang=True)
+        got = self.run_start(proc, err)
+        self.assertIs(got, err)
+        self.assertEqual(proc.calls, ["terminate", "wait", "kill", "wait"])
+
+    def test_keyboard_interrupt_is_kept(self):
+        err = KeyboardInterrupt()
+        proc = FakeProc()
+        got = self.run_start(proc, err)
+        self.assertIs(got, err)
+        self.assertEqual(proc.calls, ["terminate", "wait"])
+
+    def test_reap_failure_does_not_hide_original_error(self):
+        err = SystemExit("看不到擁有者")
+        proc = FakeProc()
+        proc.terminate = lambda: (_ for _ in ()).throw(OSError("terminate 失敗"))
+        got = self.run_start(proc, err)
+        self.assertIs(got, err)
+
+    def test_already_exited_child_not_signalled(self):
+        proc = FakeProc(exited=True)          # 子程序自己先結束：走「已結束」錯誤，不送訊號
+        got = self.run_start(proc, SystemExit("不會走到 listener"))
+        self.assertIn("已結束", str(got))
+        self.assertEqual(proc.calls, [])
+
+    def test_real_child_reaped_when_listener_check_fails(self):
+        """真的子程序（sleep）：listener 拋錯後，程序確實已結束。"""
+        saved = (R.OLLAMA_BIN, R.listener_pids, R.port_free)
+        started = []
+        real_popen = subprocess.Popen
+
+        def popen(cmd, **k):
+            p = real_popen([shutil.which("sleep"), "30"], **k)
+            started.append(p)
+            return p
+        R.port_free = lambda port: True
+        R.listener_pids = lambda port: (_ for _ in ()).throw(SystemExit("看不到擁有者"))
+        R.subprocess.Popen = popen
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                with self.assertRaises(SystemExit):
+                    R.start_ollama(11555, os.path.join(d, "serve.log"))
+        finally:
+            R.subprocess.Popen = real_popen
+            R.OLLAMA_BIN, R.listener_pids, R.port_free = saved
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0].poll())
+
+
 if __name__ == "__main__":
     unittest.main()

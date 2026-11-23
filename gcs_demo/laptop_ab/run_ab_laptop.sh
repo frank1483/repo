@@ -26,6 +26,7 @@ check() {
     need "python3 >= 3.10" "$PY -c 'import sys; sys.exit(sys.version_info < (3, 10))'"
     need "git 工作樹乾淨（live 必要）" "[[ -z \"\$(git -C '$REPO' status --porcelain=v1 --untracked-files=all)\" ]]"
     need "Ollama 0.40.14 執行檔 $GCS_OLLAMA_BIN" "[[ -x '$GCS_OLLAMA_BIN' ]]"
+    need "Ollama 版本字串含 0.40.14（--version）" "'$GCS_OLLAMA_BIN' --version 2>&1 | grep -q '0\.40\.14'"
     need "gemma4:e2b manifest（sha 要等於 ${GEMMA_MANIFEST_SHA:0:8}）" "[[ -f '$MAN/gemma4/e2b' && \"\$(sha256sum '$MAN/gemma4/e2b' | cut -d' ' -f1)\" == $GEMMA_MANIFEST_SHA ]]"
     need "embeddinggemma-2:270m-q8_0-text manifest" "[[ -f '$MAN/embeddinggemma-2/270m-q8_0-text' ]]"
     need "手冊索引 $BASE/adr0002_rag_v1/index_v1" "[[ -f '$BASE/adr0002_rag_v1/index_v1/INDEX_MANIFEST.json' ]]"
@@ -58,6 +59,30 @@ check >/dev/null || true
 mkdir -p -- "$RUNS"
 cd -- "$REPO"
 console="$RUNS/${prefix}_console.txt"
+# CODEX-APP-0450 第 2 點：實跑前記錄完整清冊雜湊與實際 Ollama 版本（寫一次，已存在就停）
+pre="$RUNS/${prefix}_preflight.txt"
+[[ ! -e "$pre" ]] || { echo "STOP：已存在 $pre（只跑一次，不覆蓋）" >&2; exit 2; }
+{
+    echo "time=$(date -Iseconds)"; echo "mode=$mode"; echo "commit=$(git rev-parse HEAD)"
+    echo "git_status_lines=$(git status --porcelain=v1 --untracked-files=all | wc -l)"
+    if [[ "$mode" == --live ]]; then
+        echo "bundle=$bundle"
+        echo "bundle_sha256sums_sha256=$(sha256sum "$bundle/SHA256SUMS.txt" | cut -d' ' -f1)"
+        echo "bundle_commit=$(head -1 "$bundle/commit.txt")"
+    fi
+    echo "ollama_bin=$GCS_OLLAMA_BIN"
+    echo "ollama_bin_sha256=$(sha256sum "$GCS_OLLAMA_BIN" | cut -d' ' -f1)"
+    echo "ollama_version_output=$("$GCS_OLLAMA_BIN" --version 2>&1 | tr '\n' ' ')"
+    echo "ollama_models=$GCS_OLLAMA_MODELS"
+    echo "python=$("$PY" --version 2>&1)"; echo "host=$(uname -a)"
+} > "$pre"
+cat "$pre"
+if [[ "$mode" == --live ]]; then
+    full="$(grep '^bundle_sha256sums_sha256=' "$pre" | cut -d= -f2)"
+    [[ "${full:0:8}" == "$hash8" ]] || { echo "STOP：來源包清冊雜湊 $full 和 hash8 $hash8 不符" >&2; exit 2; }
+    [[ "$(grep '^bundle_commit=' "$pre" | cut -d= -f2)" == "$(git rev-parse HEAD)" ]] || { echo 'STOP：來源包 commit 和目前 HEAD 不同' >&2; exit 2; }
+    grep -q '^ollama_version_output=.*0\.40\.14' "$pre" || { echo 'STOP：Ollama 版本不是 0.40.14' >&2; exit 2; }
+fi
 { echo "start=$(date -Iseconds)"; echo "host=$(uname -a)"; echo "commit=$(git rev-parse HEAD)"; echo "mode=$mode phases=${phases[*]}"; } | tee -a "$console"
 for ph in "${phases[@]}"; do
     a="$RUNS/${prefix}_A_${ph}_run1"; b="$RUNS/${prefix}_B_${ph}_run1"

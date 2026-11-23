@@ -194,13 +194,22 @@ def listener_pids(port):
     return pids
 
 
-def start_ollama(port, log_path):
-    if not port_free(port):
-        raise SystemExit(f"埠 {port} 已被占用，依 H-01 停下，不沿用既有服務")
-    env = dict(os.environ, OLLAMA_HOST=f"127.0.0.1:{port}", OLLAMA_NUM_PARALLEL="1", OLLAMA_MAX_LOADED_MODELS="2",   # LLM＋embedding 同時常駐
-               OLLAMA_MODELS=MODELS_ROOT)       # 不繼承其他模型根
-    lf = open(log_path, "ab")
-    p = subprocess.Popen([OLLAMA_BIN, "serve"], env=env, stdout=lf, stderr=lf)
+def _reap_own(p, timeout=10):
+    """只處理自己 Popen 的子程序：還活著就 terminate，等它結束；逾時才 kill 再等。回傳清理結果。"""
+    out = {"pid": p.pid, "was_running": p.poll() is None}
+    if out["was_running"]:
+        p.terminate()
+        try:
+            p.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            out["killed"] = True
+            p.wait(timeout=timeout)
+    out["exit"] = p.returncode
+    return out
+
+
+def _wait_ready(p, port):
     import urllib.request
     for _ in range(60):
         if p.poll() is not None:
@@ -208,7 +217,6 @@ def start_ollama(port, log_path):
         pids = listener_pids(port)
         if pids:
             if pids != {p.pid}:
-                p.terminate()
                 raise SystemExit(f"埠 {port} 的監聽者 {sorted(pids)} 不是自己啟動的 {p.pid}，停下")
             try:
                 urllib.request.urlopen(f"http://127.0.0.1:{port}/api/version", timeout=1).read()
@@ -216,8 +224,31 @@ def start_ollama(port, log_path):
             except Exception:  # noqa: BLE001
                 pass
         time.sleep(0.5)
-    p.terminate()
     raise SystemExit("專用 Ollama 沒有在 30 秒內就緒")
+
+
+def start_ollama(port, log_path):
+    """CODEX-APP-0450 第 1 點：Popen 成功到交回之間任何失敗（含 listener_pids 拋錯、Ctrl+C），
+    都由這裡回收自己開的子程序，再原樣拋出原本的錯誤；呼叫端拿不到 proc 時也不會留下 Ollama。"""
+    if not port_free(port):
+        raise SystemExit(f"埠 {port} 已被占用，依 H-01 停下，不沿用既有服務")
+    env = dict(os.environ, OLLAMA_HOST=f"127.0.0.1:{port}", OLLAMA_NUM_PARALLEL="1", OLLAMA_MAX_LOADED_MODELS="2",   # LLM＋embedding 同時常駐
+               OLLAMA_MODELS=MODELS_ROOT)       # 不繼承其他模型根
+    lf = open(log_path, "ab")
+    try:
+        p = subprocess.Popen([OLLAMA_BIN, "serve"], env=env, stdout=lf, stderr=lf)
+    except BaseException:
+        lf.close()
+        raise
+    try:
+        return _wait_ready(p, port)
+    except BaseException as exc:
+        try:
+            info = _reap_own(p)
+        except BaseException as reap_exc:  # noqa: BLE001 - 清理失敗也不能蓋掉原本的錯誤
+            info = {"pid": p.pid, "reap_error": repr(reap_exc)}
+        print(f"start_ollama 失敗，已回收自己啟動的 Ollama：{info}；原本的錯誤：{exc!r}", file=sys.stderr)
+        raise
 
 
 def check_owner(p, port):
