@@ -309,6 +309,10 @@ class PreviewService:
                                max_alt_m=m.get("limits", {}).get("max_altitude_m", 120),
                                created_at=datetime.now(TW).isoformat())
         rec["takeoff_source"] = src
+        # F-4（G1 範圍 B）：預覽 ID 帶目前的證據世代（boot_epoch）。內容雜湊 preview_version 不變（AC-9 照舊可重算），
+        # 但不同世代驗算出的預覽一定是新 ID；舊世代的預覽只能唯讀查看（get），不能直接 apply_check。
+        rec["artifact_id"] = f"rp-e{self.boot_epoch}-" + rec["preview_version"].split(":")[1][:16]
+        rec["evidence_generation"] = self.boot_epoch
         try:
             self.store.append(rec)
             saved = True
