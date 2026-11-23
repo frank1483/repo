@@ -12,14 +12,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import time
 
 from . import agent_loop as al
 from .gate_l1 import gate
 from .planner_t3 import _canonical
 
-TEST_VALUES = {"per_sentence_calls": 12, "per_task_calls": 24, "clarify_rounds": 3, "steps_max": 10, "k_max": 3,
-               "task_deadline_s": 600.0}   # G0-10：任務絕對期限（測試值，待凍結）
+TEST_VALUES = {"per_sentence_calls": 12, "per_task_calls": 24, "clarify_rounds": 3, "steps_max": 10, "k_max": 3}
 KINDS = ("plan", "ui", "qa", "report", "chat", "manual")   # manual：使用者 11/18 選 B，向量檢索進 M4
 KIND_ZH = {"plan": "任務規劃", "ui": "介面", "qa": "問答", "report": "報告", "chat": "閒聊", "manual": "手冊查詢"}
 KEYWORDS = {"plan": ["巡檢", "航線", "規劃", "覆蓋"], "ui": ["首頁", "顯示在", "放到", "畫面"],
@@ -97,7 +95,6 @@ class Controller:
         self.tasks = {}
         self.n = 0
         self.alert_active = alert_active      # M3：固定告警狀態；有告警就停在步間
-        self.clock = time.monotonic           # G0-10：任務絕對期限用的單調時鐘（測試可替換）
 
     # ---------- 模型呼叫（經帳本） ----------
     def _ask(self, task, purpose, header, allowed, rule_code):
@@ -136,8 +133,7 @@ class Controller:
         self.n += 1
         tid = f"task-{self.n}"
         task = {"id": tid, "text": text, "status": "ACTIVE", "ledger": Ledger(**self.ledger_cfg), "directions": [],
-                "goals": [], "artifacts": {}, "questions": [], "steps": [], "notes": [],
-                "deadline": self.clock() + TEST_VALUES["task_deadline_s"]}
+                "goals": [], "artifacts": {}, "questions": [], "steps": [], "notes": []}
         self.tasks[tid] = task
         kinds = self._directions(task)
         if len(kinds) > self.k_max:
@@ -170,15 +166,9 @@ class Controller:
         task["ledger"].new_sentence()
         task["ledger"].clarify_used += 1
         for a in answers:
-            if a["field"] == "cancel_confirm":               # G0-10
-                if a["value"] is True:
-                    task["status"], task["questions"] = "CANCELLED", []
-                elif task.get("deadline") is not None and self.clock() > task["deadline"]:
-                    task["status"], task["questions"] = "EXPIRED", []
-                    task["notes"].append("任務期限已過，不能恢復")
-                else:
-                    task["status"] = task.get("pre_cancel", "ACTIVE")
-                    task["questions"] = copy.deepcopy(task.get("pre_cancel_questions") or [])
+            if a["field"] == "cancel_confirm":
+                task["status"] = "CANCELLED" if a["value"] is True else task.get("pre_cancel", "ACTIVE")
+                task["questions"] = []
                 return self._reply(task)
             if a["field"] == "boundary":
                 task["artifacts"]["area_record"] = {"kind": "area_record", "ref": a["value"], "verdict": "ok",
@@ -203,7 +193,6 @@ class Controller:
         intent, _ = self._ask_resume(task, text)
         if intent == "CANCEL":
             task["pre_cancel"] = task["status"]
-            task["pre_cancel_questions"] = copy.deepcopy(task.get("questions") or [])   # G0-10：保存原等待問題
             task["status"] = "PARKED"
             task["questions"] = [{"field": "cancel_confirm", "zh": "要取消這個任務嗎？"}]
             return self._reply(task)
