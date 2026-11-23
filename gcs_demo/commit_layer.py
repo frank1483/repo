@@ -693,6 +693,16 @@ class Coordinator:
                         "after_roots": {"ui": _sha({"r": d.ui_root}), "route": _sha({"r": _plain(d.route_roots)})},
                         "kind_terminal_sha": terminal.get("sha256") if terminal else None})
 
+    def _end_reserved(self, gs, tx_id, outcome, d):
+        """中止類 END：動用終態預留；I/O 失敗時沒有 END，由 BOOT 走「有 BEGIN 無 END」分支（與 _abort 相同語意）。"""
+        self.store.budget.terminal_mode = True
+        try:
+            self._end(gs, tx_id, outcome, d, None)
+        except (CommitError, OSError):
+            pass
+        finally:
+            self.store.budget.terminal_mode = False
+
     def _freeze(self, slot_id, reason, ref=None):
         self.slot_state[slot_id] = {"state": "FROZEN", "reason": reason, "terminal_ref": ref}
 
@@ -886,6 +896,8 @@ class Coordinator:
     def ui_apply(self, tx_id, new_ui_root):
         if self.read_only:
             return {"action": "BLOCK", "code": "STORE_READ_ONLY"}
+        if self.slot_state.get("ui", {}).get("state") == "FROZEN":   # E-2：UI 替身凍結擋下同次執行的後續 UI 操作
+            return {"action": "BLOCK", "code": "COMMIT_FROZEN", "reasons": [self.slot_state["ui"]["reason"]]}
         self._acquire()
         try:
             if self.word.gen_exhausted():
@@ -897,7 +909,7 @@ class Coordinator:
             d1 = Descriptor(d0.root_gen + 1, gs, new_ui_root, d0.route_roots, UndoNode(entry, d0.undo_head))
             self.hooks.point("ui:active_durable")          # 替身：ADR-0001 §5 ② 在此生效
             if not self.word.cas_new(d0.root_gen, d1):      # 0439 #4：生效點封閉新發布（不比對 safety_seq）
-                self._end(gs, tx_id, "ABORTED", d0, None)
+                self._end_reserved(gs, tx_id, "ABORTED", d0)   # 0440 #3：中止紀錄動用預留，寫不進去也照樣回拒絕碼
                 return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
             self._end(gs, tx_id, "COMMITTED", d1, None)
             return {"action": "WRITE", "tx_id": tx_id, "global_seq": gs}
@@ -934,11 +946,14 @@ class Coordinator:
                 d1 = Descriptor(d0.root_gen + 1, gs, d0.ui_root, rr, node.next)
                 term_rec = {"kind": "COMMITTED", "tx_id": tx_id, "slot_id": slot, "after_sha": _sha({"r": restored})}
             else:
+                if self.slot_state.get("ui", {}).get("state") == "FROZEN":   # E-2：UI undo 也遵守 UI 凍結
+                    self._end_reserved(gs, tx_id, "ABORTED", d0)
+                    return {"action": "BLOCK", "code": "COMMIT_FROZEN"}
                 d1 = Descriptor(d0.root_gen + 1, gs, e["before"], d0.route_roots, node.next)
                 term_rec = None
             self.hooks.point("undo:before_publish")
             if not self.word.cas_new(d0.root_gen, d1):   # 0439 #4：生效點封閉新發布
-                self._end(gs, tx_id, "ABORTED", d0, None)
+                self._end_reserved(gs, tx_id, "ABORTED", d0)   # 0440 #3
                 return {"action": "BLOCK", "code": "W_EPOCH_EXHAUSTED"}
             self.store.budget.terminal_mode = True       # 0438 #3：undo 的收尾（COMMITTED／END）屬終態，動用預留
             try:
@@ -1068,6 +1083,11 @@ def _boot_scan(st, eps, hooks, report, scan):
         if end is None:
             if "COMMITTED" in kinds:
                 slot_state[slot] = {"state": "FROZEN", "reason": "committed_without_end", "terminal_ref": tx}
+                report["frozen"].append(tx)
+            elif b["tx_kind"] == "route_undo" and "SNAPSHOT" in kinds:
+                # 使用者 2026-11-23 10:13 裁決 E-1 A：undo 可能已在記憶體生效、但補償與終態都沒寫進磁碟
+                # → 重啟後也維持凍結，等人工處理（不推定 undo 前或後的根）
+                slot_state[slot] = {"state": "FROZEN", "reason": "undo_without_terminal", "terminal_ref": tx}
                 report["frozen"].append(tx)
             else:
                 report["recovery"].append({"tx": tx, "action": "use_before", "why": "begin_without_end"})
