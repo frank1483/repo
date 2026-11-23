@@ -200,7 +200,8 @@ Item {
             const checkpoint = agentState.beginGroup()
             try { agentState._writeThemeGroups(groups); agentState.commitGroup(checkpoint, qsTr("淺色主題"), "theme") }
             catch (e) { agentState.rollbackGroup(checkpoint); throw e }
-            finishApply(p, Object.assign({ kind: "agent" }, topEntry()), qsTr("淺色主題"))
+            const shown = Object.keys(groups).map(k => k + " " + groups[k]).join("、")
+            finishApply(p, Object.assign({ kind: "agent" }, topEntry()), qsTr("淺色主題（經對比規則調整後實際為：%1）").arg(shown))
         } else failApply(p, qsTr("不認得的主題：%1").arg(t))
     }
 
@@ -311,7 +312,7 @@ Item {
             Text {
                 Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: root.fs - 2
                 color: root.online ? root.cMuted : root.cWarn
-                text: !root.online ? qsTr("Agent 服務未連線（%1）").arg(root.apiBase)
+                text: !root.online || !root.health ? qsTr("Agent 服務未連線（%1）").arg(root.apiBase)
                       : qsTr("服務：%1，%2，模型 %3").arg(root.health.plan_name).arg(root.health.mode === "live" ? qsTr("真模型") : qsTr("假模型"))
                           .arg(root.health.model || "—") + (root.selectedModel ? qsTr("；已選定 %1").arg(root.selectedModel) : "")
             }

@@ -1,0 +1,4 @@
+.pragma library
+// 由 ubuntu_build_ab.sh（install_ab_into_ui.sh）產生：這個執行檔固定跑哪個方案、預設連哪個 Agent 服務埠。
+var PLAN = "@PLAN@"
+var AGENT_URL = "http://127.0.0.1:@PORT@"

@@ -1,4 +1,4 @@
-"""筆電互動用 Agent 服務：讓正式 UI 的 AiAgent 面板實際操作方案 A 或方案 B（說明 v3，使用者 2026-11-23 16:15 同意）。
+"""筆電互動用 Agent 服務：讓正式 UI 的 AiAgent 面板實際操作方案 A 或方案 B（說明 v3，使用者 2026-11-23 16:15 同意；回覆潤飾用 v3.12 reply_polish）。
 
 一個程序只跑一種方案（A＝M4bController 逐步迴圈；B＝PlanBController 結構化計畫，第 1 段自己跑）。
 控制器、提示詞、檢索、預算、條件都和 v3.11 評估相同（條件 A-s6-b30：每句最多 6 步、預算 30 次呼叫；B0 規則可選）。
@@ -27,7 +27,6 @@ from .. import llm_gateway as G
 from .. import m4_runner as R
 from .. import m4b_runner as R4
 from ..id_graph import load_index
-from . import polish as P
 
 PLAN_NAME = {"A": "方案 A（逐步迴圈）", "B": "方案 B（結構化計畫）"}
 COND = {"steps": 6, "budget": 30}                  # 與 v3.11 smoke／research 的 A-s6-b30 相同
@@ -93,7 +92,7 @@ class AgentService:
             self.counter = lambda text: len(TK.encode(text, tok))  # noqa: E731
             self.info["token_counter"] = {"blob_digest": tok["blob_digest"]}
         self.info["id_index"] = {"graph_sha256": man["graph_sha256"], "vectors_sha256": man["vectors_sha256"]}
-        self.info["polish"] = P.describe()
+        self.info["polish"] = "v3.12 reply_polish（固定步驟，每句最多 1 次、20 秒）"
         self.env_dir = os.path.join(logdir, "env")
         self.svc, self.tools = R.build_env(self.env_dir)
         idx = R.manual_index()
@@ -123,7 +122,7 @@ class AgentService:
             calls = []
             model = None if group == "B0" else self.factory(calls)
             c = self.Ctl(self.tools, model, self.graph, self.counter, ledger_cfg={"per_sentence": 0 if group == "B0" else COND["budget"]},
-                         steps_max=COND["steps"], summary_llm=False)
+                         steps_max=COND["steps"])       # v3.12：回覆潤飾是控制器的固定步驟（不設開關）
             if self.plan == "A" and R4.STRICT_PARAMS_A:
                 c.strict_params = True
             t0 = time.monotonic()
@@ -135,15 +134,14 @@ class AgentService:
             except Exception as e:  # noqa: BLE001 - 原樣記錄，面板顯示錯誤
                 r, err, tb = {}, repr(e), traceback.format_exc()
             elapsed = round(time.monotonic() - t0, 3)
-            pol = P.polish(r, model, calls) if r and not err and group != "B0" else P.skipped(r, "B0 或錯誤不潤飾")
             tid = f"t{next(self.ids):04d}"
-            out = self.view(tid, text, group, r, err, elapsed, calls, pol, idx.calls[n_embed:] if idx else [])
+            out = self.view(tid, text, group, r, err, elapsed, calls, idx.calls[n_embed:] if idx else [])
             self.tasks[tid] = out
             self._log({"task_id": tid, "text": text, "group": group, "time": R.now(), "result": out, "raw": r,
                        "traceback": tb, "calls": calls}, "requests.jsonl")
             return out
 
-    def view(self, tid, text, group, r, err, elapsed, calls, pol, embeds):
+    def view(self, tid, text, group, r, err, elapsed, calls, embeds):
         A = (r or {}).get("artifacts") or {}
         props = [self.ui_action(i, p, A) for i, p in enumerate((r or {}).get("proposals") or [])]
         rp = A.get("route_preview") or {}
@@ -156,8 +154,9 @@ class AgentService:
             props.append(item)
         mc = A.get("manual_claims") or {}
         return {"ok": err is None, "error": err, "task_id": tid, "plan": self.plan, "group": group, "text": text,
-                "status": (r or {}).get("status"), "reply": pol["reply"], "reply_source": pol["source"],
-                "reply_template": (r or {}).get("reply_zh"), "polish": pol,
+                "status": (r or {}).get("status"), "reply": (r or {}).get("reply_zh") or "", "reply_source": (r or {}).get("reply_source"),
+                "reply_template": (r or {}).get("reply_template"), "polish": (r or {}).get("polish"),
+                "polish_calls": sum(1 for x in calls if x.get("purpose") == "polish"),
                 "directions": (r or {}).get("directions") or [], "dir_status": (r or {}).get("dir_status") or {},
                 "steps": [{k: s.get(k) for k in ("step_id", "direction", "action", "ids", "params", "source", "result")}
                           for s in ((r or {}).get("steps") or (r or {}).get("plan") or [])],

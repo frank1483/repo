@@ -11,6 +11,9 @@ var LIGHT_ACTIONS = [{ group: "background", color: "#F3F4F6" }, { group: "text",
 
 var STATE_ZH = { PROPOSED: "待套用", PREVIEW: "預覽", APPLIED: "已套用", UNDONE: "已復原", APPLY_FAILED: "套用失敗" }
 var DIR_ZH = { plan: "規劃", ui: "介面", manual: "手冊", qa: "問答", report: "報告", model: "模型", flight: "飛控" }
+var POLISH_REASON_ZH = { format: "格式不對", slots: "佔位符不符", own_number: "自己寫了數字", forbidden_claim: "宣稱已執行",
+    too_long: "太長", charset: "有不允許的字元", timeout: "超過 20 秒", model_error: "模型錯誤", no_model: "規則模式不潤飾",
+    alert_active: "告警處理中讓出" }
 var SOURCE_ZH = { model: "模型", rule: "規則退回", plan: "計畫" }
 
 function planTitle(plan) {
@@ -22,7 +25,7 @@ function dirZh(d) { return DIR_ZH[d] || (d ? String(d) : "") }
 
 // 只接受有限數字、合理範圍的航點；任何一點不合格就整條拒絕
 function checkedPoints(points) {
-    if (!Array.isArray(points) || points.length < 1 || points.length > ROUTE_MAX_POINTS) return null
+    if (!points || typeof points.length !== "number" || points.length < 1 || points.length > ROUTE_MAX_POINTS) return null
     var out = []
     for (var i = 0; i < points.length; ++i) {
         var p = points[i] || {}
@@ -78,16 +81,17 @@ function timing(v) {
     var parts = []
     if (v.t_pre_summary_s !== undefined && v.t_pre_summary_s !== null) parts.push("提案就緒 " + Number(v.t_pre_summary_s).toFixed(1) + " 秒")
     if (v.elapsed_s !== undefined && v.elapsed_s !== null) parts.push("含潤飾總時間 " + Number(v.elapsed_s).toFixed(1) + " 秒")
-    parts.push("LLM 呼叫 " + (v.model_calls || 0) + " 次")
+    parts.push("LLM 呼叫 " + (v.model_calls || 0) + " 次（含潤飾 " + (v.polish_calls || 0) + " 次）")
     parts.push("embedding " + (v.embed_calls || 0) + " 次")
     return parts.join("，")
 }
 
 function replySourceZh(v) {
     if (!v) return ""
-    if (v.reply_source === "model_polish") return "模型潤飾"
-    var reason = v.polish && v.polish.reason ? v.polish.reason : ""
-    return "模板" + (reason ? "（潤飾退回：" + reason + "）" : "")
+    if (v.reply_source === "polished") return "模型潤飾"
+    var src = String(v.reply_source || "")
+    var reason = src.indexOf("fallback:") === 0 ? src.slice(9) : (v.polish && v.polish.reason ? v.polish.reason : "")
+    return "模板" + (reason ? "（潤飾退回：" + (POLISH_REASON_ZH[reason] || reason) + "）" : "")
 }
 
 function outcomeLines(outcomes) {
