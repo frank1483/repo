@@ -22,13 +22,19 @@ REPO_FILES=(gcs_demo/planb_runner.py gcs_demo/agent_planb.py gcs_demo/test_planb
  gcs_demo/agent_tools.py gcs_demo/areas_v1.json gcs_demo/preview_api.py gcs_demo/commit_layer.py gcs_demo/route_recheck.py gcs_demo/coverage.py
  gcs_demo/energy.py gcs_demo/planner.py gcs_demo/planner_t3.py gcs_demo/llm_gateway.py gcs_demo/rag_index.py ui_agent/qml/GcpAgentCore.js
  gcs_demo/domains/agriculture.json gcs_demo/domains/classes.json gcs_demo/domains/inspection.json gcs_demo/domains/multi_uav.json
- gcs_demo/test_laptop_linux.py gcs_demo/laptop_ab/run_ab_laptop.sh gcs_demo/laptop_ab/make_laptop_bundle.sh)
+ gcs_demo/test_laptop_linux.py gcs_demo/laptop_ab/run_ab_laptop.sh gcs_demo/laptop_ab/make_laptop_bundle.sh
+ gcs_demo/reply_polish.py gcs_demo/test_polish.py
+ gcs_demo/laptop_ab/__init__.py gcs_demo/laptop_ab/agent_service.py gcs_demo/laptop_ab/test_agent_service.py
+ gcs_demo/laptop_ab/install_ab_into_ui.sh gcs_demo/laptop_ab/install_ab_payload_v1.sha256 gcs_demo/laptop_ab/test_install_ab.py
+ gcs_demo/laptop_ab/ubuntu_build_ab.sh gcs_demo/laptop_ab/run_ab_desktop.sh
+ gcs_demo/laptop_ab/qml/GcpAiAgentPanel.qml gcs_demo/laptop_ab/qml/GcpAiAgentRouteSink.qml gcs_demo/laptop_ab/qml/GcpAiAgentCore.js
+ gcs_demo/laptop_ab/qml/GcpAiAgentBus.js gcs_demo/laptop_ab/qml/GcpAiAgentBuild.js.in)
 BASE_FILES=(adr0002_rag_v1/index_v1/INDEX_MANIFEST.json adr0002_rag_v1/id_index_v1/ID_INDEX_MANIFEST.json
  adr0002_rag_v1/corpus/px4/FETCH_MANIFEST.json adr0002_rag_v1/corpus/qgc/FETCH_MANIFEST.json)
 ALGO_FILES=("M4b與新架構_演算法說明_v3.5.md" "M4b與新架構_演算法說明_v3.6.md" "decisions-v3.6與after.md" "M4b與新架構_演算法說明_v3.7.md"
  "M4b與新架構_演算法說明_v3.7.1.md" "M4b與新架構_演算法說明_v3.8.md" "M4b與新架構_演算法說明_v3.9.md" "decisions-v3.9.md"
  "演算法說明_v3.10_第一批與離線回放_v2.md" "演算法說明_v3.10_第二批手冊檢索_v2.md" "decisions-v3.10.md" "decisions-v3.11.md"
- "decisions-v3.11.1.md" "v3.11手冊檢索探測結果_v1.md" "演算法說明_v3.11_手冊子句與向量英文詞_v1.md" "v3.10小範圍驗證結果_v1.md"
+ "decisions-v3.11.1.md" "v3.11手冊檢索探測結果_v1.md" "演算法說明_v3.11_手冊子句與向量英文詞_v1.md" "v3.10小範圍驗證結果_v1.md" "演算法說明_v3.12_回覆潤飾_v2.md" "decisions-v3.12.md"
  "方案AB待確認_雙方意見_v2.md" "decisions-Z3-Y.md")
 
 missing=0
