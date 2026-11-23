@@ -32,8 +32,9 @@ from . import polish as P
 PLAN_NAME = {"A": "方案 A（逐步迴圈）", "B": "方案 B（結構化計畫）"}
 COND = {"steps": 6, "budget": 30}                  # 與 v3.11 smoke／research 的 A-s6-b30 相同
 TEXT_SCALE = {"小": 0.85, "中": 1.0, "大": 1.15, "特大": 1.3}
-SIZE_OP = {"縮小": "shrink", "原始": "reset", "放大": "grow"}
-MOVE_REGION = {"左上": "top_left", "右上": "top_right", "左下": "bottom_left", "右下": "bottom_right", "中央": "center"}
+# 對到 UI agent（ui_agent/qml/GcpAgentCore.js）的候選格式：放大／縮小用它的 scale 係數 1.25／0.8，位置用 REGIONS 鍵
+SIZE_OP = {"縮小": ("scale", 0.8), "原始": ("reset", None), "放大": ("scale", 1.25)}
+MOVE_REGION = {"左上": "TL", "右上": "TR", "左下": "BL", "右下": "BR", "中央": "C"}
 THEME = {"T001": "dark", "T002": "light", "T003": "high_contrast"}
 MAX_BODY = 16384
 
@@ -158,9 +159,12 @@ class AgentService:
                 "status": (r or {}).get("status"), "reply": pol["reply"], "reply_source": pol["source"],
                 "reply_template": (r or {}).get("reply_zh"), "polish": pol,
                 "directions": (r or {}).get("directions") or [], "dir_status": (r or {}).get("dir_status") or {},
-                "steps": [{k: s.get(k) for k in ("direction", "action", "ids", "params", "result", "by", "state")}
+                "steps": [{k: s.get(k) for k in ("step_id", "direction", "action", "ids", "params", "source", "result")}
                           for s in ((r or {}).get("steps") or (r or {}).get("plan") or [])],
-                "replans": (r or {}).get("replans"), "notes": (r or {}).get("notes") or [],
+                "replans": (r or {}).get("replans"), "plan_log": (r or {}).get("plan_log"), "notes": (r or {}).get("notes") or [],
+                "outcomes": (r or {}).get("outcomes") or {},
+                "traces": [{"purpose": t.get("purpose"), "source": t.get("source"), "replies": len(t.get("replies") or [])}
+                           for t in (r or {}).get("traces") or []],
                 "manual": {"verdict": mc.get("verdict"), "refs": mc.get("refs") or [], "query": mc.get("query")} if mc else None,
                 "qa": A.get("qa_claims"), "report": A.get("report_draft"), "flight_notice": A.get("flight_notice"),
                 "proposals": props, "calls_used": (r or {}).get("calls_used"), "model_calls": len(calls),
@@ -187,16 +191,30 @@ class AgentService:
             mod = node(cs[0]).get("module") if cs else None
             name = node(cs[0]).get("name") if cs else ""
             pid = ps[0] if ps else None
+            # ui 直接是 UI agent 的候選（id／kind／op／label_zh）；面板再用 GcpAgentCore.gateSelection 檢查一次才執行
             if pid == "P001" and v in TEXT_SCALE:
-                return base | {"ui": {"kind": "text_scale", "value": TEXT_SCALE[v]}, "supported": True, "label": f"全域文字大小改為「{v}」"}
+                label = f"全域文字大小改為「{v}」"
+                return base | {"ui": {"id": f"AB_TEXT_SCALE_{round(TEXT_SCALE[v] * 100)}", "kind": "text_scale",
+                                      "value": TEXT_SCALE[v], "label_zh": label}, "supported": True, "label": label}
             if pid == "P002" and mod and v in SIZE_OP:
-                return base | {"ui": {"kind": "layout", "module": mod, "op": SIZE_OP[v]}, "supported": True, "label": f"{name}{v}"}
+                op, factor = SIZE_OP[v]
+                label = f"{name}{v}" + (f"（×{factor}）" if factor else "")
+                ui = {"id": f"AB_LAY_{mod}_{op.upper()}" + (f"_{round(factor * 100)}" if factor else ""), "kind": "layout",
+                      "module": mod, "op": op, "label_zh": label}
+                if factor:
+                    ui["factor"] = factor
+                return base | {"ui": ui, "supported": True, "label": label}
             if pid == "P003" and mod and v in MOVE_REGION:
-                return base | {"ui": {"kind": "layout", "module": mod, "op": "move", "region": MOVE_REGION[v]},
-                               "supported": True, "label": f"{name}移到{v}"}
+                label = f"{name}移到{v}"
+                return base | {"ui": {"id": f"AB_LAY_{mod}_MOVE_{MOVE_REGION[v]}", "kind": "layout", "module": mod, "op": "move",
+                                      "region": MOVE_REGION[v], "label_zh": label}, "supported": True, "label": label}
             if pid == "P004" and mod and v in ("顯示", "隱藏"):
-                return base | {"ui": {"kind": "layout", "module": mod, "op": "show" if v == "顯示" else "hide"},
-                               "supported": True, "label": f"{v}{name}"}
+                op = "show" if v == "顯示" else "hide"
+                label = f"{v}{name}"
+                if op == "hide" and node(cs[0]).get("locked"):
+                    return base | {"ui": None, "supported": False, "label": f"{name}是鎖定元件，不可隱藏"}
+                return base | {"ui": {"id": f"AB_LAY_{mod}_{op.upper()}", "kind": "layout", "module": mod, "op": op,
+                                      "label_zh": label}, "supported": True, "label": label}
             return base | {"ui": None, "supported": False, "label": "版面提案缺元件或值，無法對應畫面動作"}
         if act == "UI_THEME_PROPOSE":
             t = next((x for x in ids if x in THEME), None)
