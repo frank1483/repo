@@ -162,7 +162,8 @@ def build(corpus_dir, out_dir, url="http://127.0.0.1:11434", batch=32):
     lex = {"N": len(chunks), "avgdl": sum(len(tokens(c["text"])) for c in chunks) / max(1, len(chunks)), "df": df}
     with open(os.path.join(out_dir, "lexical.json"), "w", encoding="utf-8") as f:
         json.dump(lex, f)
-    model_manifest = os.path.join(os.path.expanduser("~"), ".ollama", "models", "manifests", "registry.ollama.ai",
+    model_manifest = os.path.join(os.environ.get("GCS_OLLAMA_MODELS") or os.path.join(os.path.expanduser("~"), ".ollama", "models"),
+                                  "manifests", "registry.ollama.ai",
                                   "library", "embeddinggemma-2", "270m-q8_0-text")
     manifest = {"schema": "IndexManifest/1", "index_id": "manuals-px4-qgc-v1", "corpus": corpus,
                 "preprocessing_id": "strip-frontmatter-images-v1", "glossary_hash": sha(json.dumps(GLOSSARY, sort_keys=True)),

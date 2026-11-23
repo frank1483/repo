@@ -54,7 +54,10 @@ def set_manual_index(index_dir, url, use_vector):
 def manual_index():
     return _INDEX["index"]
 MODEL_TAG = "gemma4:e2b"
-MODELS_ROOT = os.path.join(os.path.expanduser("~"), ".ollama", "models")   # 核對與啟動用同一個模型根
+# 筆電（Linux）版：模型根與 ollama 執行檔可用環境變數指定；沒設時和 PC 原本相同
+MODELS_ROOT = os.environ.get("GCS_OLLAMA_MODELS") or os.path.join(os.path.expanduser("~"), ".ollama", "models")   # 核對與啟動用同一個模型根
+OLLAMA_BIN = os.environ.get("GCS_OLLAMA_BIN") or "ollama"
+IS_WINDOWS = os.name == "nt"
 MANIFEST_PATH = os.path.join(MODELS_ROOT, "manifests", "registry.ollama.ai", "library", "gemma4", "e2b")
 QA_TOOL_NOTE = "問答工具尚未接上（agent_tools qa_lookup 固定回空 claims），QA 方向未完成應歸因於工具，不是模型"
 CONDITIONS = {
@@ -119,6 +122,7 @@ def verify_bundle(bundle_dir, hash8):
     frozen = open(frozen_path, encoding="utf-8").read().split()[0] if os.path.exists(frozen_path) else None
     report.update({"commit": commit, "frozen_commit": frozen, "git_exit": [h.returncode, st.returncode],
                    "dirty": bool(st.stdout.strip()), "models_root": MODELS_ROOT,
+                   "platform": sys.platform, "ollama_bin": OLLAMA_BIN,
                    "model_manifest_sha256": sha_file(MANIFEST_PATH) if os.path.exists(MANIFEST_PATH) else None})
     bad_git = h.returncode != 0 or st.returncode != 0 or not commit or frozen is None or commit != frozen
     if bad_git or report["dirty"]:
@@ -144,7 +148,40 @@ def port_free(port):
         s.close()
 
 
+def _linux_listener_pids(port):
+    """Linux：從 /proc/net/tcp(6) 找 LISTEN（狀態 0A）的 socket inode，再對 /proc/<pid>/fd 找擁有者（只看得到自己使用者的程序）。"""
+    inodes = set()
+    for fn in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            rows = open(fn, encoding="ascii").read().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            parts = row.split()
+            if len(parts) >= 10 and parts[3] == "0A" and int(parts[1].rsplit(":", 1)[1], 16) == port:
+                inodes.add(parts[9])
+    if not inodes:
+        return set()
+    pids = set()
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            for fd in os.listdir(f"/proc/{d}/fd"):
+                link = os.readlink(f"/proc/{d}/fd/{fd}")
+                if link.startswith("socket:[") and link[8:-1] in inodes:
+                    pids.add(int(d))
+                    break
+        except OSError:
+            continue
+    if len(pids) == 0:
+        raise SystemExit(f"埠 {port} 有監聽者，但看不到擁有它的程序（可能是別的使用者），無法確認歸屬，停下")
+    return pids
+
+
 def listener_pids(port):
+    if not IS_WINDOWS:
+        return _linux_listener_pids(port)
     r = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit("netstat 失敗，無法確認埠的歸屬，停下")
@@ -163,7 +200,7 @@ def start_ollama(port, log_path):
     env = dict(os.environ, OLLAMA_HOST=f"127.0.0.1:{port}", OLLAMA_NUM_PARALLEL="1", OLLAMA_MAX_LOADED_MODELS="2",   # LLM＋embedding 同時常駐
                OLLAMA_MODELS=MODELS_ROOT)       # 不繼承其他模型根
     lf = open(log_path, "ab")
-    p = subprocess.Popen(["ollama", "serve"], env=env, stdout=lf, stderr=lf)
+    p = subprocess.Popen([OLLAMA_BIN, "serve"], env=env, stdout=lf, stderr=lf)
     import urllib.request
     for _ in range(60):
         if p.poll() is not None:
@@ -206,7 +243,7 @@ def stop_ollama(p, port):
 
 
 class RamSampler(threading.Thread):
-    """每 0.5 秒取樣：自己啟動的 Ollama（含子程序）與全部 ollama.exe 分開記錄。"""
+    """每 0.5 秒取樣：自己啟動的 Ollama（含子程序）與全部 ollama.exe（Linux 為 ollama）分開記錄。"""
 
     def __init__(self):
         super().__init__(daemon=True)
@@ -215,6 +252,8 @@ class RamSampler(threading.Thread):
 
     @staticmethod
     def sample_all():
+        if not IS_WINDOWS:
+            return RamSampler._linux_sample_all()
         try:
             out = subprocess.run(["tasklist", "/FO", "CSV", "/NH", "/FI", "IMAGENAME eq ollama.exe"],
                                  capture_output=True, text=True, timeout=5).stdout
@@ -226,6 +265,24 @@ class RamSampler(threading.Thread):
             return tot
         except Exception:  # noqa: BLE001
             return 0
+
+    @staticmethod
+    def _linux_sample_all():
+        """Linux：加總所有名為 ollama 的程序（serve 與 runner 子程序）的 VmRSS（KB）；對應 Windows tasklist 的記憶體欄。"""
+        tot = 0
+        for d in os.listdir("/proc"):
+            if not d.isdigit():
+                continue
+            try:
+                if open(f"/proc/{d}/comm", encoding="utf-8").read().strip() != "ollama":
+                    continue
+                for line in open(f"/proc/{d}/status", encoding="utf-8"):
+                    if line.startswith("VmRSS:"):
+                        tot += int(line.split()[1])
+                        break
+            except (OSError, ValueError):
+                continue
+        return tot
 
     def run(self):
         while not self.stop.is_set():

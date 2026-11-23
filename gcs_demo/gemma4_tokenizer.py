@@ -12,11 +12,12 @@ Offline, stdlib only; vocab strings decoded as strict UTF-8.
 import hashlib
 import heapq
 import json
+import os
 import re
 import struct
 from pathlib import Path
 
-MODELS = Path.home() / '.ollama' / 'models'
+MODELS = Path(os.environ.get('GCS_OLLAMA_MODELS') or (Path.home() / '.ollama' / 'models'))   # 筆電版可用環境變數指定
 MANIFEST = MODELS / 'manifests' / 'registry.ollama.ai' / 'library' / 'gemma4' / 'e2b'
 EXPECTED_MANIFEST_SHA = 'b37049369adfe3d2b653af0ab301a062ca5cbe96ace6aa0d3f2559ee9b563fc2'
 SP = '▁'
