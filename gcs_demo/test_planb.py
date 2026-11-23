@@ -27,7 +27,7 @@ class PlanBTests(unittest.TestCase):
         m = scripted(['{"directions":["plan","ui"]}', PLAN_UI, '{"reply":"已開確認視窗"}'])
         log, T = tools(["A001", "U100"])
         r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢放到首頁")
-        self.assertEqual([t["purpose"] for t in r["traces"]], ["stage1", "plan"])     # v3：回覆固定模板
+        self.assertEqual([t["purpose"] for t in r["traces"]], ["stage1", "plan", "polish"])     # v3.12 潤飾固定一次；v3：回覆固定模板
         self.assertEqual([s["state"] for s in r["plan"]], ["OK", "OK", "OK", "PROPOSED"])
         self.assertEqual(r["status"], "DONE")
         self.assertEqual(r["calls_used"], 2)
@@ -36,7 +36,7 @@ class PlanBTests(unittest.TestCase):
         m = scripted(['{"directions":["plan","ui"]}', PLAN_UI])
         log, T = tools(["A001", "U100"])
         T["verify_preview"] = lambda ref: {"result": "fail", "preview_ref": "PV", "est_end_pct": 10.0}
-        r = PlanBController(T, m, GRAPH, COUNTER, summary_llm=False).request("規劃北側巡檢放到首頁")
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢放到首頁")
         self.assertEqual(r["plan"][3]["state"], "SKIPPED")
         self.assertEqual(r["proposals"], [])
         self.assertEqual(r["replans"], 0)
@@ -45,7 +45,7 @@ class PlanBTests(unittest.TestCase):
         bad = plan(st("s1", "plan", "TAKEOFF"))
         m = scripted(['{"directions":["color"]}', bad, plan(st("s1", "color", "UI_THEME_PROPOSE", ["T001"]))])
         _, T = tools(["T001"])
-        r = PlanBController(T, m, GRAPH, COUNTER, summary_llm=False).request("改成深色主題")
+        r = PlanBController(T, m, GRAPH, COUNTER).request("改成深色主題")
         self.assertEqual(r["replans"], 1)
         self.assertEqual(r["proposals"][0]["ids"], ["T001"])
 
@@ -53,7 +53,7 @@ class PlanBTests(unittest.TestCase):
         bad = plan(st("s1", "color", "UI_THEME_PROPOSE", ["T999"]))
         m = scripted(['{"directions":["color"]}', bad, bad, bad, bad])
         _, T = tools(["T001"])
-        r = PlanBController(T, m, GRAPH, COUNTER, summary_llm=False).request("改成深色主題")
+        r = PlanBController(T, m, GRAPH, COUNTER).request("改成深色主題")
         self.assertEqual(r["replans"], 2)
         self.assertEqual(r["calls_used"], 4)                     # 第 1 段＋初始規劃＋2 次修正
         self.assertTrue(any(e["event"] == "replan_quota_exhausted" for e in r["plan_log"]))
@@ -67,7 +67,7 @@ class PlanBTests(unittest.TestCase):
                            st("s2", "plan", "GEN_COVERAGE", bind={"area": "s1.area_record"}),
                            st("s3", "plan", "VERIFY_PREVIEW", bind={"route": "s2.coverage_route"}))])
         _, T = tools(["A001"])
-        r = PlanBController(T, m, GRAPH, COUNTER, summary_llm=False).request("規劃北側巡檢")
+        r = PlanBController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
         self.assertEqual(r["replans"], 1)
         self.assertEqual(r["status"], "DONE")
 
@@ -154,7 +154,7 @@ class PlanBTests(unittest.TestCase):
         _, T = tools(["A001", "U100"])
         r = PlanBController(T, m, GRAPH, COUNTER, preset={"directions": ["plan", "ui"], "stage1_calls": 1}).request(
             "規劃北側巡檢放到首頁")
-        self.assertEqual([t["purpose"] for t in r["traces"]], ["stage1_shared", "plan"])
+        self.assertEqual([t["purpose"] for t in r["traces"]], ["stage1_shared", "plan", "polish"])
         self.assertEqual(r["calls_used"], 2)
         self.assertEqual(r["status"], "DONE")
 
@@ -163,7 +163,7 @@ class PlanBTests(unittest.TestCase):
                  st("s2", "model", "MODEL_SWITCH_PROPOSE", ["M003"], require={"s1": "APPLIED"}))
         m = scripted(['{"directions":["color","model"]}', p])
         _, T = tools(["T001", "M003"])
-        r = PlanBController(T, m, GRAPH, COUNTER, summary_llm=False).request("改成深色主題後改用規則模式")
+        r = PlanBController(T, m, GRAPH, COUNTER).request("改成深色主題後改用規則模式")
         self.assertEqual(r["plan"][1]["state"], "WAITING")
         self.assertEqual(len(r["proposals"]), 1)
 
@@ -174,8 +174,8 @@ class PlanBTests(unittest.TestCase):
         p2 = plan(st("s3", "model", "MODEL_SWITCH_PROPOSE", ["M003"], after=["s1"]))
         m = scripted(['{"directions":["layout","color","model"]}', p1, p2])
         _, T = tools(["C014", "P002", "T001", "M003"])
-        r = PlanBController(T, m, GRAPH, big, summary_llm=False).request("風速計放大，改成深色主題，改用規則模式")
-        self.assertEqual([t["purpose"] for t in r["traces"]], ["stage1", "plan", "plan"])
+        r = PlanBController(T, m, GRAPH, big).request("風速計放大，改成深色主題，改用規則模式")
+        self.assertEqual([t["purpose"] for t in r["traces"]], ["stage1", "plan", "plan", "polish"])
         self.assertEqual(len(r["proposals"]), 3)
         self.assertEqual(r["replans"], 0)
 

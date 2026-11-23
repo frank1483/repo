@@ -55,7 +55,8 @@ class AreaTests(unittest.TestCase):
         _, T = tools3([])
         r = M4bController(T, m, GRAPH, COUNTER).request("北側和南側巡檢")
         self.assertEqual(r["status"], "PARKED")
-        self.assertEqual(len(m.calls), 1)                              # 只有第 1 段，沒有問模型選區域
+        # 只有第 1 段，沒有問模型選區域（v3.12：追問句的潤飾呼叫另計）
+        self.assertEqual([c["purpose"] for c in m.calls if c["purpose"] != "polish"], ["stage1"])
 
     def test_e07_fail_preview_skips_home(self):
         _, T = tools3(["A001", "U100"])

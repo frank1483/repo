@@ -72,12 +72,13 @@ class M4bTests(unittest.TestCase):
                       '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}',
                       '{"action":"FINISH","ids":[],"params":{}}', 'bad'])
         log, T = tools(["A001"])
-        r = M4bController(T, m, GRAPH, COUNTER, summary_llm=True).request("規劃A區巡檢然後起飛")
+        r = M4bController(T, m, GRAPH, COUNTER).request("規劃A區巡檢然後起飛")
         self.assertIn("flight_notice", r["artifacts"])
         self.assertEqual(r["artifacts"]["flight_notice"]["by"], "program")
         self.assertIn(FLIGHT_NOTICE, r["reply_zh"])
         self.assertEqual(r["dir_status"]["plan"], "DONE")
-        self.assertEqual(r["reply_source"], "template")
+        self.assertEqual(r["reply_source"], "fallback:format")      # v3.12：潤飾回 bad → 退回模板，告示仍在
+        self.assertEqual(r["reply_zh"], r["reply_template"])
 
     def test_plan_then_ui_order_and_propose(self):
         m = scripted(['{"directions":["ui","plan"]}'])   # 之後全部回 FINISH → 規則腳本不會用到；改用無模型
@@ -87,7 +88,7 @@ class M4bTests(unittest.TestCase):
         self.assertEqual([p["action"] for p in r["proposals"]], ["PROPOSE_HOME_ROUTE"])
         self.assertEqual(r["proposals"][0]["state"], "PROPOSED")
         self.assertEqual(r["status"], "DONE")
-        r2 = M4bController(T, m, GRAPH, COUNTER, summary_llm=False).request("規劃A區巡檢放到首頁")
+        r2 = M4bController(T, m, GRAPH, COUNTER).request("規劃A區巡檢放到首頁")
         self.assertEqual(r2["directions"][:2], ["plan", "ui"])
 
     def test_layout_text_size_enum_only(self):
@@ -96,7 +97,7 @@ class M4bTests(unittest.TestCase):
                       '{"action":"UI_LAYOUT_PROPOSE","ids":["P001"],"params":{"value":"大"}}',
                       '{"action":"FINISH","ids":[],"params":{}}'])
         _, T = tools(["P001"])
-        r = M4bController(T, m, GRAPH, COUNTER, summary_llm=False).request("文字放大")
+        r = M4bController(T, m, GRAPH, COUNTER).request("文字放大")
         self.assertEqual(len(r["proposals"]), 1)
         self.assertEqual(r["proposals"][0]["params"], {"value": "大"})
         self.assertTrue(any("允許值" in json.dumps(t["replies"], ensure_ascii=False) or len(t["replies"]) == 2
@@ -106,7 +107,7 @@ class M4bTests(unittest.TestCase):
         m = scripted(['{"directions":["color"]}', '{"action":"UI_THEME_PROPOSE","ids":["T999"],"params":{}}',
                       '{"action":"UI_THEME_PROPOSE","ids":["A001"],"params":{}}'])
         _, T = tools(["T001"])
-        r = M4bController(T, m, GRAPH, COUNTER, summary_llm=False).request("改成深色")
+        r = M4bController(T, m, GRAPH, COUNTER).request("改成深色")
         st = [s for s in r["steps"] if s["direction"] == "color"]
         self.assertEqual(st[0]["source"], "rule")             # 兩次都不合格 → 規則腳本
         self.assertEqual(r["proposals"][0]["ids"], ["T001"])
@@ -124,8 +125,10 @@ class M4bTests(unittest.TestCase):
                       
                       '{"reply":"預估電量 70%"}', '{"reply":"預估落地電量 61.5%"}'])
         _, T = tools(["A001"])
-        r = M4bController(T, m, GRAPH, COUNTER, summary_llm=True).request("規劃A區巡檢")
-        self.assertEqual(r["reply_source"], "model")
+        r = M4bController(T, m, GRAPH, COUNTER).request("規劃A區巡檢")
+        # v3.12：模型自己寫數字（沒有用佔位符）一律退回模板；模板裡的 61.5 來自預覽
+        self.assertEqual(r["reply_source"], "fallback:slots")
+        self.assertEqual(r["reply_zh"], r["reply_template"])
         self.assertIn("61.5", r["reply_zh"])
 
     def test_query_vector_once_after_stage1(self):
@@ -139,7 +142,7 @@ class M4bTests(unittest.TestCase):
         m = scripted(['{"directions":["layout"]}', '{"action":"UI_LAYOUT_PROPOSE","ids":["C014","P002"],"params":{}}',
                       '{"action":"FINISH","ids":[],"params":{}}'])
         _, T = tools(["C014", "P002"])
-        r = M4bController(T, m, GRAPH, COUNTER, summary_llm=False).request("風速計調整一下")
+        r = M4bController(T, m, GRAPH, COUNTER).request("風速計調整一下")
         self.assertEqual(r["proposals"], [])
         self.assertNotEqual(r["status"], "DONE")         # v2：缺值在解析時就退回；模型改回 FINISH
 
@@ -190,8 +193,9 @@ class M4bTests(unittest.TestCase):
                       '{"action":"GEN_COVERAGE","ids":[],"params":{}}', '{"action":"VERIFY_PREVIEW","ids":[],"params":{}}',
                        '{"reply":"預估落地電量 1.5%"}', '{"reply":"電量 61%"}'])
         _, T = tools(["A001"])
-        r = M4bController(T, m, GRAPH, COUNTER, summary_llm=True).request("規劃北側巡檢")
-        self.assertEqual(r["reply_source"], "template")      # 1.5 與 61 都只是 61.5 的子字串
+        r = M4bController(T, m, GRAPH, COUNTER).request("規劃北側巡檢")
+        self.assertEqual(r["reply_source"], "fallback:slots")      # v3.12：自寫數字不採用（不再做子字串比對）
+        self.assertEqual(r["reply_zh"], r["reply_template"])
 
     def test_runner_score_params_and_duplicates(self):
         from .m4b_runner import score
@@ -226,8 +230,9 @@ class M4bTests(unittest.TestCase):
     def test_default_reply_is_template_and_home_records_source(self):
         _, T = tools(["A001", "U100"])
         r = M4bController(T, None, GRAPH, COUNTER).request("規劃北側巡檢放到首頁")
-        self.assertEqual(r["reply_source"], "template")
+        self.assertEqual(r["reply_source"], "fallback:no_model")   # v3.12：沒有模型時潤飾零呼叫、用模板
         self.assertNotIn("summary", [t["purpose"] for t in r["traces"]])
+        self.assertEqual(r["polish"]["calls"], 0)
         self.assertEqual(r["proposals"][0]["source"], {"preview_ref": "PV1", "verdict": "pass"})
 
     def test_runner_dependency_scoring(self):

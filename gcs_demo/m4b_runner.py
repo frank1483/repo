@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import math
 import os
 import sys
@@ -40,9 +41,9 @@ CONDITIONS = {
 }
 GROUP_NOTE = {"B0": "規則：方向用關鍵字表、每步用規則腳本，零次 LLM 呼叫；查詢向量仍算 1 次",
               "A": "方案 A：模型排方向並逐步選動作（每步只看當前方向的候選）"}
-FEATURE = {"stage1": "agent_dir", "summary": "agent_resume"}
+FEATURE = {"stage1": "agent_dir", "summary": "agent_resume", "polish": "agent_resume"}
 # v3：閘道每功能預設 15 秒，對 1,500～3,000 token 的提示太短（CPU prefill 約 6.3 ms/token）；本實驗明訂每次呼叫的期限
-DEADLINE_S = {"stage1": 60.0, "step": 60.0, "plan": 180.0, "replan": 180.0, "summary": 60.0}
+DEADLINE_S = {"stage1": 60.0, "step": 60.0, "plan": 180.0, "replan": 180.0, "summary": 60.0, "polish": 20.0}   # v3.12 R4
 
 
 GATEWAY_BUDGETS = {"agent_dir": 60.0, "agent_step": 180.0, "agent_resume": 60.0}   # 上限；每次呼叫再用 DEADLINE_S 縮短
@@ -56,7 +57,7 @@ PROBE_V311 = True          # v3.11：smoke 探測改用三種查詢（原全句�
 STRICT_PARAMS_A = True     # v3.9（CODEX-APP-0429 第 4 點）：A 的逐步 schema 不收參數的動作 params 必須為空物件
 RUN_PROBE = True           # v3.9：smoke 開頭做混合檢索探測；B 引用 A 同包的探測紀錄，不重做
 EXTRA_INFO = None          # 可呼叫物件：回傳要併入 RUN_INFO 的欄位；None＝不加（A、B 的正式執行都不設）
-MAX_TOKENS = {"summary": 256, "plan": 512, "replan": 512}
+MAX_TOKENS = {"summary": 256, "plan": 512, "replan": 512, "polish": 384}
 HARNESS = {"name": "m4b-v5"}
 TIMING_KEYS = ("prompt_eval_count", "eval_count", "prompt_eval_duration", "eval_duration", "load_duration", "total_duration")
 
@@ -189,8 +190,8 @@ def run_case(case, cond, model_factory, graph, counter, work):
             extra=extra)
     calls = []
     model = None if cond["group"] == "B0" else model_factory(calls)
-    c = M4bController(tools, model, graph, counter, ledger_cfg={"per_sentence": cond["budget"]}, steps_max=cond["steps"],
-                      summary_llm=False)            # v3：整理回覆固定用模板（CODEX-APP-0406 第 1 點）
+    c = M4bController(tools, model, graph, counter, ledger_cfg={"per_sentence": cond["budget"]}, steps_max=cond["steps"])
+    # v3.12：回覆潤飾為固定步驟（取代 v3 起的固定模板；模板仍保存為 reply_template）
     if STRICT_PARAMS_A and type(c) is M4bController:  # v3.9：新版 A 保留第四輪的空參數約束（B 的計畫 schema 不受影響）
         c.strict_params = True
     t0 = time.monotonic()
@@ -207,6 +208,11 @@ def run_case(case, cond, model_factory, graph, counter, work):
            "packing_pending": (r.get("packing") or {}).get("pending"), "error": err,
            "embed_calls": idx.calls[n_embed_before:] if idx else [],
            "model_calls_sent": len(calls), "scope": case.get("scope"),
+           "polish_calls": sum(1 for x in calls if x.get("purpose") == "polish"),     # v3.12：潤飾呼叫另計
+           "decision_calls_sent": sum(1 for x in calls if x.get("purpose") != "polish"),
+           "t_polish_s": ((r or {}).get("polish") or {}).get("t_polish_s"),
+           "reply_template": (r or {}).get("reply_template"), "reply_final": (r or {}).get("reply_zh"),
+           "polish_facts_kept": _facts_kept(r),
            "stage1_augmented": (r or {}).get("stage1_augmented"), "stage1_raw": (r or {}).get("stage1_raw"),
            "stage1_corrections": (r or {}).get("stage1_corrections"),
            "area_status": (r or {}).get("area_status"),
@@ -217,6 +223,16 @@ def run_case(case, cond, model_factory, graph, counter, work):
                                           "false_open": False, "t_proposal_ready_s": None})
     full = {"reply": r, "traceback": tb, "calls": calls, "dialogs": tools.dialogs}
     return rec, full
+
+
+def _facts_kept(r):
+    """v3.12：模板裡的手冊出處、數字＋出處、提案內容都要原樣出現在最終回覆（潤飾前後各算一次）。"""
+    if not r or r.get("reply_template") is None:
+        return None
+    keys = [ln.split("：", 1)[1] for ln in r["reply_template"].split("\n") if ln.startswith("手冊出處：")]
+    keys += re.findall(r"預估落地電量 [0-9.]+%（出處：預覽 [^）]+）", r["reply_template"])
+    return {"n": len(keys), "template": sum(k in r["reply_template"] for k in keys),
+            "final": sum(k in (r.get("reply_zh") or "") for k in keys)}
 
 
 def _sum_timing(calls):
@@ -366,6 +382,18 @@ def retrieval_probe_v311(graph):
     return out
 
 
+def _count(xs):
+    out = {}
+    for x in xs:
+        out[x] = out.get(x, 0) + 1
+    return dict(sorted(out.items()))
+
+
+def _kept(rs, k):
+    q = [r["polish_facts_kept"] for r in rs if r.get("polish_facts_kept")]
+    return f"{sum(x[k] for x in q)}/{sum(x['n'] for x in q)}"
+
+
 def summarize(recs):
     """主表（v3.5 §7 比較口徑）：正確提案完成率（分母＝應提案案例）、提案就緒 P95（只算提案全對的案例，旁列納入數）、
     每案例 LLM 呼叫次數；另列誤開率、未達終點／錯誤數、整理前與含整理的 P95，以及各組都答對的相同案例 P95。"""
@@ -408,7 +436,15 @@ def summarize(recs):
                   "dir_exact_raw_rate": f"{sum(1 for r in rs if r.get('dirs_raw_match'))}/{len(rs)}",      # 補方向前（模型或關鍵字原輸出）
                   "dir_augmented": sum(1 for r in rs if r.get("stage1_augmented")),
                   "dir_corrected": sum(1 for r in rs if r.get("stage1_corrections")),     # v3.9：程式校正次數
-                  "area_fixed_cases": sum(1 for r in rs if r.get("area_status") == "ONE")}
+                  "area_fixed_cases": sum(1 for r in rs if r.get("area_status") == "ONE"),
+                  # v3.12：潤飾（指標分潤飾前／後）
+                  "polish_adopted": f"{sum(1 for r in rs if r.get('reply_source') == 'polished')}/{len(rs)}",
+                  "polish_fallback_reasons": _count(r.get("reply_source") for r in rs
+                                                    if str(r.get("reply_source") or "").startswith("fallback:")),
+                  "polish_calls_mean": round(sum(r.get("polish_calls") or 0 for r in rs) / len(rs), 3),
+                  "decision_calls_sent_mean": round(sum(r.get("decision_calls_sent") or 0 for r in rs) / len(rs), 3),
+                  "p95_polish_s": p95([r.get("t_polish_s") for r in rs if r.get("t_polish_s") is not None]),
+                  "facts_kept_template": _kept(rs, "template"), "facts_kept_final": _kept(rs, "final")}
     return out
 
 
