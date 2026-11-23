@@ -15,6 +15,7 @@ import time
 
 from .agent_loop import default_extract
 from . import outcomes as OC
+from . import reply_polish as RP
 from .id_graph import DIRECTION_CATS, line_of, pack
 
 KINDS = ("plan", "ui", "qa", "report", "chat", "manual", "layout", "color", "model", "flight_request")
@@ -59,7 +60,7 @@ class Ledger:
 
 class M4bController:
     def __init__(self, tools, model, graph, counter, ledger_cfg=None, steps_max=None, direction_cap=None,
-                 summary_llm=False):
+                 alert_active=None):
         self.tools = tools
         self.model = model
         self.graph = graph
@@ -67,7 +68,7 @@ class M4bController:
         self.ledger_cfg = ledger_cfg or {}
         self.steps_max = steps_max or TEST_VALUES["steps_max"]
         self.cap = direction_cap or TEST_VALUES["direction_cap"]
-        self.summary_llm = summary_llm
+        self.alert_active = alert_active or (lambda: False)   # v3.12：告警處理中時潤飾讓出（不是潤飾開關）
 
     # ---------- 模型呼叫（經帳本，最多修正一次） ----------
     def _call(self, task, purpose, content, parse, schema=None):
@@ -856,60 +857,68 @@ class M4bController:
         return out
 
     # ---------- 回覆 ----------
-    def _template(self, task):
+    def _facts(self, task):
+        """v3.12：模板的每一行由一筆事實產生；鎖住的內容（數字＋出處、提案、手冊出處、元件與值、方向狀態）換成佔位符。
+        模板文字與 v3.11 逐字相同（FLIGHT_NOTICE 另由程式固定接在最後，不交給模型）。"""
         A = task["artifacts"]
-        lines = []
+        f = RP.Facts()
         if "route_preview" in A:
             rp = A["route_preview"]
-            lines.append(f"預覽驗算{'合格' if rp['verdict'] == 'pass' else '不合格'}，預估落地電量 "
-                         f"{rp['est_end_pct']:.1f}%（出處：預覽 {rp['ref']}）" if rp.get("est_end_pct") is not None
-                         else "預覽驗算完成")
+            ok_zh = "合格" if rp["verdict"] == "pass" else "不合格"
+            if rp.get("est_end_pct") is not None:
+                lock = f"預覽驗算{ok_zh}，預估落地電量 {rp['est_end_pct']:.1f}%（出處：預覽 {rp['ref']}）"   # 合格與否也鎖住
+                f.add("number", f.slot("number", lock), lock)
+            else:
+                f.add("status", f.slot("status", "預覽驗算完成"), "預覽驗算完成")
         for p in task["proposals"]:
             names = "、".join(self.graph.nodes[i]["name"] for i in p["ids"] if i in self.graph.nodes)
-            lines.append(f"已開確認視窗（尚未寫入）：{KIND_ZH[p['direction']]} {names} {''.join(p['params'].values())}")
+            body = f"{KIND_ZH[p['direction']]} {names} {''.join(p['params'].values())}"
+            f.add("proposal", "已開確認視窗：" + f.slot("proposal", body + "（尚未寫入，請在確認視窗確認）"),
+                  f"已開確認視窗（尚未寫入）：{body}")
         if A.get("manual_claims", {}).get("verdict") == "ok":
             for r in A["manual_claims"]["refs"][:3]:
-                lines.append(f"手冊出處：{r['manual'].upper()} {r['path']}（{r['heading_path'] or '無標題'}）")
-        if "flight_notice" in A:
-            lines.append(FLIGHT_NOTICE)
+                src = f"{r['manual'].upper()} {r['path']}（{r['heading_path'] or '無標題'}）"
+                f.add("source", "手冊出處：" + f.slot("source", src), f"手冊出處：{src}")
         nm = lambda c, pp: "、".join(self.graph.nodes[i]["name"] for i in (c, pp) if i)  # noqa: E731
         for c, pp, v in self.have(task).get("_layout_missing", []):   # v3.9 修正：缺項寫進給操作員的回覆
-            lines.append(f"版面還缺（尚未開窗）：{nm(c, pp)} {v}")
+            f.add("question", "版面還缺：" + f.slot("question", f"{nm(c, pp)} {v}（尚未開窗）"), f"版面還缺（尚未開窗）：{nm(c, pp)} {v}")
         for c, pp, _ in task.get("layout_unclear") or []:
-            lines.append(f"版面需要你補充：{nm(c, pp)} 要調成什麼？")
+            f.add("question", "版面需要你補充：" + f.slot("question", nm(c, pp)) + " 要調成什麼？",
+                  f"版面需要你補充：{nm(c, pp)} 要調成什麼？")
         for c, pp in task.get("layout_conflicts") or []:
-            lines.append(f"版面需要你確認：{nm(c, pp)} 同一句裡要了不同的值")
+            f.add("question", "版面需要你確認：" + f.slot("question", nm(c, pp)) + " 同一句裡要了不同的值",
+                  f"版面需要你確認：{nm(c, pp)} 同一句裡要了不同的值")
         for d, s in task["dir_status"].items():
             if s not in ("DONE",):
-                lines.append(f"{KIND_ZH[d]}：{ {'PENDING_BATCH': '待處理（下一批）', 'NEEDS_USER': '需要你補充', 'WAITING': '等待前一步'}.get(s, '未完成') }")
+                st = {'PENDING_BATCH': '待處理（下一批）', 'NEEDS_USER': '需要你補充', 'WAITING': '等待前一步'}.get(s, '未完成')
+                f.add("status", f.slot("status", f"{KIND_ZH[d]}：{st}"), f"{KIND_ZH[d]}：{st}")
+        return f
+
+    def _template(self, task):
+        f = self._facts(task)
+        lines = [line for _, _, line in f.items]
+        if "flight_notice" in task["artifacts"]:
+            lines.append(FLIGHT_NOTICE)
         return "\n".join(lines) or "完成。"
 
     def _finish(self, task, status, ask=None):
-        t_pre = round(time.monotonic() - task["t0"], 3)       # 提案就緒（整理回覆前）
-        template = self._template(task) if ask is None else ask
-        reply, reply_src = template, "template"
-        metrics = self._metrics(task)                          # 具名、帶出處的數字（CODEX-APP-0405 第 4 點）
-        allowed_nums = {v for v, _ in metrics.values()} | set(re.findall(r"\d+(?:\.\d+)?", task["text"]))
-        use_llm = self.summary_llm and self.model is not None and ask is None
-        if use_llm and len(metrics) > 1:                        # 多個數字時模型可能配錯指標 → 用模板
-            use_llm = False
-            task["notes"].append("成果含多個數字，整理回覆直接用模板")
-        if use_llm:
-            def parse(raw):
-                obj = default_extract(raw)
-                if not isinstance(obj, dict) or list(obj) != ["reply"] or not isinstance(obj["reply"], str):
-                    return False, None, "只能有 reply 一個欄位"
-                nums = re.findall(r"\d+(?:\.\d+)?", obj["reply"])
-                if any(n not in allowed_nums for n in nums):
-                    return False, None, "回覆中的數字不是成果欄位的值（要完全相同）"
-                if "已寫入" in obj["reply"] or "已套用" in obj["reply"]:
-                    return False, None, "提案尚未寫入，不可宣稱已寫入"
-                return True, obj["reply"], ""
-            r = self._call(task, "summary", "請把以下事實整理成給操作員的繁體中文回覆，只能用這些事實：\n" +
-                           template + '\n只輸出 JSON：{"reply":"..."}', parse)
-            if r is not None:
-                reply, reply_src = r, "model"
-        return {"status": status, "reply_zh": reply, "reply_source": reply_src, "proposals": task["proposals"],
+        t_pre = round(time.monotonic() - task["t0"], 3)       # 提案就緒（潤飾前）
+        if ask is None:
+            facts, template = self._facts(task), self._template(task)
+            tail = FLIGHT_NOTICE if "flight_notice" in task["artifacts"] else None
+        else:                                                   # R3：追問句也潤飾
+            facts, template, tail = RP.facts_from_ask(ask), ask, None
+        # v3.12：潤飾是固定步驟（使用者 15:45「不需要開關，直接加入」）；只在告警處理中讓出（資源優先序）
+        if self.alert_active():
+            reply, reply_src, pinfo = template, "fallback:alert_active", {"calls": 0, "t_polish_s": 0.0,
+                                                                          "reason": "alert_active"}
+        else:
+            trace = {}
+            reply, reply_src, pinfo = RP.polish(self.model, facts, template, task["text"], tail=tail, trace=trace)
+            if trace:
+                task["traces"].append(trace)
+        return {"status": status, "reply_zh": reply, "reply_source": reply_src, "reply_template": template,
+                "polish": pinfo, "proposals": task["proposals"],
                 "directions": task["directions"], "dir_status": task["dir_status"], "steps": task["steps"],
                 "notes": task["notes"], "calls_used": task["ledger"].used, "traces": task["traces"],
                 "retrieval": task.get("retrieval"), "packing": task.get("packing"), "artifacts": task["artifacts"],
